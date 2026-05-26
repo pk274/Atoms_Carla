@@ -36,6 +36,10 @@
             "agent": "pcla_agents/transfuserv6/lead/inference/sensor_agent.py",
             "config": "pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
         },
+        "datacollect": {
+            "agent": "pcla_agents/transfuserv6/lead/inference/sensor_agent_data_collection.py",
+            "config": "pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
+        },
         "notown13": {
             "agent": "pcla_agents/transfuserv6/lead/inference/sensor_agent.py",
             "config": "pcla_agents/transfuserv6_pretrained/town13heldout_resnet34"

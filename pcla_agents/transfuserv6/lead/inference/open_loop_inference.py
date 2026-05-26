@@ -76,7 +76,7 @@ class OpenLoopInference:
                     net.load_state_dict(state_dict, strict=False)
                 else:
                     net.load_state_dict(state_dict, strict=True)
-                net.cuda(device=self.device).eval()
+                net.to(self.device).eval()
                 self.nets.append(net)
         self.step = 4  # Constant so produced images start with 5, not really important
 

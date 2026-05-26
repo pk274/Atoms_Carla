@@ -1,0 +1,30 @@
+{
+  "ATOMs-Mahalanobis (single Gaussian)": {
+    "auc": 0.65859375,
+    "youden_j": 0.28750000000000003
+  },
+  "ATOMs-Mahalanobis (GMM K=4)": {
+    "auc": 0.6940625,
+    "youden_j": 0.33125
+  },
+  "Action entropy": {
+    "auc": 0.82890625,
+    "youden_j": 0.5875
+  },
+  "ATOMs-Euclidean": {
+    "auc": 0.6128125,
+    "youden_j": 0.21875
+  },
+  "ATOMs-JSD": {
+    "auc": 0.58859375,
+    "youden_j": 0.19374999999999998
+  },
+  "ATOMs-k-NN (k=10, best)": {
+    "auc": 0.8574999999999999,
+    "youden_j": 0.625
+  },
+  "MDX Detection": {
+    "auc": 0.6710937499999999,
+    "youden_j": 0.39375000000000004
+  }
+}

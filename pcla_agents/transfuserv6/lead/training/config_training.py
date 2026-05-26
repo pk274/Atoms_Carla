@@ -949,6 +949,8 @@ class TrainingConfig(BaseConfig):
     @property
     def gpu_name(self):
         """Normalized GPU name for hardware-specific configurations."""
+        # Disabled for now:
+        return ""
         try:
             name = torch.cuda.get_device_name().lower()
             if "rtx 2080 ti" in name:

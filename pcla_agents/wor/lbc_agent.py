@@ -18,6 +18,11 @@ from utils.ls_fit import ls_circle, project_point_to_circle, signed_angle
 from lbc.models import RGBPointModel, Converter
 from waypointer import Waypointer
 
+from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
+from ATOMs_Analysis.perturbation_manager import PerturbationManager
+from ATOMs_Analysis.detection.baseline_dataset import BaselineDataCollector
+from ATOMs_Analysis.detection.dataset import TestDataCollector
+
 def get_entry_point():
     return 'LBCAgent'
 
@@ -70,8 +75,16 @@ class LBCAgent(AutonomousAgent):
             height=240-self.crop_top-self.crop_bottom, width=480,
             output_channel=self.num_plan*self.num_cmds
         ).to(self.device)
-        
-        #self.rgb_model.load_state_dict(torch.load(self.rgb_model_dir))
+
+        if os.path.isfile(self.rgb_model_dir):
+            state_dict = torch.load(self.rgb_model_dir, map_location=self.device)
+            if all(k.startswith('module.') for k in state_dict.keys()):
+                state_dict = {k[7:]: v for k, v in state_dict.items()}
+            self.rgb_model.load_state_dict(state_dict)
+            print(f'[LBCAgent] Loaded weights from {self.rgb_model_dir}')
+        else:
+            print(f'[LBCAgent] WARNING: weights not found at {self.rgb_model_dir}, using random init')
+
         self.rgb_model.eval()
         
         self.converter = Converter(offset=6.0, scale=[1.5, 1.5]).to(self.device)
@@ -88,12 +101,17 @@ class LBCAgent(AutonomousAgent):
         self.accel_pids = {"Kp": 2.0, "Ki": 0.2, "Kd":0}
         
         self.vizs = []
-        
+
         self.waypointer = None
-        
+
         self.lane_change_counter = 0
         self.stop_counter = 0
         self.lane_changed = None
+
+        self.pm = PerturbationManager(verbose=False)
+        self.data_collector = BaselineDataCollector(conf.IMAGE_SAMPLE_INTERVAL)
+        self.test_data_collector = TestDataCollector(conf.TEST_SAMPLE_INTERVAL,
+                                                     perturbation_name=conf.PERTURBATION)
 
         if self.log_wandb:
             wandb.init(project='carla_evaluate')
@@ -125,30 +143,42 @@ class LBCAgent(AutonomousAgent):
         
     def sensors(self):
         sensors = [
-            #{'type': 'sensor.collision', 'id': 'COLLISION'},
             {'type': 'sensor.speedometer', 'id': 'EGO'},
             {'type': 'sensor.other.gnss', 'x': 0., 'y': 0.0, 'z': self.camera_z, 'id': 'GPS'},
             {'type': 'sensor.camera.rgb', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': -55.0,
-            'width': 160, 'height': 240, 'fov': 60, 'id': f'RGB_0'},
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'RGB_0'},
             {'type': 'sensor.camera.rgb', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
-            'width': 160, 'height': 240, 'fov': 60, 'id': f'RGB_1'},
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'RGB_1'},
             {'type': 'sensor.camera.rgb', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw':  55.0,
-            'width': 160, 'height': 240, 'fov': 60, 'id': f'RGB_2'},
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'RGB_2'},
+            # Semantic segmentation cameras — same position/FOV as RGB, used for ATOMs profiling
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': -55.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'Wide_Semantic_0'},
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'Wide_Semantic_1'},
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw':  55.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': 'Wide_Semantic_2'},
         ]
-        
+
         return sensors
         
     def run_step(self, input_data, timestamp, vehicle=None):
         
-        _, rgb_0 = input_data.get(f'RGB_0')
-        _, rgb_1 = input_data.get(f'RGB_1')
-        _, rgb_2 = input_data.get(f'RGB_2')
+        _, rgb_0 = input_data.get('RGB_0')
+        _, rgb_1 = input_data.get('RGB_1')
+        _, rgb_2 = input_data.get('RGB_2')
         rgb = np.concatenate([rgb_0[...,:3], rgb_1[...,:3], rgb_2[...,:3]], axis=1)
-        
-        # Crop images
-        _rgb = rgb[self.crop_top:-self.crop_bottom,:,:3]
 
+        # Crop and convert BGR→RGB
+        _rgb = rgb[self.crop_top:-self.crop_bottom, :, :3]
         _rgb = _rgb[...,::-1].copy()
+
+        # Semantic segmentation — same crop as RGB, red channel = class ID
+        wide_sems = []
+        for i in range(3):
+            _, wide_sem = input_data.get(f'Wide_Semantic_{i}')
+            wide_sems.append(wide_sem[self.crop_top:-self.crop_bottom, :, 2])
+        wide_sems_con = np.concatenate(wide_sems, axis=1)   # [H, W] uint8
         
         _, ego = input_data.get('EGO')
         _, gps = input_data.get('GPS')
@@ -188,6 +218,15 @@ class LBCAgent(AutonomousAgent):
         
         steer, throt, brake = self.get_control(_numpy(pred_loc), cmd_value, float(spd))
     
+        # Data collection
+        if conf.BASELINE_RECORDING_MODE:
+            self.data_collector.add_frame(_rgb, None, wide_sems_con, None, cmd_value, spd, is_brake=False)
+        elif conf.TESTSET_RECORDING_MODE:
+            self.test_data_collector.add_frame(_rgb, None, wide_sems_con, None, cmd_value, spd, is_brake=False)
+        elif conf.LIVE_PERTURBATION_RECORDING_MODE:
+            self.test_data_collector.add_frame(_rgb, None, wide_sems_con, None, cmd_value, spd,
+                                               is_brake=False, live_perturbation=True)
+
         self.vizs.append(visualize_obs(rgb, 0, (steer, throt, brake), spd, cmd=cmd_value+1))
         
         if len(self.vizs) > 1000:

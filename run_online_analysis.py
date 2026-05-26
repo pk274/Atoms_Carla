@@ -1,0 +1,471 @@
+"""
+run_analysis.py
+---------------
+Full ATOMs-based anomaly detection analysis pipeline.
+
+Assumes:
+  - A clean baseline dataset has already been collected
+    (conf.BASELINE_DATA_DIR/frames/run_*.npz)
+  - A clean test dataset has already been collected
+    (conf.TEST_DATA_DIR/frames/run_*.npz)
+  - The pretrained CameraModel weights are available at conf.MODEL_PATH
+  - conf is globally importable and exposes the constants referenced below
+
+Steps
+-----
+  1.  Load model + initialize LRP and ATOMs
+  2.  Compute ATOMs attention profiles on the baseline set
+  3.  Fit single-Gaussian Mahalanobis detector on baseline profiles
+  4.  Select optimal GMM component count (BIC/AIC sweep)
+  5.  Fit GMM on baseline profiles
+  6.  Visualize baseline: attention bar chart, PCA coloured by run, PCA coloured by cluster
+  7.  Apply perturbation mix to clean test set  →  labeled test dataset
+  8.  Compute ATOMs attention profiles on the labeled test set
+  9.  Score all test profiles with both detectors + action entropy baseline
+  10. Evaluate each detector (ROC, AUC, Youden threshold)
+  11. Visualize detection results: score distributions, ROC curves, PCA OOD overlay
+  12. Save all results as JSON + figures
+
+Adjustable parameters are marked with  # <<< ADJUST
+"""
+
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+
+import yaml
+
+from collections import defaultdict
+
+
+# ---------------------------------------------------------------------------
+# Project imports — adjust paths to match your project layout
+# ---------------------------------------------------------------------------
+from ATOMs_Analysis.atoms_config import ExperimentConfig as conf   # global config
+
+from pcla_agents.wor.rails.models.main_model import CameraModel                  # World on Rails agent
+from pcla_agents.wor.image_agent import ImageAgent
+from pcla_functions import give_path
+from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
+from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+
+from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader, BaselineComputer
+from ATOMs_Analysis.detection.dataset import (
+    LabeledTestLoader, PerturbationApplier, PerturbationSpec, PerturbationEntry,
+)
+from ATOMs_Analysis.detection.detectors import (
+    MahalanobisDetector, ActionEntropyDetector, DetectorEvaluator,
+)
+from ATOMs_Analysis.detection.clustering import GMMClustering
+
+from ATOMs_Analysis.utils.visualization_carla import (plot_bic_aic,
+    save_figure, plot_distance_over_time, visualize_comparative_relevance,
+    CARLA_CLASSES,
+)
+from ATOMs_Analysis.utils.distance_computer import DistanceComputer
+from ATOMs_Analysis.detection.detectors import MDXDetector
+
+
+# ---------------------------------------------------------------------------
+# Output directory — all figures and result JSONs go here
+# ---------------------------------------------------------------------------
+
+OUT_DIR = Path(conf.RESULTS_DIR) / "atoms_analysis"  # <<< ADJUST if needed
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Name of the live perturbation being analysed — drives all output paths below.
+LIVE_PERT_NAME = conf.PERTURBATION   # e.g. "phantom_obstacle"
+
+ATT_DIR = Path(conf.TEST_DATA_DIR) / "attention" / "live_pert" / LIVE_PERT_NAME
+ATT_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"\n{'='*60}")
+print(f"ATOMs Analysis Pipeline")
+print(f"Results → {OUT_DIR}")
+print(f"{'='*60}\n")
+
+
+
+# ===========================================================================
+# STEP 1 — Load model and initialize LRP / ATOMs
+# ===========================================================================
+print("[Step 1] Loading model and initializing LRP / ATOMs...")
+
+with open("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml", 'r') as f:
+        config = yaml.safe_load(f)
+model = CameraModel(config)
+weights_path = 'C:\\Users\\paulk\\Desktop\\Unistuff\\Masterarbeit\\Code\\PCLA\\pcla_agents\\wor_pretrained/leaderboard_weights/main_model_10.th'
+model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
+model.eval()
+print(dict(model.named_modules()))
+
+# Initialize LRP wrapper.
+# fix_context() will be called once the first narr_rgb frame is available
+# (see BaselineComputer, which calls it automatically).
+lrp = LRPCameraModel(
+    model_eval = model,
+    uitb       = False,             # <<< set True if using UITB-style model
+)
+
+# Initialize ATOMs.
+#
+# use_reduced=True tracks only 7 driving-relevant classes instead of all 23.
+# Good for quick experiments; set False for the full analysis.
+atoms = ATOMsCarla(
+    lrp_model     = lrp,
+    p_relevance   = conf.FC_RELEVANCE_FILTER,   # <<< typically 0.9 (90% mass filter)
+    default_cmd   = conf.DEFAULT_CMD,   # <<< 3 = FOLLOW_LANE
+    mode_analysis = conf.MODE_ANALYSIS,                  # <<< ADJUST: 1 is paper default
+    use_reduced   = False,              # <<< ADJUST
+)
+
+print(f"  Classes tracked : {atoms.num_classes}  ({', '.join(atoms.class_names[:5])}, ...)")
+print(f"  Mode            : {atoms.mode_analysis}")
+print()
+
+
+# ===========================================================================
+# STEP 2 — Compute ATOMs profiles on baseline set
+# ===========================================================================
+# BaselineComputer loads all run files, processes each frame through ATOMsCarla,
+# and saves the per-frame series + mean + covariance to baseline.npz.
+# If baseline.npz already exists and you just want to reload it, skip this
+# block and go straight to loading.
+# ---------------------------------------------------------------------------
+print("[Step 2] Computing ATOMs on baseline dataset...")
+
+RECOMPUTE_BASELINE = conf.RECOMPUTE_BASELINE  # <<< set False to load cached baseline.npz
+
+baseline_npz = Path(conf.BASELINE_DATA_DIR) / "baseline.npz"
+
+if RECOMPUTE_BASELINE or not baseline_npz.exists():
+    computer = BaselineComputer(lrp, atoms)
+    computer.compute_and_save(
+        cmd_filter = None,          # <<< set to an int to build a command-specific baseline
+        max_runs   = None,          # <<< set to e.g. 5 for a quick smoke test
+    )
+else:
+    print(f"  Skipping recompute — loading cached {baseline_npz}")
+
+# Load the computed baseline
+baseline_data    = np.load(baseline_npz, allow_pickle=True)
+baseline_series  = baseline_data["series"].astype(np.float64)   # [N, C]
+baseline_mean    = baseline_data["mean"].astype(np.float64)      # [C]
+baseline_cov     = baseline_data["cov"].astype(np.float64)       # [C, C]
+
+
+print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]} classes")
+print()
+
+# ===========================================================================
+# STEP 2.5 — Compute MDX baseline
+# ===========================================================================
+if conf.RECOMPUTE_MDX_BASELINE:
+    loader = BaselineDataLoader()
+    runs_dict = loader.load_all_runs(conf.BASELINE_DATA_DIR / "frames")
+    configPath = "C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml"
+    agent = ImageAgent(configPath)
+    features_list, actions_list = [], []
+
+    for i in range(len(runs_dict["frame_idx"])):
+        if i % 20 == 0:
+            print("Extracting MDX information from frame", i)
+        steer_l, throt_l, brake_l = model.policy(torch.from_numpy(runs_dict["wide_rgb"][i]),
+                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
+                                                runs_dict["cmd"][i])
+        features = model.get_features(torch.from_numpy(runs_dict["wide_rgb"][i]),
+                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
+                                                runs_dict["speed"][i])
+        features_list.append(features[0].cpu().detach().numpy())
+        # Interpolate logits
+        steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
+        throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
+        brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
+        action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
+        brake_prob = float(action_prob[-1])
+        steer = float(agent.steers @ torch.softmax(steer_logit, dim=0))
+        throt = float(agent.throts @ torch.softmax(throt_logit, dim=0))
+
+        actions_list.append([steer, throt, brake_prob])
+
+    mdx = MDXDetector(n_pca_components=50)
+    print("\nFitting MDX Detector!\n")
+    features_list_np = np.array(features_list)
+    actions_list_np = np.array(actions_list)
+    mdx.fit(features_list_np, actions_list_np)
+    mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
+else:
+    mdx = mdx = MDXDetector()
+    mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+
+
+# ===========================================================================
+# STEP 3 — Fit single-Gaussian Mahalanobis detector
+# ===========================================================================
+# This is the primary detector: Mahalanobis distance from the baseline mean
+# in the full attention-profile space.
+# ---------------------------------------------------------------------------
+print("[Step 3] Fitting single-Gaussian Mahalanobis detector...")
+
+mahal_detector = MahalanobisDetector(
+    ridge = conf.MAHAL_RIDGE,   # <<< 1e-6 default; increase to 1e-4 if unstable
+)
+mahal_detector.fit(baseline_series)
+
+# Fit the in-distribution threshold at the 99th percentile of baseline scores.
+# This means ~1% of clean frames will be false-positived at runtime.
+# Lower percentile = more sensitive, more false positives.
+mahal_threshold = mahal_detector.fit_threshold(
+    baseline_data  = baseline_series,
+    percentile     = 99.0,          # <<< ADJUST: 95 more sensitive, 99.5 more specific
+)
+mahal_detector.save(OUT_DIR / "mahal_detector.npz")
+print(f"  Threshold (p=99): {mahal_threshold:.4f}")
+print()
+
+
+# ===========================================================================
+# STEP 4 — GMM model selection: sweep K, pick best by BIC
+# ===========================================================================
+# We check K=1..MAX_K and pick the K that minimises BIC.
+# AIC tends to favour more components; BIC is more conservative.
+# Both are plotted so you can make an informed choice.
+# ---------------------------------------------------------------------------
+print("[Step 4] GMM model selection (BIC/AIC sweep)...")
+
+MAX_K = conf.GMM_MAX_K   # <<< e.g. 8 — increase if you expect many driving modes
+
+best_k_bic, scores_bic = GMMClustering.select_n_components(
+    data            = baseline_series,
+    max_components  = MAX_K,
+    criterion       = "bic",
+    covariance_type = conf.GMM_COV_TYPE,   # <<< "full" or "diag"
+)
+_, scores_aic = GMMClustering.select_n_components(
+    data            = baseline_series,
+    max_components  = MAX_K,
+    criterion       = "aic",
+    covariance_type = conf.GMM_COV_TYPE,
+)
+
+fig_bic = plot_bic_aic(scores_bic, scores_aic)
+save_figure(fig_bic, OUT_DIR / "gmm_model_selection.png")
+
+# You can override the auto-selected K here if the sweep result looks wrong.
+N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
+#N_COMPONENTS = 3
+print(f"  Selected K = {N_COMPONENTS}")
+print()
+
+
+# ===========================================================================
+# STEP 5 — Fit GMM
+# ===========================================================================
+print(f"[Step 5] Fitting GMM with K={N_COMPONENTS}...")
+
+gmm = GMMClustering(
+    n_components    = N_COMPONENTS,
+    covariance_type = conf.GMM_COV_TYPE,   # <<< "full" recommended if N >> C^2
+    random_state    = conf.RANDOM_SEED,    # <<< for reproducibility
+    ridge           = conf.MAHAL_RIDGE,
+)
+gmm.fit(baseline_series)
+gmm.save(OUT_DIR / "gmm.npz")
+
+# Assign each baseline frame to its most probable cluster
+baseline_cluster_labels = gmm.predict_batch(baseline_series)
+
+# Log cluster sizes — very unequal sizes may indicate that K is too large
+# or that one cluster dominates (e.g. mostly straight driving)
+unique, counts = np.unique(baseline_cluster_labels, return_counts=True)
+print("  Cluster sizes:")
+for k, cnt in zip(unique, counts):
+    print(f"    Cluster {k}: {cnt} frames ({cnt/len(baseline_cluster_labels)*100:.1f}%)")
+print()
+
+
+
+# ===========================================================================
+# STEP 7 — Load live perturbation test data
+# ===========================================================================
+# ---------------------------------------------------------------------------
+
+# Load and summarise
+test_data = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
+
+
+# ===========================================================================
+# STEP 8 — Compute ATOMs profiles on test set
+# ===========================================================================
+# We process each test frame through ATOMsCarla to get attention profiles,
+# then collect them alongside their ground-truth labels for evaluation.
+# ---------------------------------------------------------------------------
+from ATOMs_Analysis.utils.visualization_carla import visualize_relevance
+REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME
+REL_DIR.mkdir(parents=True, exist_ok=True)
+
+if conf.RECOMPUTE_TEST_ATOMS:
+    print("[Step 8] Computing ATOMs on test set...")
+    atoms.reset()   # clear any accumulated state from baseline computation
+    n_test          = test_data["wide_rgb"].shape[0]
+    test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+    test_logits_all = []   # for action entropy detector — collect raw logits per frame
+    t0 = time.time()
+    for i in range(n_test):
+        wide = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()   # [1, 3, H, W]
+        narr = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
+        seg_wide  = test_data["seg_red_wide"][i]                                   # [H, W]
+        seg_narr  = test_data["seg_red_narr"][i]
+        cmd  = int(test_data["cmd"][i])
+        spd = float(test_data["speed"][i])
+        # process_frame returns the row-normalized attention for this frame
+        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+        test_profiles[i] = profile
+        savepath_rel_n = REL_DIR / f"relevance_narr_{i}"
+        savepath_rel_w = REL_DIR / f"relevance_wide_{i}"
+        rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
+        rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
+        if conf.PLOT_COMPARATIVE_REL:
+            comp_map_wide = atoms.saliency_data_wide_drive - atoms.saliency_data_wide_brake
+            comp_map_narr = atoms.saliency_data_narr_drive - atoms.saliency_data_narr_brake
+            global_max = max(comp_map_wide.abs().max().item(), comp_map_narr.abs().max().item()) + 1e-12
+            comp_map_wide = comp_map_wide / global_max
+            comp_map_narr = comp_map_narr / global_max
+            visualize_comparative_relevance(comp_map_wide, rgb_image=rgb_wide, save_path=f"{savepath_rel_w}_comparative",
+                                            is_brake=atoms._last_is_brake)
+            visualize_comparative_relevance(comp_map_narr, rgb_image=rgb_narr, save_path=f"{savepath_rel_n}_comparative",
+                                            is_brake=atoms._last_is_brake)
+                
+        if atoms._last_is_brake:
+            visualize_relevance(atoms.saliency_data_wide_brake, rgb_image=rgb_wide, save_path=savepath_rel_w, is_brake=True)
+            visualize_relevance(atoms.saliency_data_narr_brake, rgb_image=rgb_narr, save_path=savepath_rel_n, is_brake=True)
+        else:
+            visualize_relevance(atoms.saliency_data_wide_drive, rgb_image=rgb_wide, save_path=savepath_rel_w, is_brake=False)
+            visualize_relevance(atoms.saliency_data_narr_drive, rgb_image=rgb_narr, save_path=savepath_rel_n, is_brake=False)
+        # Also collect the action logits for the entropy detector.
+        # We run a plain forward pass (no LRP) for this.
+        # model.policy() handles /255 and normalization internally — pass raw uint8 values.
+        with torch.no_grad():
+            narr = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
+            steer, throt, brake = model.policy(wide, narr, cmd=cmd)
+            # brake is a 0-dim scalar — unsqueeze before cat
+            flat_logits = torch.cat([
+                steer.flatten(),
+                throt.flatten(),
+                brake.unsqueeze(0).flatten(),
+            ]).cpu().numpy()
+        test_logits_all.append(flat_logits)
+        if (i + 1) % 100 == 0:
+            fps = (i + 1) / (time.time() - t0)
+            print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
+    atoms.reset()
+    test_logits_all = np.array(test_logits_all, dtype=np.float32)   # [N, num_logits]
+    np.save(ATT_DIR / "live_test_profiles.npy",  test_profiles)
+    np.save(ATT_DIR / "live_test_logits.npy",    test_logits_all)
+
+    print(f"  Done. {n_test} frames processed.\n")
+
+else:
+    # Reload test data and pre-computed profiles
+    test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
+    test_profiles = np.load(ATT_DIR / "live_test_profiles.npy")
+    test_logits_all = np.load(ATT_DIR / "live_test_logits.npy")
+
+    print(f"  Loaded {len(test_profiles)} test profiles, ")
+
+
+# ===========================================================================
+# STEP 9 — Score all test profiles with every detector
+# ===========================================================================
+print("[Step 9] Scoring test profiles...")
+
+# --- 9a: Single-Gaussian Mahalanobis (ATOMs) ---
+# compute_mahalanobis() takes (mu_ref, cov_ref, mu_target) — called once per frame.
+scores_mahal_single = np.array([
+    DistanceComputer.compute_mahalanobis(
+        mu_ref         = baseline_mean,
+        cov_ref        = baseline_cov,
+        mu_target      = test_profiles[i],
+        regularization = conf.MAHAL_RIDGE,
+    )
+    for i in range(len(test_profiles))
+])
+
+scores_euclid_single = np.array([
+    DistanceComputer.compute_euclidean(
+        mu_ref         = baseline_mean,
+        mu_target      = test_profiles[i]
+    )
+    for i in range(len(test_profiles))
+])
+
+scores_knn_single = np.array([
+    DistanceComputer.compute_knn_distance(
+        reference_samples=baseline_series,
+        target_point   = test_profiles[i],
+        k              = 10,
+        normalize      = True,
+    )
+    for i in range(len(test_profiles))
+])
+
+scores_jsd_single = np.array([
+    DistanceComputer.compute_jsd(
+        p           = baseline_mean,
+        q           = test_profiles[i],
+    )
+    for i in range(len(test_profiles))
+])
+
+# --- 9b: GMM Mahalanobis (nearest cluster) ---
+# compute_gmm_distance() takes the full GMM parameters + one target point.
+# Returns a DistanceResult; we extract .distance for the score.
+# mode="nearest"   → distance to closest cluster centre      [default, recommended]
+# mode="weighted"  → probability-weighted average distance   [alternative]
+gmm_results = [
+    DistanceComputer.compute_gmm_distance(
+        means          = gmm.means_,
+        covariances    = gmm.covariances_,
+        weights        = gmm.weights_,
+        mu_target      = test_profiles[i],
+        mode           = "nearest",         # <<< ADJUST: "nearest" or "weighted"
+        regularization = conf.MAHAL_RIDGE,
+    )
+    for i in range(len(test_profiles))
+]
+scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
+nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
+
+# --- 9c: Action entropy ---
+entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
+scores_entropy   = entropy_detector.score_batch(test_logits_all)
+
+# ----- 9d: MDX detection ----
+scores_list = []
+
+for i in range(len(test_data["frame_idx"])):
+    features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
+                                         torch.from_numpy(test_data["narr_rgb"][i]),
+                                         test_data["speed"][i])
+    score = mdx.score(features[0].cpu().detach().numpy())
+    scores_list.append(score)
+scores_mdx = np.array(scores_list)
+
+
+print()
+
+### ================= PLOT ALL OF THIS =================================================
+live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
+live_pert_dir.mkdir(parents=True, exist_ok=True)
+plot_distance_over_time(scores_mahal_single, LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir)
+plot_distance_over_time(scores_mahal_gmm,    LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir)
+plot_distance_over_time(scores_entropy,      LIVE_PERT_NAME, "PEOC",               live_pert_dir)
+plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",         live_pert_dir)
+plot_distance_over_time(scores_jsd_single,   LIVE_PERT_NAME, "jsd",                live_pert_dir)
+plot_distance_over_time(scores_knn_single,   LIVE_PERT_NAME, "knn",                live_pert_dir)
+plot_distance_over_time(scores_mdx,          LIVE_PERT_NAME, "mdx",                live_pert_dir)
+
+

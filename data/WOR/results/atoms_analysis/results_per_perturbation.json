@@ -1,0 +1,94 @@
+{
+  "brightness_scale": [
+    {
+      "Mahalanobis-single | brightness_scale": 0.974375
+    },
+    {
+      "Mahalanobis-GMM | brightness_scale": 0.983125
+    },
+    {
+      "Entropy | brightness_scale": 0.8606250000000001
+    },
+    {
+      "JSD-single | brightness_scale": 0.776875
+    },
+    {
+      "Euclidean-single | brightness_scale": 0.95625
+    },
+    {
+      "MDX Detection | brightness_scale": 0.559375
+    },
+    {
+      "kNN (k=10) | brightness_scale": 0.9875
+    }
+  ],
+  "camera_loss": [
+    {
+      "Mahalanobis-single | camera_loss": 0.7075
+    },
+    {
+      "Mahalanobis-GMM | camera_loss": 0.75125
+    },
+    {
+      "Entropy | camera_loss": 1.0
+    },
+    {
+      "JSD-single | camera_loss": 0.616875
+    },
+    {
+      "Euclidean-single | camera_loss": 0.621875
+    },
+    {
+      "MDX Detection | camera_loss": 0.7
+    },
+    {
+      "kNN (k=10) | camera_loss": 0.963125
+    }
+  ],
+  "gaussian_noise": [
+    {
+      "Mahalanobis-single | gaussian_noise": 0.47687500000000005
+    },
+    {
+      "Mahalanobis-GMM | gaussian_noise": 0.525625
+    },
+    {
+      "Entropy | gaussian_noise": 0.45499999999999996
+    },
+    {
+      "JSD-single | gaussian_noise": 0.476875
+    },
+    {
+      "Euclidean-single | gaussian_noise": 0.43624999999999997
+    },
+    {
+      "MDX Detection | gaussian_noise": 0.51375
+    },
+    {
+      "kNN (k=10) | gaussian_noise": 0.7537499999999999
+    }
+  ],
+  "pgd": [
+    {
+      "Mahalanobis-single | pgd": 0.475625
+    },
+    {
+      "Mahalanobis-GMM | pgd": 0.5162500000000001
+    },
+    {
+      "Entropy | pgd": 1.0
+    },
+    {
+      "JSD-single | pgd": 0.48374999999999996
+    },
+    {
+      "Euclidean-single | pgd": 0.436875
+    },
+    {
+      "MDX Detection | pgd": 0.91125
+    },
+    {
+      "kNN (k=10) | pgd": 0.7256250000000001
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 import torch
 from torch import nn
-from common.resnet import resnet18, resnet34
-from common.normalize import Normalize
-from common.segmentation import SegmentationHead
+from pcla_agents.wor.common.resnet import resnet18, resnet34
+from pcla_agents.wor.common.normalize import Normalize
+from pcla_agents.wor.common.segmentation import SegmentationHead
 
 class CameraModel(nn.Module):
     def __init__(self, config, num_cmds=6):
@@ -82,7 +82,7 @@ class CameraModel(nn.Module):
             return act_output, wide_seg_output
 
 
-    @torch.no_grad()
+    #@torch.no_grad()
     def policy(self, wide_rgb, narr_rgb, cmd, spd=None):
         
         assert (self.all_speeds and spd is None) or \
@@ -114,6 +114,24 @@ class CameraModel(nn.Module):
             brake_logits = act_output[0,cmd,0,-1]
 
         return steer_logits, throt_logits, brake_logits
+    
+
+    def get_features(self, wide_rgb, narr_rgb, spd=None):
+        wide_embed = self.backbone_wide(self.normalize(wide_rgb/255.))
+    
+        if self.two_cam:
+            narr_embed = self.backbone_narr(self.normalize(narr_rgb/255.))
+            embed = torch.cat([
+                wide_embed.mean(dim=[2,3]),
+                self.bottleneck_narr(narr_embed.mean(dim=[2,3])),
+            ], dim=1)
+        else:
+            embed = wide_embed.mean(dim=[2,3])
+    
+        if self.all_speeds:
+            return embed
+        else:
+            return torch.cat([embed, self.spd_encoder(spd[:,None])], dim=1)
 
 
 def action_logits(raw_logits, num_steers, num_throts):

@@ -47,11 +47,12 @@ matplotlib.use("Agg")  # non-GUI backend for headless servers
 setup_logging()
 LOG = logging.getLogger(__name__)
 
-# Configure pytorch for maximum performance
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = False
-torch.backends.cudnn.allow_tf32 = True
+# Configure pytorch for maximum performance (CUDA only)
+if torch.cuda.is_available():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.allow_tf32 = True
 
 DEMO_CAMERAS = [
     {
@@ -99,7 +100,7 @@ class SensorAgent(BaseAgent, autonomous_agent.AutonomousAgent):
         self._pending_setup = True
         self._deferred_conf_file = path_to_conf_file
         self.config_closed_loop = ClosedLoopConfig()
-        self.device = torch.device("cuda:0")
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.track = autonomous_agent.Track.SENSORS
 
     def _finish_setup(self):

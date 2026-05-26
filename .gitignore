@@ -11,3 +11,4 @@ env/
 .ipynb_checkpoints/
 pcla_agents/pretrained.zip
 .vscode
+.mp4

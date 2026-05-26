@@ -5,8 +5,9 @@ def setup_sensor_attributes(bp, sensor_spec):
         bp.set_attribute('fov', str(sensor_spec['fov']))
         bp.set_attribute('lens_circle_multiplier', str(3.0))
         bp.set_attribute('lens_circle_falloff', str(3.0))
-        bp.set_attribute('chromatic_aberration_intensity', str(0.5))
-        bp.set_attribute('chromatic_aberration_offset', str(0))
+        if not 'semantic' in sensor_spec['type']:
+            bp.set_attribute('chromatic_aberration_intensity', str(0.5))
+            bp.set_attribute('chromatic_aberration_offset', str(0))
     elif sensor_spec['type'].startswith('sensor.lidar'):
         bp.set_attribute('range', str(85))
         bp.set_attribute('rotation_frequency', str(10))

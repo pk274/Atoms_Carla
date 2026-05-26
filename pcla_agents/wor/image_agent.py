@@ -12,10 +12,17 @@ import string
 from torch.distributions.categorical import Categorical
 
 from leaderboard_codes.autonomous_agent1 import AutonomousAgent, Track
-from utils import visualize_obs
+from pcla_agents.wor.utils.visualization import visualize_obs
+from ATOMs_Analysis.perturbation_manager import PerturbationManager
+from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
+from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
+from ATOMs_Analysis.utils.visualization_carla import visualize_relevance, visualize_segmentation
+from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+from ATOMs_Analysis.detection.baseline_dataset import BaselineDataCollector
+from ATOMs_Analysis.detection.dataset import TestDataCollector
 
-from rails.models import EgoModel, CameraModel
-from waypointer import Waypointer
+from pcla_agents.wor.rails.models import EgoModel, CameraModel
+from pcla_agents.wor.waypointer import Waypointer
 
 def get_entry_point():
     return 'ImageAgent'
@@ -56,11 +63,13 @@ class ImageAgent(AutonomousAgent):
                 # For non-path values, set them as is
                 setattr(self, key, value)
 
-        self.device = torch.device('cuda')
+        self.device = torch.device('cpu')
 
         self.image_model = CameraModel(config).to(self.device)
-        self.image_model.load_state_dict(torch.load(self.main_model_dir))
+        self.image_model.load_state_dict(torch.load(self.main_model_dir, map_location=torch.device('cpu')))
         self.image_model.eval()
+        for param in self.image_model.parameters():
+            param.requires_grad = False
 
         self.vizs = []
 
@@ -75,6 +84,11 @@ class ImageAgent(AutonomousAgent):
         self.prev_steer = 0
         self.lane_change_counter = 0
         self.stop_counter = 0
+
+        self.pm = PerturbationManager(verbose=False)
+        self.lrp = LRPCameraModel(self.image_model)
+        self.data_collector = BaselineDataCollector(conf.IMAGE_SAMPLE_INTERVAL)
+        self.test_data_collector = TestDataCollector(conf.TEST_SAMPLE_INTERVAL, perturbation_name=conf.PERTURBATION)
 
     def destroy(self):
         if len(self.vizs) == 0:
@@ -110,43 +124,65 @@ class ImageAgent(AutonomousAgent):
             'width': 160, 'height': 240, 'fov': 60, 'id': f'Wide_RGB_2'},
             {'type': 'sensor.camera.rgb', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
             'width': 384, 'height': 240, 'fov': 50, 'id': f'Narrow_RGB'},
+
+            # Additional semantic cameras for ATOMs labeling
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': -55.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': f'Wide_Semantic_0'},
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': f'Wide_Semantic_1'},
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw':  55.0,
+            'width': 160, 'height': 240, 'fov': 60, 'id': f'Wide_Semantic_2'},
+            {'type': 'sensor.camera.semantic_segmentation', 'x': self.camera_x, 'y': 0, 'z': self.camera_z, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'width': 384, 'height': 240, 'fov': 50, 'id': f'Narrow_Semantic'}
         ]
         return sensors
 
     def run_step(self, input_data, timestamp, vehicle=None):
         # changed to match the online leaderboard based on https://github.com/dotchen/WorldOnRails/issues/27
         wide_rgbs = []
+        wide_sems = []
         for i in range(3):
+            # RGB
             _, wide_rgb = input_data.get(f'Wide_RGB_{i}')
             wide_rgb_crop = wide_rgb[self.wide_crop_top:,:,:3]
             _wide_rgb = wide_rgb_crop[...,::-1].copy()
             wide_rgbs.append(_wide_rgb)
 
-        wide_rgbs_con = np.concatenate([wide_rgbs[0],wide_rgbs[1],wide_rgbs[2]], axis=1)
-        wide_rgbs_ = torch.tensor(wide_rgbs_con[None]).float().permute(0,3,1,2).to(self.device)
-        
+            # Semantic
+            _, wide_sem = input_data.get(f'Wide_Semantic_{i}')
+            wide_sem_crop = wide_sem[self.wide_crop_top:, :, 2]  # shape: (H, W)
+            wide_sems.append(wide_sem_crop)
         
         _, narr_rgb = input_data.get(f'Narrow_RGB')
-        narr_rgb_crop = narr_rgb[:-self.narr_crop_bottom,:,:3]
-        _narr_rgb = narr_rgb_crop[...,::-1].copy()
-
-        # Crop images
-        #_wide_rgb = wide_rgb[self.wide_crop_top:,:,:3]
-        #_narr_rgb = narr_rgb[:-self.narr_crop_bottom,:,:3]
-
-        #wide_rgb = _wide_rgb[...,::-1].copy()
-        #_narr_rgb = _narr_rgb[...,::-1].copy()
-
+        _, narr_sem = input_data.get(f'Narrow_Semantic')
         _, ego = input_data.get('EGO')
         _, gps = input_data.get('GPS')
-
+        spd = ego.get('speed')
 
         if self.waypointer is None:
             self.waypointer = Waypointer(self._global_plan, gps)
 
         _, _, cmd = self.waypointer.tick(gps)
 
-        spd = ego.get('speed')
+        if timestamp >= conf.INJECTION_TIME:
+            # Problematic perturbations: Right camera loss, brightness scale <= 0.2, b scale >= 4
+            if timestamp <= conf.INJECTION_TIME + 0.1:
+                print("!!! PERTURBATION ACTIVATED !!!")
+            if conf.PERTURBATION != "fgsm" and conf.PERTURBATION != "pgd":
+                wide_rgbs = self.pm.perturb_wide_image(wide_rgbs, perturbation=conf.PERTURBATION,
+                                                       intensity=conf.INTENSITY, camera_index=conf.CAM_INDEX)
+                narr_rgb = self.pm.perturb_narrow_image(narr_rgb, perturbation=conf.PERTURBATION,
+                                                        intensity=conf.INTENSITY)
+
+        # This is of shape [192, 480, 3] and has the format BGR !!!!
+        wide_rgbs_con = np.concatenate([wide_rgbs[0],wide_rgbs[1],wide_rgbs[2]], axis=1)
+        wide_sems_con = np.concatenate([wide_sems[0],wide_sems[1],wide_sems[2]], axis=1)
+        rgb = np.concatenate([wide_rgbs_con[..., ::-1].copy()], axis=1) #BGR -> RGB
+        #rgb = np.concatenate([narr_rgb[...,:3]], axis=1)
+        narr_rgb_crop = narr_rgb[:-self.narr_crop_bottom,:,:3]
+        narr_sem_crop = narr_sem[:-self.narr_crop_bottom, :, 2]
+        _narr_rgb = narr_rgb_crop[...,::-1].copy()
+
         
         cmd_value = cmd.value-1
         cmd_value = 3 if cmd_value < 0 else cmd_value
@@ -164,18 +200,42 @@ class ImageAgent(AutonomousAgent):
         if cmd_value == self.lane_changed:
             cmd_value = 3
 
+        # This turns it into shape [3, 192, 480]
+        wide_rgbs_ = torch.tensor(wide_rgbs_con[None]).float().permute(0,3,1,2).to(self.device)
         _wide_rgb = torch.tensor(_wide_rgb[None]).float().permute(0,3,1,2).to(self.device)
         _narr_rgb = torch.tensor(_narr_rgb[None]).float().permute(0,3,1,2).to(self.device)
+
         
+        #FSGM Injection
+        if conf.PERTURBATION == "fgsm" and timestamp >= conf.INJECTION_TIME:
+                wide_rgbs_, _narr_rgb = self.pm.fgsm_attack(self.image_model, wide_rgbs_, _narr_rgb,
+                                                cmd_value, target="steer_right", epsilon=conf.EPSILON, apply_to_narrow=False)
+                rgb = wide_rgbs_.detach().cpu().squeeze(0).permute(1, 2, 0).numpy()
+                rgb = rgb.clip(0, 255).astype(np.uint8)
+                rgb = rgb[..., ::-1]  # only if needed (BGR → RGB)
+        elif conf.PERTURBATION == "pgd" and timestamp >= conf.INJECTION_TIME:
+                wide_rgbs_, _narr_rgb = self.pm.pgd_attack(self.image_model, wide_rgbs_, _narr_rgb,
+                                                cmd_value, target="max_steer", epsilon=conf.EPSILON, apply_to_narrow=False)
+                rgb = wide_rgbs_.detach().cpu().squeeze(0).permute(1, 2, 0).numpy()
+                rgb = rgb.clip(0, 255).astype(np.uint8)
+                rgb = rgb[..., ::-1]  # only if needed (BGR → RGB)
+
+
         if self.all_speeds:
-            steer_logits, throt_logits, brake_logits = self.image_model.policy(wide_rgbs_, _narr_rgb, cmd_value)
-            #steer_logits, throt_logits, brake_logits = self.image_model.policy(_wide_rgb, _narr_rgb, cmd_value)
+            with torch.no_grad():
+                steer_logits, throt_logits, brake_logits = self.image_model.policy(wide_rgbs_, _narr_rgb, cmd_value)
+                #if timestamp % 1 < 0.05:
+                #    self.lrp.update_context(wide_rgbs_, narr_rgb, spd)
+                #    wide_rel, narr_rel, wide_frac, is_brake = self.lrp.forward_relevance(wide_rgbs_, _narr_rgb,
+                #                                                                        beg="fc", end="input", cmd=cmd_value)
+                #    visualize_relevance(narr_rel)
             # Interpolate logits
             steer_logit = self._lerp(steer_logits, spd)
             throt_logit = self._lerp(throt_logits, spd)
             brake_logit = self._lerp(brake_logits, spd)
         else:
-            steer_logit, throt_logit, brake_logit = self.image_model.policy(_wide_rgb, _narr_rgb, cmd_value, spd=torch.tensor([spd]).float().to(self.device))
+            with torch.no_grad():
+                steer_logit, throt_logit, brake_logit = self.image_model.policy(_wide_rgb, _narr_rgb, cmd_value, spd=torch.tensor([spd]).float().to(self.device))
 
         
         action_prob = self.action_prob(steer_logit, throt_logit, brake_logit)
@@ -187,10 +247,16 @@ class ImageAgent(AutonomousAgent):
 
         steer, throt, brake = self.post_process(steer, throt, brake_prob, spd, cmd_value)
 
-        
-        #rgb = np.concatenate([wide_rgb, narr_rgb[...,:3]], axis=1)
-        
-        #self.vizs.append(visualize_obs(rgb, 0, (steer, throt, brake), spd, cmd=cmd_value+1))
+        # Add frame to baseline if BASELINE_COLLECTION is True
+        if conf.BASELINE_RECORDING_MODE:
+            self.data_collector.add_frame(wide_rgbs_, _narr_rgb, wide_sems_con, narr_sem_crop, cmd_value, spd, is_brake=bool(brake))
+        elif conf.TESTSET_RECORDING_MODE:
+            self.test_data_collector.add_frame(wide_rgbs_, _narr_rgb, wide_sems_con, narr_sem_crop, cmd_value, spd, is_brake=bool(brake))
+        elif conf.LIVE_PERTURBATION_RECORDING_MODE:
+            self.test_data_collector.add_frame(wide_rgbs_, _narr_rgb, wide_sems_con,
+                                               narr_sem_crop, cmd_value, spd, is_brake=bool(brake), live_perturbation=True)
+
+        self.vizs.append(visualize_obs(rgb, 0, (steer, throt, brake), spd, cmd=cmd_value+1))
 
         if len(self.vizs) > 1000:
             self.flush_data()
@@ -198,6 +264,7 @@ class ImageAgent(AutonomousAgent):
         self.num_frames += 1
 
         return carla.VehicleControl(steer=steer, throttle=throt, brake=brake)
+    
     
     def _lerp(self, v, x):
         D = v.shape[0]
@@ -227,15 +294,22 @@ class ImageAgent(AutonomousAgent):
             steer, throt, brake = 0, 0, 1
         else:
             brake = 0
-            throt = max(0.4, throt)
+            if conf.HIGH_SPEED_MODE:
+                throt = max(0.6, throt)
+            else:
+                throt = max(0.4, throt)
 
         # # To compensate for non-linearity of throttle<->acceleration
         # if throt > 0.1 and throt < 0.4:
         #     throt = 0.4
         # elif throt < 0.1 and brake_prob > 0.3:
         #     brake = 1
-
-        if spd > {0:10,1:10}.get(cmd, 20)/3.6: # 10 km/h for turning, 15km/h elsewhere
+        max_spd = {0:10,1:10}.get(cmd, 20)/3.6
+        if conf.SPEED_MODE:
+            max_spd = {0:10,1:10}.get(cmd, 40)/3.6  # 50 for skipping traffic lights :)
+        if conf.HIGH_SPEED_MODE:
+            max_spd = {0:10,1:10}.get(cmd, 100)/3.6
+        if spd > max_spd: # 10 km/h for turning, 15km/h elsewhere
             throt = 0
 
         # if cmd == 2:
@@ -250,7 +324,7 @@ def load_state_dict(model, path):
 
     from collections import OrderedDict
     new_state_dict = OrderedDict()
-    state_dict = torch.load(path)
+    state_dict = torch.load(path, map_location=torch.device('cpu'))
     
     for k, v in state_dict.items():
         name = k[7:] # remove `module.`
