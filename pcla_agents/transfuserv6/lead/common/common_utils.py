@@ -6,7 +6,16 @@ import pickle
 import pickletools
 from typing import Any, Dict, List, Tuple, Union
 
-import carla
+try:
+    import carla
+except ImportError:
+    # carla is only needed for live CARLA simulation; offline LRP does not use it.
+    # Provide a minimal stub so type annotations in this module resolve at import time.
+    class _CarlaStub:
+        class Transform: pass
+        class Location: pass
+    carla = _CarlaStub()
+
 import numpy as np
 import numpy.typing as npt
 import torch
