@@ -29,6 +29,9 @@ Steps
 Adjustable parameters are marked with  # <<< ADJUST
 """
 
+import matplotlib
+matplotlib.use("Agg")   # non-interactive backend — must be set before any pyplot import
+
 import json
 import time
 from pathlib import Path
@@ -46,12 +49,17 @@ from collections import defaultdict
 # Project imports — adjust paths to match your project layout
 # ---------------------------------------------------------------------------
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf   # global config
-
-from pcla_agents.wor.rails.models.main_model import CameraModel                  # World on Rails agent
-from pcla_agents.wor.image_agent import ImageAgent
-from pcla_functions import give_path
-from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+
+# Agent-specific LRP imports (loaded conditionally in Step 1 to avoid hard deps)
+if conf.AGENT == "TFV6":
+    from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
+    from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+    from pcla_agents.transfuserv6.lead.tfv6.tfv6 import TFv6
+else:  # WOR (default)
+    from pcla_agents.wor.rails.models.main_model import CameraModel
+    from pcla_agents.wor.image_agent import ImageAgent
+    from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 
 from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader, BaselineComputer
 from ATOMs_Analysis.detection.dataset import (
@@ -77,6 +85,7 @@ from ATOMs_Analysis.utils.visualization_carla import (
     plot_displacement_coherence_bar,
     plot_displacement_magnitude_boxplot,
     CARLA_CLASSES,
+    TFV6_CLASSES,
 )
 from ATOMs_Analysis.utils.distance_computer import DistanceComputer
 from ATOMs_Analysis.detection.detectors import MDXDetector
@@ -90,7 +99,7 @@ OUT_DIR = Path(conf.RESULTS_DIR) / "atoms_analysis"  # <<< ADJUST if needed
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 dirs = make_output_dirs(OUT_DIR)
 
-ATT_DIR = Path("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/data/WOR/test_data/attention")
+ATT_DIR = Path(conf.TEST_DATA_DIR) / "attention"
 ATT_DIR.mkdir(parents=True, exist_ok=True)
 
 print(f"\n{'='*60}")
@@ -105,21 +114,66 @@ print(f"{'='*60}\n")
 # ===========================================================================
 print("[Step 1] Loading model and initializing LRP / ATOMs...")
 
-with open("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml", 'r') as f:
-        config = yaml.safe_load(f)
-model = CameraModel(config)
-weights_path = 'C:\\Users\\paulk\\Desktop\\Unistuff\\Masterarbeit\\Code\\PCLA\\pcla_agents\\wor_pretrained/leaderboard_weights/main_model_10.th'
-model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
-model.eval()
-print(dict(model.named_modules()))
+if conf.AGENT == "TFV6":
+    # -----------------------------------------------------------------------
+    # TFV6: visiononly_resnet34, LTF mode
+    # -----------------------------------------------------------------------
+    TFV6_MODEL_DIR = Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
+    with open(TFV6_MODEL_DIR / "config.json") as f:
+        training_config = TrainingConfig(json.load(f))
 
-# Initialize LRP wrapper.
-# fix_context() will be called once the first narr_rgb frame is available
-# (see BaselineComputer, which calls it automatically).
-lrp = LRPCameraModel(
-    model_eval = model,
-    uitb       = False,             # <<< set True if using UITB-style model
-)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = TFv6(device, training_config)
+
+    ckpt_files = sorted(TFV6_MODEL_DIR.glob("model*.pth"))
+    if not ckpt_files:
+        raise FileNotFoundError(f"No model*.pth checkpoint found in {TFV6_MODEL_DIR}")
+    print(f"  Loading checkpoint: {ckpt_files[0]}")
+    state_dict = torch.load(ckpt_files[0], map_location=device, weights_only=True)
+    current_state = model.state_dict()
+    drop_keys = [k for k, v in state_dict.items()
+                 if k in current_state and current_state[k].shape != v.shape]
+    for k in drop_keys:
+        print(f"  Dropping mismatched weight: {k}")
+        state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+
+    lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
+    # TFV6 has no WoR-compatible discrete action head. ActionEntropyDetector
+    # and the WoR-style MDX are disabled; TFV6 MDX uses backbone features instead.
+    action_logits_available = False
+
+    # ------------------------------------------------------------------
+    # ANSWERED (2026-05-28): SequentialMergeBatchNorm covers all 72 BN
+    # layers in TFv6FullModelForLRP.  Canonizer is now part of the
+    # composite (see lrp_transfuser.py:_create_composite).  Probe removed.
+    # ------------------------------------------------------------------
+
+else:
+    # -----------------------------------------------------------------------
+    # WoR: CameraModel (default)
+    # -----------------------------------------------------------------------
+    WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
+    with open(WOR_WEIGHTS_DIR / "config_leaderboard.yaml", 'r') as f:
+        config = yaml.safe_load(f)
+    model = CameraModel(config)
+    model.load_state_dict(torch.load(
+        WOR_WEIGHTS_DIR / "main_model_10.th",
+        map_location=torch.device('cpu'),
+    ))
+    model.eval()
+
+    lrp = LRPCameraModel(
+        model_eval = model,
+        uitb       = False,    # <<< set True if using UITB-style model
+    )
+    action_logits_available = True
+
+# Select segmentation class map based on the active agent.
+# TFV6/LEAD data uses the 10-class TransFuser grouped scheme (save_grouped_semantic=True).
+# WoR uses the raw 23-class CARLA scheme.
+_seg_class_map = TFV6_CLASSES if conf.AGENT == "TFV6" else CARLA_CLASSES
 
 # Initialize ATOMs.
 #
@@ -127,16 +181,17 @@ lrp = LRPCameraModel(
 # Good for quick experiments; set False for the full analysis.
 atoms = ATOMsCarla(
     lrp_model     = lrp,
-    
     p_relevance   = conf.FC_RELEVANCE_FILTER,   # <<< typically 0.9 (90% mass filter)
     default_cmd   = conf.DEFAULT_CMD,   # <<< 3 = FOLLOW_LANE
     mode_analysis = conf.MODE_ANALYSIS, # <<< ADJUST: 1 is paper default
     use_reduced   = False,              # <<< ADJUST
+    class_map     = _seg_class_map,
 )
 
 print(f"  Classes tracked : {atoms.num_classes}  ({', '.join(atoms.class_names[:5])}, ...)")
 print(f"  Mode            : {atoms.mode_analysis}")
 print()
+
 
 
 # ===========================================================================
@@ -152,6 +207,7 @@ print("[Step 2] Computing ATOMs on baseline dataset...")
 RECOMPUTE_BASELINE = conf.RECOMPUTE_BASELINE  # <<< set False to load cached baseline.npz
 
 baseline_npz = Path(conf.BASELINE_DATA_DIR) / "baseline.npz"
+
 
 if RECOMPUTE_BASELINE or not baseline_npz.exists():
     computer = BaselineComputer(lrp, atoms)
@@ -172,54 +228,94 @@ print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]
 print()
 
 # ===========================================================================
-# STEP 2.5 — Compute MDX baseline
+# STEP 3 — Compute MDX baseline
 # ===========================================================================
-if conf.RECOMPUTE_MDX_BASELINE:
-    loader = BaselineDataLoader()
-    runs_dict = loader.load_all_runs(conf.BASELINE_DATA_DIR / "frames")
-    configPath = "C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml"
-    agent = ImageAgent(configPath)
-    features_list, actions_list = [], []
+# WoR  : uses model.get_features() (penultimate layer) + policy() for action
+#         classes, exactly as in Zhang et al. 2024.
+# TFV6 : backbone 512-dim features from lrp._attribute_to_backbone().
+#         Action proxy: normalised speed → throttle, speed<0.5 m/s → brake,
+#         steer=0 (no offline steering signal).  This adapts MDX to the
+#         single-stream backbone without requiring a live model forward pass
+#         through the full planning decoder.
+# ===========================================================================
+mdx = None
+if action_logits_available:
+    # -----------------------------------------------------------------------
+    # WoR MDX: penultimate-layer features + policy logits
+    # -----------------------------------------------------------------------
+    if conf.RECOMPUTE_MDX_BASELINE:
+        runs_dict = BaselineDataLoader.load_all_runs(
+            Path(conf.BASELINE_DATA_DIR) / "frames"
+        )
+        WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
+        agent = ImageAgent(str(WOR_WEIGHTS_DIR / "config_leaderboard.yaml"))
+        features_list, actions_list = [], []
 
-    for i in range(len(runs_dict["frame_idx"])):
-        if i % 20 == 0:
-            print("Extracting MDX information from frame", i)
-        steer_l, throt_l, brake_l = model.policy(torch.from_numpy(runs_dict["wide_rgb"][i]),
-                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
-                                                runs_dict["cmd"][i])
-        features = model.get_features(torch.from_numpy(runs_dict["wide_rgb"][i]),
-                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
-                                                runs_dict["speed"][i])
-        features_list.append(features[0].cpu().detach().numpy())
-        # Interpolate logits
-        steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
-        throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
-        brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
-        action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
-        brake_prob = float(action_prob[-1])
-        steer = float(agent.steers @ torch.softmax(steer_logit, dim=0))
-        throt = float(agent.throts @ torch.softmax(throt_logit, dim=0))
+        for i in range(len(runs_dict["frame_idx"])):
+            if i % 20 == 0:
+                print("Extracting MDX information from frame", i)
+            wide = torch.from_numpy(runs_dict["wide_rgb"][i])
+            narr = torch.from_numpy(runs_dict["narr_rgb"][i])
+            steer_l, throt_l, brake_l = model.policy(wide, narr, runs_dict["cmd"][i])
+            features = model.get_features(wide, narr, runs_dict["speed"][i])
+            features_list.append(features[0].cpu().detach().numpy())
+            steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
+            throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
+            brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
+            action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
+            brake_prob  = float(action_prob[-1])
+            steer       = float(agent.steers @ torch.softmax(steer_logit, dim=0))
+            throt       = float(agent.throts @ torch.softmax(throt_logit, dim=0))
+            actions_list.append([steer, throt, brake_prob])
 
-        actions_list.append([steer, throt, brake_prob])
+        mdx = MDXDetector(n_pca_components=50)
+        print("\nFitting MDX Detector!\n")
+        mdx.fit(np.array(features_list), np.array(actions_list))
+        mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
+    else:
+        mdx = MDXDetector()
+        mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
 
-    mdx = MDXDetector(n_pca_components=50)
-    print("\nFitting MDX Detector!\n")
-    features_list_np = np.array(features_list)
-    actions_list_np = np.array(actions_list)
-    mdx.fit(features_list_np, actions_list_np)
-    mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
-else:
-    mdx = mdx = MDXDetector()
-    mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+elif conf.AGENT == "TFV6":
+    # -----------------------------------------------------------------------
+    # TFV6 MDX: backbone 512-dim features + speed-derived action proxy
+    # -----------------------------------------------------------------------
+    if conf.RECOMPUTE_MDX_BASELINE:
+        runs_dict = BaselineDataLoader.load_all_runs(
+            Path(conf.BASELINE_DATA_DIR) / "frames"
+        )
+        features_list, actions_list = [], []
+        n_mdx = len(runs_dict["frame_idx"])
+
+        for i in range(n_mdx):
+            if i % 20 == 0:
+                print(f"Extracting TFV6 MDX backbone features from frame {i}/{n_mdx}")
+            wide_t = torch.from_numpy(runs_dict["wide_rgb"][i]).unsqueeze(0).float().to(lrp.device)
+            with torch.no_grad():
+                feat = lrp.backbone_model(wide_t).squeeze(0).clamp(min=0).cpu().numpy()
+            features_list.append(feat)   # [512] raw activations
+
+            spd           = float(runs_dict["speed"][i])
+            brake_proxy   = 1.0 if spd < 0.5 else 0.0
+            throttle_proxy = min(spd / 25.0, 1.0)     # normalised by max_speed
+            actions_list.append([0.0, throttle_proxy, brake_proxy])
+
+        mdx = MDXDetector(n_pca_components=50)
+        print("\nFitting TFV6 MDX Detector!\n")
+        mdx.fit(np.array(features_list), np.array(actions_list))
+        mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
+    else:
+        mdx = MDXDetector()
+        mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
 
 
 # ===========================================================================
-# STEP 3 — Fit single-Gaussian Mahalanobis detector
+# STEP 4 — Fit single-Gaussian Mahalanobis detector
 # ===========================================================================
 # This is the primary detector: Mahalanobis distance from the baseline mean
 # in the full attention-profile space.
 # ---------------------------------------------------------------------------
-print("[Step 3] Fitting single-Gaussian Mahalanobis detector...")
+print("[Step 4] Fitting single-Gaussian Mahalanobis detector...")
 
 mahal_detector = MahalanobisDetector(
     ridge = conf.MAHAL_RIDGE,   # <<< 1e-6 default; increase to 1e-4 if unstable
@@ -239,13 +335,13 @@ print()
 
 
 # ===========================================================================
-# STEP 4 — GMM model selection: sweep K, pick best by BIC
+# STEP 5 — GMM model selection: sweep K, pick best by BIC
 # ===========================================================================
 # We check K=1..MAX_K and pick the K that minimises BIC.
 # AIC tends to favour more components; BIC is more conservative.
 # Both are plotted so you can make an informed choice.
 # ---------------------------------------------------------------------------
-print("[Step 4] GMM model selection (BIC/AIC sweep)...")
+print("[Step 5] GMM model selection (BIC/AIC sweep)...")
 
 MAX_K = conf.GMM_MAX_K   # <<< e.g. 8 — increase if you expect many driving modes
 
@@ -267,15 +363,15 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
-#N_COMPONENTS = 3
+N_COMPONENTS = 1
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 
 
 # ===========================================================================
-# STEP 5 — Fit GMM
+# STEP 6 — Fit GMM
 # ===========================================================================
-print(f"[Step 5] Fitting GMM with K={N_COMPONENTS}...")
+print(f"[Step 6] Fitting GMM with K={N_COMPONENTS}...")
 
 gmm = GMMClustering(
     n_components    = N_COMPONENTS,
@@ -300,9 +396,9 @@ print()
 
 
 # ===========================================================================
-# STEP 6 — Visualize baseline
+# STEP 7 — Visualize baseline
 # ===========================================================================
-print("[Step 6] Visualizing baseline attention profiles...")
+print("[Step 7] Visualizing baseline attention profiles...")
 
 # --- 6a: Mean attention bar chart ---
 # Shows which semantic classes the agent attends to on average.
@@ -419,7 +515,7 @@ print("  Figures saved.\n")
 
 
 # ===========================================================================
-# STEP 7 — Apply perturbations to test set
+# STEP 8 — Apply perturbations to test set
 # ===========================================================================
 # The perturbation mix is defined here.  Fractions must sum to 1.0.
 # Add, remove, or reweight entries to match your experimental design.
@@ -429,7 +525,7 @@ print("  Figures saved.\n")
 #   "gaussian_noise", "brightness", "dropout", "fgsm", "right_camera_loss"
 # ---------------------------------------------------------------------------
 if conf.REAPPLY_PERTURBATIONS:
-    print("[Step 7] Applying perturbations to test set...")
+    print("[Step 8] Applying perturbations to test set...")
 
     # Import your PerturbationManager
     from ATOMs_Analysis.perturbation_manager import PerturbationManager
@@ -437,13 +533,24 @@ if conf.REAPPLY_PERTURBATIONS:
 
     # Define the perturbation mix.
     # <<< ADJUST fractions and perturbation types to your experiment
-    spec = PerturbationSpec([
-        PerturbationEntry(fraction=0.2, perturbation=None),
-        PerturbationEntry(fraction=0.20, perturbation="gaussian_noise", intensity=conf.NOISE_INTENSITY),
-        PerturbationEntry(fraction=0.20, perturbation="brightness_scale",     intensity=conf.BRIGHTNESS_INTENSITY),
-        PerturbationEntry(fraction=0.2, perturbation="camera_loss", intensity=0),
-        PerturbationEntry(fraction=0.2, perturbation="pgd", intensity=conf.EPSILON,  fgsm_target="max_steer")
-    ])
+    if conf.AGENT == "TFV6":
+        # PGD requires model.policy() which is WoR-specific and needs route
+        # context unavailable offline.  Replace with an extra gaussian_noise
+        # entry at a higher intensity so all four slots remain populated.
+        spec = PerturbationSpec([
+            PerturbationEntry(fraction=0.25, perturbation=None),
+            PerturbationEntry(fraction=0.25, perturbation="gaussian_noise",  intensity=conf.NOISE_INTENSITY),
+            PerturbationEntry(fraction=0.25, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
+            PerturbationEntry(fraction=0.25, perturbation="camera_loss",     intensity=0),
+        ])
+    else:
+        spec = PerturbationSpec([
+            PerturbationEntry(fraction=0.2, perturbation=None),
+            PerturbationEntry(fraction=0.20, perturbation="gaussian_noise",   intensity=conf.NOISE_INTENSITY),
+            PerturbationEntry(fraction=0.20, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
+            PerturbationEntry(fraction=0.2,  perturbation="camera_loss",      intensity=0),
+            PerturbationEntry(fraction=0.2,  perturbation="pgd",              intensity=conf.EPSILON, fgsm_target="max_steer"),
+        ])
 
     applier = PerturbationApplier(pm, model)
     labeled_path = applier.apply(
@@ -460,75 +567,78 @@ print()
 
 
 # ===========================================================================
-# STEP 8 — Compute ATOMs profiles on labeled test set
+# STEP 9 — Compute ATOMs profiles on labeled test set
 # ===========================================================================
 # We process each test frame through ATOMsCarla to get attention profiles,
 # then collect them alongside their ground-truth labels for evaluation.
 # ---------------------------------------------------------------------------
 if conf.RECOMPUTE_TEST_ATOMS:
-    print("[Step 8] Computing ATOMs on test set...")
+    print("[Step 9] Computing ATOMs on test set...")
 
     atoms.reset()   # clear any accumulated state from baseline computation
 
     n_test          = test_data["wide_rgb"].shape[0]
     test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = []   # for action entropy detector — collect raw logits per frame
+    test_logits_all = [] if action_logits_available else None
+
+    has_narr_test     = test_data["narr_rgb"]     is not None
+    has_seg_narr_test = test_data["seg_red_narr"] is not None
 
     t0 = time.time()
     for i in range(n_test):
-        wide = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()   # [1, 3, H, W]
-        narrow = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()   # [1, 3, H, W]
-        seg_wide  = test_data["seg_red_wide"][i]
-        seg_narr  = test_data["seg_red_narr"][i]                                   # [H, W]
-        cmd  = int(test_data["cmd"][i])
+        wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
+        narrow   = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()   if has_narr_test     else None
+        seg_wide = test_data["seg_red_wide"][i]
+        seg_narr = test_data["seg_red_narr"][i]                             if has_seg_narr_test else None
+        cmd      = int(test_data["cmd"][i])
 
-        # process_frame returns the row-normalized attention for this frame
         profile = atoms.process_frame(wide, narrow, seg_wide, seg_narr, cmd=cmd)
         test_profiles[i] = profile
 
-        # Also collect the action logits for the entropy detector.
-        # We run a plain forward pass (no LRP) for this.
-        # model.policy() handles /255 and normalization internally — pass raw uint8 values.
-        with torch.no_grad():
-            narr = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
-            steer, throt, brake = model.policy(wide, narr, cmd=cmd)
-            # brake is a 0-dim scalar — unsqueeze before cat
-            flat_logits = torch.cat([
-                steer.flatten(),
-                throt.flatten(),
-                brake.unsqueeze(0).flatten(),
-            ]).cpu().numpy()
-        test_logits_all.append(flat_logits)
+        # Action logits for entropy detector (WoR only)
+        if action_logits_available:
+            with torch.no_grad():
+                steer, throt, brake = model.policy(wide, narrow, cmd=cmd)
+                flat_logits = torch.cat([
+                    steer.flatten(),
+                    throt.flatten(),
+                    brake.unsqueeze(0).flatten(),
+                ]).cpu().numpy()
+            test_logits_all.append(flat_logits)
 
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
             print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
 
     atoms.reset()
-    test_logits_all = np.array(test_logits_all, dtype=np.float32)   # [N, num_logits]
-    test_labels     = test_data["label"].astype(np.int32)           # [N] 0=clean, 1=perturbed
+    if action_logits_available:
+        test_logits_all = np.array(test_logits_all, dtype=np.float32)   # [N, num_logits]
+    test_labels = test_data["label"].astype(np.int32)
     print(f"  Done. {n_test} frames processed.\n")
 
-    np.save(ATT_DIR / "test_profiles.npy",  test_profiles)
-    np.save(ATT_DIR / "test_logits.npy",    test_logits_all)
+    np.save(ATT_DIR / "test_profiles.npy", test_profiles)
+    if action_logits_available:
+        np.save(ATT_DIR / "test_logits.npy", test_logits_all)
     print("  Test profiles saved.\n")
 
 else:
     # Reload test data and pre-computed profiles
-    test_data     = LabeledTestLoader.load()
-    test_profiles = np.load(ATT_DIR / "test_profiles.npy")
-    test_logits_all = np.load(ATT_DIR / "test_logits.npy")
-    test_labels   = test_data["label"].astype(np.int32)
+    test_data       = LabeledTestLoader.load()
+    test_profiles   = np.load(ATT_DIR / "test_profiles.npy")
+    test_logits_all = (
+        np.load(ATT_DIR / "test_logits.npy") if action_logits_available else None
+    )
+    test_labels     = test_data["label"].astype(np.int32)
 
     print(f"  Loaded {len(test_profiles)} test profiles, "
           f"{int(test_labels.sum())} perturbed.\n")
 
 
 # ===========================================================================
-# STEP 8.5 — Perturbation trajectory analysis in ATOMs attention space
+# STEP 10 — Perturbation trajectory analysis in ATOMs attention space
 # ===========================================================================
 # Compares how each perturbation type moves samples in attention space by:
-#   1. Computing ATOMs profiles for the clean test frames (mirroring Step 8).
+#   1. Computing ATOMs profiles for the clean test frames (mirroring Step 9).
 #   2. Loading pre-computed ATOMs profiles for the perturbed test frames
 #      (test_profiles.npy, produced in Step 8).
 #   3. Matching clean ↔ perturbed pairs via the composite key (run_id, frame_idx).
@@ -545,9 +655,9 @@ else:
 #   atoms          — ATOMsCarla instance (will be reset before and after use)
 #   baseline_data  — dict from BaselineDataLoader (used to fit the PCA axes and
 #                    to supply the covariance for whitened PCA)
-#   baseline_profiles — np.ndarray [N_b, C]  (from Step 6/7)
+#   baseline_profiles — np.ndarray [N_b, C]  (from Step 7)
 #   test_data      — dict from LabeledTestLoader.load() (labeled test set)
-#   test_profiles  — np.ndarray [N_t, C]     (perturbed profiles, from Step 8)
+#   test_profiles  — np.ndarray [N_t, C]     (perturbed profiles, from Step 9)
 #   test_labels    — np.ndarray [N_t] int    (0=clean, 1=perturbed)
 #   OUT_DIR        — pathlib.Path  output directory
 #   conf           — ExperimentConfig
@@ -559,8 +669,8 @@ TRAJ_OUT_DIR = OUT_DIR / "trajectory_analysis"
 TRAJ_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Class names in index order for annotation (visualization optional)
-_max_class   = max(CARLA_CLASSES.keys()) + 1
-class_names  = [CARLA_CLASSES.get(i, f"cls_{i}") for i in range(_max_class)]
+_max_class   = max(_seg_class_map.keys()) + 1
+class_names  = [_seg_class_map.get(i, f"cls_{i}") for i in range(_max_class)]
 
 
 # ---------------------------------------------------------------------------
@@ -576,23 +686,28 @@ class_names  = [CARLA_CLASSES.get(i, f"cls_{i}") for i in range(_max_class)]
 CLEAN_PROFILES_PATH = TRAJ_OUT_DIR / "clean_test_profiles.npy"
 
 if CLEAN_PROFILES_PATH.exists():
-    print("[Step 9a] Loading cached clean test profiles...")
+    print("[Step 10a] Loading cached clean test profiles...")
     clean_raw         = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
     clean_profiles    = np.load(CLEAN_PROFILES_PATH)
     print(f"  Loaded {len(clean_profiles)} clean profiles.\n")
 else:
-    print("[Step 9a] Computing ATOMs profiles on clean test frames...")
+    print("[Step 10a] Computing ATOMs profiles on clean test frames...")
     clean_raw      = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
     n_clean        = clean_raw["wide_rgb"].shape[0]
     clean_profiles = np.zeros((n_clean, atoms.num_classes), dtype=np.float64)
 
+    has_narr_clean     = clean_raw["narr_rgb"]     is not None
+    has_seg_narr_clean = clean_raw["seg_red_narr"] is not None
+
     atoms.reset()
     t0 = time.time()
     for i in range(n_clean):
-        wide    = torch.from_numpy(clean_raw["wide_rgb"][i:i+1]).float()  # [1, 3, H, W]
-        seg     = clean_raw["seg_red"][i]                                  # [H, W]
-        cmd     = int(clean_raw["cmd"][i])
-        profile = atoms.process_frame(wide, seg, cmd=cmd)
+        wide     = torch.from_numpy(clean_raw["wide_rgb"][i:i+1]).float()
+        narr     = torch.from_numpy(clean_raw["narr_rgb"][i:i+1]).float()   if has_narr_clean     else None
+        seg_wide = clean_raw["seg_red_wide"][i]
+        seg_narr = clean_raw["seg_red_narr"][i]                             if has_seg_narr_clean else None
+        cmd      = int(clean_raw["cmd"][i])
+        profile  = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd)
         clean_profiles[i] = profile
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
@@ -615,7 +730,7 @@ clean_key_to_idx: dict = {
     for i in range(len(clean_profiles))
 }
 
-print(f"[Step 9b] Clean index built: {len(clean_key_to_idx)} unique (run_id, frame_idx) pairs.")
+print(f"[Step 10b] Clean index built: {len(clean_key_to_idx)} unique (run_id, frame_idx) pairs.")
 
 
 # ---------------------------------------------------------------------------
@@ -658,7 +773,7 @@ paired_dict = {
     for name, pair in paired_dict.items()
 }
 
-print(f"[Step 9c] Matched {n_matched} perturbed frames to clean originals.")
+print(f"[Step 10c] Matched {n_matched} perturbed frames to clean originals.")
 if n_unmatched:
     print(f"  WARNING: {n_unmatched} frames could not be matched (run_id/frame_idx mismatch).")
 for name, pair in paired_dict.items():
@@ -670,7 +785,7 @@ print()
 # 8.5d — Displacement statistics
 # ---------------------------------------------------------------------------
 
-print("[Step 9d] Computing displacement statistics...")
+print("[Step 10d] Computing displacement statistics...")
 stats = compute_perturbation_displacement_stats(paired_dict)
 
 stats_text = format_displacement_stats_text(stats)
@@ -686,7 +801,7 @@ print(f"\n  Stats saved → {stats_path}\n")
 # 8.5f — Figures
 # ---------------------------------------------------------------------------
 
-print("[Step 9f] Generating figures...")
+print("[Step 10f] Generating figures...")
 
 # --- Standard PCA trajectories ---
 fig_traj, proj_info = plot_pca_perturbation_trajectories(
@@ -720,13 +835,13 @@ save_figure(fig_coh, TRAJ_OUT_DIR / "displacement_coherence.png")
 fig_mag = plot_displacement_magnitude_boxplot(stats)
 save_figure(fig_mag, TRAJ_OUT_DIR / "displacement_magnitude.png")
 
-print(f"\n[Step 9] Done. All outputs in {TRAJ_OUT_DIR}\n")
+print(f"\n[Step 10] Done. All outputs in {TRAJ_OUT_DIR}\n")
 
 
 # ===========================================================================
-# STEP 9 — Score all test profiles with every detector
+# STEP 11 — Score all test profiles with every detector
 # ===========================================================================
-print("[Step 9] Scoring test profiles...")
+print("[Step 11] Scoring test profiles...")
 
 # --- 9a: Single-Gaussian Mahalanobis (ATOMs) ---
 # compute_mahalanobis() takes (mu_ref, cov_ref, mu_target) — called once per frame.
@@ -789,31 +904,49 @@ gmm_results = [
 scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
 nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
 
-# --- 9c: Action entropy ---
-entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
-scores_entropy   = entropy_detector.score_batch(test_logits_all)
+# --- 9c: Action entropy (WoR only) ---
+scores_entropy = None
+if action_logits_available and test_logits_all is not None:
+    entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
+    scores_entropy   = entropy_detector.score_batch(test_logits_all)
 
 # ----- 9d: MDX detection ----
-scores_list = []
-
-for i in range(len(test_data["frame_idx"])):
-    features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
-                                         torch.from_numpy(test_data["narr_rgb"][i]),
-                                         test_data["speed"][i])
-    score = mdx.score(features[0].cpu().detach().numpy())
-    scores_list.append(score)
-scores_mdx = np.array(scores_list)
+mdx = None  # Demporarily disabled
+scores_mdx = None
+if mdx is not None:
+    scores_list = []
+    n_mdx_test = len(test_data["frame_idx"])
+    for i in range(n_mdx_test):
+        if i % 100 == 0:
+            print(f"  MDX scoring frame {i}/{n_mdx_test}")
+        if action_logits_available:
+            # WoR: penultimate-layer features via model.get_features()
+            features = model.get_features(
+                torch.from_numpy(test_data["wide_rgb"][i]),
+                torch.from_numpy(test_data["narr_rgb"][i]),
+                test_data["speed"][i],
+            )
+            feat_vec = features[0].cpu().detach().numpy()
+        else:
+            # TFV6: raw 512-dim backbone activations (clamped, pre-normalisation)
+            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0).float().to(lrp.device)
+            with torch.no_grad():
+                feat_vec = lrp.backbone_model(wide_t).squeeze(0).clamp(min=0).cpu().numpy()
+        scores_list.append(mdx.score(feat_vec))
+    scores_mdx = np.array(scores_list)
 
 # --- Quick sanity check ---
 _knn_sanity = [(f"k-NN (k={k})", scores_knn_by_k[k]) for k in KNN_K_VALUES]
+_optional = [
+    ("Action entropy",  scores_entropy  if action_logits_available else None),
+    ("MDX Detection",   scores_mdx),
+]
 for name, scores in [
     ("Mahalanobis (single)", scores_mahal_single),
     ("Mahalanobis (GMM)",    scores_mahal_gmm),
-    ("Action entropy",       scores_entropy),
     ("Euclidean",            scores_euclid_single),
     ("Jensen-Shannon",       scores_jsd_single),
-    ("MDX Detection",        scores_mdx),
-] + _knn_sanity:
+] + [(n, s) for n, s in _optional if s is not None] + _knn_sanity:
     clean_mean = scores[test_labels == 0].mean()
     pert_mean  = scores[test_labels == 1].mean()
     sep        = pert_mean - clean_mean   # positive = detector pointing the right way
@@ -823,9 +956,9 @@ print()
 
 
 # ===========================================================================
-# STEP 10 — Evaluate each detector (ROC / AUC / Youden threshold)
+# STEP 12 — Evaluate each detector (ROC / AUC / Youden threshold)
 # ===========================================================================
-print("[Step 10] Evaluating detectors...")
+print("[Step 12] Evaluating detectors...")
 
 evaluator = DetectorEvaluator()
 
@@ -843,7 +976,7 @@ results_entropy = evaluator.evaluate(
     scores        = scores_entropy,
     labels        = test_labels,
     detector_name = "Action entropy",
-)
+) if action_logits_available else None
 
 results_jsd = evaluator.evaluate(
     scores        = scores_jsd_single,
@@ -877,10 +1010,14 @@ results_mdx = evaluator.evaluate(
     scores        = scores_mdx,
     labels        = test_labels,
     detector_name = "MDX Detection",
-)
+) if scores_mdx is not None else None
 
-all_results = [results_single, results_gmm, results_entropy, results_euclidean, results_jsd, results_knn, results_mdx]
-#all_results = [results_single, results_gmm, results_entropy, results_euclidean, results_jsd, results_mdx]
+all_results = [
+    r for r in [
+        results_single, results_gmm, results_entropy,
+        results_euclidean, results_jsd, results_knn, results_mdx,
+    ] if r is not None
+]
 evaluator.compare(all_results)
 
 # Save each result as JSON
@@ -896,13 +1033,13 @@ print()
 
 
 # ===========================================================================
-# STEP 11 — Per-perturbation breakdown
+# STEP 13 — Per-perturbation breakdown
 # ===========================================================================
 # Evaluate each detector on each perturbation type independently.
 # This reveals which perturbations are detectable and which are not,
 # which is important for your thesis narrative.
 # ---------------------------------------------------------------------------
-print("[Step 11] Per-perturbation breakdown...")
+print("[Step 13] Per-perturbation breakdown...")
 
 split_data  = LabeledTestLoader.split_by_perturbation(test_data)
 perturb_results: dict = {}
@@ -913,16 +1050,12 @@ for pert_name, subset in split_data.items():
 
     # Indices of this subset in the full test array
     mask = test_data["perturbation"] == pert_name
-    sub_profiles = test_profiles[mask]
-    sub_logits   = test_logits_all[mask]
 
     # Build labels: clean frames from the full set vs this perturbation type.
     # Evaluation is: can the detector separate clean from *this specific* perturbation?
-    clean_mask      = test_data["perturbation"] == "clean"
-    eval_mask       = clean_mask | mask
-    eval_profiles   = test_profiles[eval_mask]
-    eval_logits     = test_logits_all[eval_mask]
-    eval_labels     = test_labels[eval_mask]
+    clean_mask  = test_data["perturbation"] == "clean"
+    eval_mask   = clean_mask | mask
+    eval_labels = test_labels[eval_mask]
 
     r_single = evaluator.evaluate(
         scores_mahal_single[eval_mask], eval_labels,
@@ -931,10 +1064,6 @@ for pert_name, subset in split_data.items():
     r_gmm = evaluator.evaluate(
         scores_mahal_gmm[eval_mask], eval_labels,
         detector_name=f"Mahalanobis-GMM | {pert_name}",
-    )
-    r_entropy = evaluator.evaluate(
-        scores_entropy[eval_mask], eval_labels,
-        detector_name=f"Entropy | {pert_name}",
     )
     r_jsd = evaluator.evaluate(
         scores_jsd_single[eval_mask], eval_labels,
@@ -954,12 +1083,19 @@ for pert_name, subset in split_data.items():
     r_mdx = evaluator.evaluate(
         scores_mdx[eval_mask], eval_labels,
         detector_name=f"MDX Detection | {pert_name}",
-    )
+    ) if scores_mdx is not None else None
 
+    r_entropy = evaluator.evaluate(
+        scores_entropy[eval_mask], eval_labels,
+        detector_name=f"Entropy | {pert_name}",
+    ) if action_logits_available else None
 
-    perturb_results[pert_name] = [r_single, r_gmm, r_entropy, r_jsd, r_euclidean, r_mdx, r_knn]
+    perturb_results[pert_name] = [
+        r for r in [r_single, r_gmm, r_entropy, r_jsd, r_euclidean, r_mdx, r_knn]
+        if r is not None
+    ]
     print(f"\n  Perturbation: {pert_name}")
-    evaluator.compare([r_single, r_gmm, r_entropy])
+    evaluator.compare([r for r in [r_single, r_gmm, r_entropy] if r is not None])
 
 with open(OUT_DIR / "results_per_perturbation.json", "w") as f:
     json.dump(
@@ -970,9 +1106,9 @@ print()
 
 
 # ===========================================================================
-# STEP 12 — Visualize detection results
+# STEP 14 — Visualize detection results
 # ===========================================================================
-print("[Step 12] Saving detection figures...")
+print("[Step 14] Saving detection figures...")
 
 # --- 12a: ROC curves — all detectors on full test set ---
 fig_roc = plot_roc(

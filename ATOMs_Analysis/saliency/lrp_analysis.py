@@ -20,7 +20,7 @@ Key design decisions:
 import torch
 import torch.nn as nn
 from zennit.rules import Pass, WSquare, AlphaBeta
-from zennit.types import Convolution, Activation, AvgPool
+from zennit.types import Convolution, Activation
 from zennit.types import Linear as AnyLinear
 from zennit.composites import SpecialFirstLayerMapComposite
 from zennit.attribution import Gradient
@@ -176,7 +176,10 @@ class LRPCameraModel:
     def _create_composite(self) -> SpecialFirstLayerMapComposite:
         layer_map = [
             (Activation,  Pass()),
-            (AvgPool,     Pass()),
+            # AvgPool intentionally excluded: Pass() returns the pooled gradient
+            # [B,C,1,1] unchanged, but the pre-pool tensor is [B,C,H,W] — size
+            # mismatch. Standard autograd backward (no rule) correctly expands the
+            # gradient to [B,C,H,W] with uniform spatial distribution.
             (Convolution, AlphaBeta(alpha=self.alpha, beta=self.beta)),
             (AnyLinear,   AlphaBeta(alpha=self.alpha, beta=self.beta, zero_params='bias')),
         ]

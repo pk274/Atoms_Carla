@@ -5,8 +5,8 @@ from typing import Any, Dict, List
 import torch
 from beartype import beartype
 
-from lead.common.config_base import BaseConfig, overridable_property
-from lead.common.constants import (
+from pcla_agents.transfuserv6.lead.common.config_base import BaseConfig, overridable_property
+from pcla_agents.transfuserv6.lead.common.constants import (
     SOURCE_DATASET_NAME_MAP,
     CarlaImageCroppingType,
     NavSimBBClass,
@@ -41,6 +41,8 @@ class TrainingConfig(BaseConfig):
             return TargetDataset.CARLA_LEADERBOARD2_3CAMERAS
         elif "carla_leaderboard2" in self.carla_root:
             return TargetDataset.CARLA_LEADERBOARD2_3CAMERAS
+        elif "carla_leaderboad2_v10" in self.carla_root:  # 6-camera v10 training dataset
+            return TargetDataset.CARLA_LEADERBOARD2_6CAMERAS
         elif "carla_leaderboad2" in self.carla_root:  # tolerate missing 'r' typo in path
             return TargetDataset.CARLA_LEADERBOARD2_3CAMERAS
         elif self.use_waymo_e2e_data and not self.mixed_data_training:

@@ -29,6 +29,9 @@ Steps
 Adjustable parameters are marked with  # <<< ADJUST
 """
 
+import matplotlib
+matplotlib.use("Agg")   # non-interactive backend — must be set before any pyplot import
+
 import json
 import time
 from pathlib import Path
@@ -46,11 +49,16 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf   # global config
 
-from pcla_agents.wor.rails.models.main_model import CameraModel                  # World on Rails agent
-from pcla_agents.wor.image_agent import ImageAgent
-from pcla_functions import give_path
-from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+
+if conf.AGENT == "TFV6":
+    from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
+    from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+    from pcla_agents.transfuserv6.lead.tfv6.tfv6 import TFv6
+else:  # WoR
+    from pcla_agents.wor.rails.models.main_model import CameraModel
+    from pcla_agents.wor.image_agent import ImageAgent
+    from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 
 from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader, BaselineComputer
 from ATOMs_Analysis.detection.dataset import (
@@ -94,21 +102,32 @@ print(f"{'='*60}\n")
 # ===========================================================================
 print("[Step 1] Loading model and initializing LRP / ATOMs...")
 
-with open("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml", 'r') as f:
+if conf.AGENT == "TFV6":
+    TFV6_MODEL_DIR = Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
+    with open(TFV6_MODEL_DIR / "config.json") as f:
+        training_config = TrainingConfig(json.load(f))
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = TFv6(device, training_config)
+    ckpt_files = sorted(TFV6_MODEL_DIR.glob("model*.pth"))
+    state_dict = torch.load(ckpt_files[0], map_location=device, weights_only=True)
+    current_state = model.state_dict()
+    drop_keys = [k for k, v in state_dict.items()
+                 if k in current_state and current_state[k].shape != v.shape]
+    for k in drop_keys:
+        state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+    lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
+    action_logits_available = False
+else:  # WoR
+    WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
+    with open(WOR_WEIGHTS_DIR / "config_leaderboard.yaml") as f:
         config = yaml.safe_load(f)
-model = CameraModel(config)
-weights_path = 'C:\\Users\\paulk\\Desktop\\Unistuff\\Masterarbeit\\Code\\PCLA\\pcla_agents\\wor_pretrained/leaderboard_weights/main_model_10.th'
-model.load_state_dict(torch.load(weights_path, map_location=torch.device('cpu')))
-model.eval()
-print(dict(model.named_modules()))
-
-# Initialize LRP wrapper.
-# fix_context() will be called once the first narr_rgb frame is available
-# (see BaselineComputer, which calls it automatically).
-lrp = LRPCameraModel(
-    model_eval = model,
-    uitb       = False,             # <<< set True if using UITB-style model
-)
+    model = CameraModel(config)
+    model.load_state_dict(torch.load(WOR_WEIGHTS_DIR / "main_model_10.th", map_location="cpu"))
+    model.eval()
+    lrp = LRPCameraModel(model_eval=model, uitb=False)
+    action_logits_available = True
 
 # Initialize ATOMs.
 #
@@ -161,9 +180,10 @@ print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]
 print()
 
 # ===========================================================================
-# STEP 2.5 — Compute MDX baseline
+# STEP 2.5 — Compute MDX baseline  (WoR only — requires action logits)
 # ===========================================================================
-if conf.RECOMPUTE_MDX_BASELINE:
+mdx = None
+if action_logits_available and conf.RECOMPUTE_MDX_BASELINE:
     loader = BaselineDataLoader()
     runs_dict = loader.load_all_runs(conf.BASELINE_DATA_DIR / "frames")
     configPath = "C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml"
@@ -197,8 +217,8 @@ if conf.RECOMPUTE_MDX_BASELINE:
     actions_list_np = np.array(actions_list)
     mdx.fit(features_list_np, actions_list_np)
     mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
-else:
-    mdx = mdx = MDXDetector()
+elif action_logits_available:
+    mdx = MDXDetector()
     mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
 
 
@@ -303,78 +323,102 @@ test_data = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
 # We process each test frame through ATOMsCarla to get attention profiles,
 # then collect them alongside their ground-truth labels for evaluation.
 # ---------------------------------------------------------------------------
-from ATOMs_Analysis.utils.visualization_carla import visualize_relevance
+from ATOMs_Analysis.utils.visualization_carla import visualize_relevance, visualize_comparative_relevance
 REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME
 REL_DIR.mkdir(parents=True, exist_ok=True)
 
+has_narr_test     = test_data.get("narr_rgb")     is not None
+has_seg_narr_test = test_data.get("seg_red_narr") is not None
+
 if conf.RECOMPUTE_TEST_ATOMS:
     print("[Step 8] Computing ATOMs on test set...")
-    atoms.reset()   # clear any accumulated state from baseline computation
+    atoms.reset()
     n_test          = test_data["wide_rgb"].shape[0]
     test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = []   # for action entropy detector — collect raw logits per frame
+    test_logits_all = [] if action_logits_available else None
     t0 = time.time()
     for i in range(n_test):
-        wide = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()   # [1, 3, H, W]
-        narr = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
-        seg_wide  = test_data["seg_red_wide"][i]                                   # [H, W]
-        seg_narr  = test_data["seg_red_narr"][i]
-        cmd  = int(test_data["cmd"][i])
-        spd = float(test_data["speed"][i])
-        # process_frame returns the row-normalized attention for this frame
+        wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
+        narr     = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float() if has_narr_test else None
+        seg_wide = test_data["seg_red_wide"][i]
+        seg_narr = test_data["seg_red_narr"][i] if has_seg_narr_test else None
+        cmd      = int(test_data["cmd"][i])
+        spd      = float(test_data["speed"][i])
+
         profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
         test_profiles[i] = profile
-        savepath_rel_n = REL_DIR / f"relevance_narr_{i}"
+
         savepath_rel_w = REL_DIR / f"relevance_wide_{i}"
         rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
-        rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
+
+        # Normal map (default seed — what feeds _hierarchical)
+        default_wide = atoms.saliency_data_wide_default
+        if default_wide is None:
+            default_wide = atoms.saliency_data_wide_brake if atoms._last_is_brake else atoms.saliency_data_wide_drive
+        visualize_relevance(default_wide, rgb_image=rgb_wide,
+                            save_path=savepath_rel_w, is_brake=atoms._last_is_brake)
+
         if conf.PLOT_COMPARATIVE_REL:
-            comp_map_wide = atoms.saliency_data_wide_drive - atoms.saliency_data_wide_brake
-            comp_map_narr = atoms.saliency_data_narr_drive - atoms.saliency_data_narr_brake
-            global_max = max(comp_map_wide.abs().max().item(), comp_map_narr.abs().max().item()) + 1e-12
-            comp_map_wide = comp_map_wide / global_max
-            comp_map_narr = comp_map_narr / global_max
-            visualize_comparative_relevance(comp_map_wide, rgb_image=rgb_wide, save_path=f"{savepath_rel_w}_comparative",
-                                            is_brake=atoms._last_is_brake)
-            visualize_comparative_relevance(comp_map_narr, rgb_image=rgb_narr, save_path=f"{savepath_rel_n}_comparative",
-                                            is_brake=atoms._last_is_brake)
-                
-        if atoms._last_is_brake:
-            visualize_relevance(atoms.saliency_data_wide_brake, rgb_image=rgb_wide, save_path=savepath_rel_w, is_brake=True)
-            visualize_relevance(atoms.saliency_data_narr_brake, rgb_image=rgb_narr, save_path=savepath_rel_n, is_brake=True)
-        else:
-            visualize_relevance(atoms.saliency_data_wide_drive, rgb_image=rgb_wide, save_path=savepath_rel_w, is_brake=False)
-            visualize_relevance(atoms.saliency_data_narr_drive, rgb_image=rgb_narr, save_path=savepath_rel_n, is_brake=False)
-        # Also collect the action logits for the entropy detector.
-        # We run a plain forward pass (no LRP) for this.
-        # model.policy() handles /255 and normalization internally — pass raw uint8 values.
-        with torch.no_grad():
-            narr = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
-            steer, throt, brake = model.policy(wide, narr, cmd=cmd)
-            # brake is a 0-dim scalar — unsqueeze before cat
-            flat_logits = torch.cat([
-                steer.flatten(),
-                throt.flatten(),
-                brake.unsqueeze(0).flatten(),
-            ]).cpu().numpy()
-        test_logits_all.append(flat_logits)
+            # Brake map (one-hot bin 0 seed)
+            if atoms.saliency_data_wide_brake is not None:
+                visualize_relevance(atoms.saliency_data_wide_brake, rgb_image=rgb_wide,
+                                    save_path=f"{savepath_rel_w}_brake", is_brake=True)
+            # Drive map (one-hot best non-brake bin seed)
+            if atoms.saliency_data_wide_drive is not None:
+                visualize_relevance(atoms.saliency_data_wide_drive, rgb_image=rgb_wide,
+                                    save_path=f"{savepath_rel_w}_drive", is_brake=False)
+            # Difference map: drive − brake (diverging colormap)
+            if atoms.saliency_data_wide_brake is not None and atoms.saliency_data_wide_drive is not None:
+                comp_map_wide = atoms.saliency_data_wide_drive - atoms.saliency_data_wide_brake
+                vmax_w = comp_map_wide.abs().max().item() + 1e-12
+                # For dual-camera agents normalize both maps to a shared scale
+                if has_narr_test and narr is not None and atoms.saliency_data_narr_brake is not None:
+                    comp_map_narr = atoms.saliency_data_narr_drive - atoms.saliency_data_narr_brake
+                    vmax_w = max(vmax_w, comp_map_narr.abs().max().item()) + 1e-12
+                visualize_comparative_relevance(comp_map_wide / vmax_w, rgb_image=rgb_wide,
+                                                save_path=f"{savepath_rel_w}_comparative",
+                                                is_brake=atoms._last_is_brake)
+            # Narr maps — dual-camera agents (WoR/LBC) only
+            if has_narr_test and narr is not None:
+                rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
+                savepath_rel_n = REL_DIR / f"relevance_narr_{i}"
+                if atoms.saliency_data_narr_brake is not None:
+                    visualize_relevance(atoms.saliency_data_narr_brake, rgb_image=rgb_narr,
+                                        save_path=f"{savepath_rel_n}_brake", is_brake=True)
+                if atoms.saliency_data_narr_drive is not None:
+                    visualize_relevance(atoms.saliency_data_narr_drive, rgb_image=rgb_narr,
+                                        save_path=f"{savepath_rel_n}_drive", is_brake=False)
+                if atoms.saliency_data_narr_brake is not None and atoms.saliency_data_narr_drive is not None:
+                    visualize_comparative_relevance(comp_map_narr / vmax_w, rgb_image=rgb_narr,
+                                                    save_path=f"{savepath_rel_n}_comparative",
+                                                    is_brake=atoms._last_is_brake)
+
+        if action_logits_available:
+            with torch.no_grad():
+                narr_l = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
+                steer, throt, brake = model.policy(wide, narr_l, cmd=cmd)
+                flat_logits = torch.cat([
+                    steer.flatten(), throt.flatten(), brake.unsqueeze(0).flatten(),
+                ]).cpu().numpy()
+            test_logits_all.append(flat_logits)
+
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
             print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
-    atoms.reset()
-    test_logits_all = np.array(test_logits_all, dtype=np.float32)   # [N, num_logits]
-    np.save(ATT_DIR / "live_test_profiles.npy",  test_profiles)
-    np.save(ATT_DIR / "live_test_logits.npy",    test_logits_all)
 
+    atoms.reset()
+    np.save(ATT_DIR / "live_test_profiles.npy", test_profiles)
+    if action_logits_available:
+        test_logits_all = np.array(test_logits_all, dtype=np.float32)
+        np.save(ATT_DIR / "live_test_logits.npy", test_logits_all)
     print(f"  Done. {n_test} frames processed.\n")
 
 else:
-    # Reload test data and pre-computed profiles
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
     test_profiles = np.load(ATT_DIR / "live_test_profiles.npy")
-    test_logits_all = np.load(ATT_DIR / "live_test_logits.npy")
-
-    print(f"  Loaded {len(test_profiles)} test profiles, ")
+    test_logits_all = (np.load(ATT_DIR / "live_test_logits.npy")
+                       if action_logits_available else None)
+    print(f"  Loaded {len(test_profiles)} test profiles.")
 
 
 # ===========================================================================
@@ -439,20 +483,23 @@ gmm_results = [
 scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
 nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
 
-# --- 9c: Action entropy ---
-entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
-scores_entropy   = entropy_detector.score_batch(test_logits_all)
+# --- 9c: Action entropy (WoR only) ---
+scores_entropy = None
+if action_logits_available and test_logits_all is not None:
+    entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
+    scores_entropy   = entropy_detector.score_batch(test_logits_all)
 
-# ----- 9d: MDX detection ----
-scores_list = []
-
-for i in range(len(test_data["frame_idx"])):
-    features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
-                                         torch.from_numpy(test_data["narr_rgb"][i]),
-                                         test_data["speed"][i])
-    score = mdx.score(features[0].cpu().detach().numpy())
-    scores_list.append(score)
-scores_mdx = np.array(scores_list)
+# --- 9d: MDX detection (WoR only) ---
+scores_mdx = None
+if action_logits_available and mdx is not None:
+    scores_list = []
+    for i in range(len(test_data["frame_idx"])):
+        features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
+                                      torch.from_numpy(test_data["narr_rgb"][i]),
+                                      test_data["speed"][i])
+        score = mdx.score(features[0].cpu().detach().numpy())
+        scores_list.append(score)
+    scores_mdx = np.array(scores_list)
 
 
 print()
@@ -460,12 +507,14 @@ print()
 ### ================= PLOT ALL OF THIS =================================================
 live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
 live_pert_dir.mkdir(parents=True, exist_ok=True)
-plot_distance_over_time(scores_mahal_single, LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir)
-plot_distance_over_time(scores_mahal_gmm,    LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir)
-plot_distance_over_time(scores_entropy,      LIVE_PERT_NAME, "PEOC",               live_pert_dir)
-plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",         live_pert_dir)
-plot_distance_over_time(scores_jsd_single,   LIVE_PERT_NAME, "jsd",                live_pert_dir)
-plot_distance_over_time(scores_knn_single,   LIVE_PERT_NAME, "knn",                live_pert_dir)
-plot_distance_over_time(scores_mdx,          LIVE_PERT_NAME, "mdx",                live_pert_dir)
+plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir)
+plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir)
+plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          live_pert_dir)
+plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                live_pert_dir)
+plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                live_pert_dir)
+if scores_entropy is not None:
+    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               live_pert_dir)
+if scores_mdx is not None:
+    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                live_pert_dir)
 
 

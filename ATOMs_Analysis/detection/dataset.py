@@ -268,12 +268,14 @@ class PerturbationApplier:
         n   = raw["wide_rgb"].shape[0]
         print(f"  {n} frames loaded.")
 
+        has_narr = raw["narr_rgb"] is not None
+
         # Assign each frame to a spec entry
         assignments = self._assign_frames(n, spec, seed)  # [N] int indices into spec.entries
 
         # Build output arrays
         out_wide   = np.empty_like(raw["wide_rgb"])
-        out_narr   = np.empty_like(raw["narr_rgb"])
+        out_narr   = np.empty_like(raw["narr_rgb"]) if has_narr else None
         labels     = np.zeros(n, dtype=np.int32)
         pert_names = np.empty(n, dtype=object)
         intensities = np.zeros(n, dtype=np.float32)
@@ -283,17 +285,23 @@ class PerturbationApplier:
             is_clean   = entry.perturbation is None
 
             is_fgsm = (not is_clean) and entry.perturbation == "fgsm"
-            is_pgd = (not is_clean) and entry.perturbation == "pgd"
+            is_pgd  = (not is_clean) and entry.perturbation == "pgd"
 
             if (is_fgsm or is_pgd) and self._model is None:
                 raise ValueError(
                     "Adversarial attack perturbation requires a model. "
                     "Pass model= to PerturbationApplier()."
                 )
+            if (is_fgsm or is_pgd) and not has_narr:
+                raise ValueError(
+                    f"Perturbation '{entry.perturbation}' requires a narrow camera "
+                    "(WoR dual-camera model).  TFV6 single-stream data is not supported "
+                    "for adversarial attacks."
+                )
 
             for fi in frame_idxs:
                 wide = torch.from_numpy(raw["wide_rgb"][fi:fi+1]).float()
-                narr = torch.from_numpy(raw["narr_rgb"][fi:fi+1]).float()
+                narr = torch.from_numpy(raw["narr_rgb"][fi:fi+1]).float() if has_narr else None
                 cmd  = torch.tensor(int(raw["cmd"][fi]))
 
                 if is_fgsm:
@@ -324,15 +332,26 @@ class PerturbationApplier:
                     )
 
                 elif not is_clean:
-                    wide = self._pm.perturb_wide_image(
-                        wide, perturbation=entry.perturbation, intensity=entry.intensity
-                    )
-                    narr = self._pm.perturb_narrow_image(
-                        narr, perturbation=entry.perturbation, intensity=entry.intensity
-                    )
+                    if has_narr:
+                        wide = self._pm.perturb_wide_image(
+                            wide, perturbation=entry.perturbation, intensity=entry.intensity
+                        )
+                        narr = self._pm.perturb_narrow_image(
+                            narr, perturbation=entry.perturbation, intensity=entry.intensity
+                        )
+                    else:
+                        # TFV6: single concatenated [3, H, W_total] image — use dedicated API
+                        perturbed = self._pm.perturb_tfv6_image(
+                            raw["wide_rgb"][fi],
+                            perturbation = entry.perturbation,
+                            intensity    = entry.intensity,
+                            n_cameras    = raw["wide_rgb"].shape[-1] // raw["wide_rgb"].shape[-2],
+                        )
+                        wide = torch.from_numpy(perturbed).unsqueeze(0).float()
 
                 out_wide[fi] = _to_chw_uint8(wide)
-                out_narr[fi] = _to_chw_uint8(narr)
+                if has_narr:
+                    out_narr[fi] = _to_chw_uint8(narr)
                 labels[fi]      = 0 if is_clean else 1
                 pert_names[fi]  = "clean" if is_clean else entry.perturbation
                 intensities[fi] = 0.0 if is_clean else entry.intensity
@@ -341,12 +360,9 @@ class PerturbationApplier:
             print(f"  Entry '{tag}': {len(frame_idxs)} frames.")
 
         self._out_path = self._data_dir / f"{output_name}.npz"
-        np.savez_compressed(
-            self._out_path,
+        save_kwargs = dict(
             wide_rgb     = out_wide,
-            narr_rgb     = out_narr,
-            seg_red_wide      = raw["seg_red_wide"],          # always clean
-            seg_red_narr      = raw["seg_red_narr"],
+            seg_red_wide = raw["seg_red_wide"],          # always clean
             cmd          = raw["cmd"],
             speed        = raw["speed"],
             is_brake     = raw["is_brake"],
@@ -356,6 +372,10 @@ class PerturbationApplier:
             perturbation = pert_names,
             intensity    = intensities,
         )
+        if has_narr:
+            save_kwargs["narr_rgb"]     = out_narr
+            save_kwargs["seg_red_narr"] = raw["seg_red_narr"]
+        np.savez_compressed(self._out_path, **save_kwargs)
 
         n_perturbed = int(labels.sum())
         print(
@@ -430,7 +450,11 @@ class LabeledTestLoader:
                 "Run PerturbationApplier.apply() first."
             )
         data = np.load(path, allow_pickle=True)
-        return dict(data)
+        d = dict(data)
+        # Normalise optional keys — absent for TFV6 (wide-only) data.
+        d.setdefault("narr_rgb", None)
+        d.setdefault("seg_red_narr", None)
+        return d
 
     @staticmethod
     def summary(data: Dict) -> str:
@@ -462,7 +486,8 @@ class LabeledTestLoader:
         result = {}
         for p in np.unique(data["perturbation"]):
             mask = data["perturbation"] == p
-            result[str(p)] = {k: v[mask] for k, v in data.items()}
+            result[str(p)] = {k: v[mask] if v is not None else None
+                               for k, v in data.items()}
         return result
 
 
@@ -509,15 +534,22 @@ def _load_all_runs(
         d  = np.load(fp)
         n  = d["wide_rgb"].shape[0]
         parts.append({
-            "wide_rgb":  d["wide_rgb"],
-            "narr_rgb":  d["narr_rgb"],
-            "seg_red_wide":   d["seg_red_wide"],
-            "seg_red_narr":   d["seg_red_narr"],
-            "cmd":       d["cmd"],
-            "speed":     d["speed"],
-            "is_brake":  d["is_brake"],
-            "frame_idx": d["frame_idx"],
-            "run_id":    np.full(n, run_id, dtype=np.int32),
+            "wide_rgb":     d["wide_rgb"],
+            "narr_rgb":     d["narr_rgb"]     if "narr_rgb"     in d else None,
+            "seg_red_wide": d["seg_red_wide"],
+            "seg_red_narr": d["seg_red_narr"] if "seg_red_narr" in d else None,
+            "cmd":          d["cmd"],
+            "speed":        d["speed"],
+            "is_brake":     d["is_brake"],
+            "frame_idx":    d["frame_idx"],
+            "run_id":       np.full(n, run_id, dtype=np.int32),
         })
-    return {k: np.concatenate([p[k] for p in parts], axis=0) for k in parts[0]}
+
+    def _concat(key):
+        arrays = [p[key] for p in parts]
+        if all(a is None for a in arrays):
+            return None
+        return np.concatenate(arrays, axis=0)
+
+    return {k: _concat(k) for k in parts[0]}
 

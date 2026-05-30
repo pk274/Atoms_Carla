@@ -505,6 +505,80 @@ class PerturbationManager:
 
         return wide_adv, narr_adv
 
+    def perturb_tfv6_image(
+        self,
+        rgb_chw: np.ndarray,
+        perturbation: str,
+        intensity: float,
+        camera_index: int | None = None,
+        n_cameras: int = 6,
+    ) -> np.ndarray:
+        """
+        Apply a perturbation to a TFV6 concatenated RGB image [3, H, W_total].
+
+        Splits the concatenated frame into n_cameras per-camera sub-images,
+        applies the same registry function as perturb_wide_image (which expects
+        a list of [H, W_per_cam, 3] arrays), then re-concatenates.
+
+        This fixes the layout issues that arise when passing a single-element
+        list to perturb_wide_image:
+        - camera_loss: int(intensity) now indexes correctly into 0..n_cameras-1
+        - camera_swap: swaps cameras 0 and n_cameras-1 (first and last)
+        - mirror_horizontal: flips each camera individually, not the whole strip
+        - phantom_obstacle: box centred within each camera, not across the strip
+
+        Parameters
+        ----------
+        rgb_chw : np.ndarray
+            TFV6 concatenated image, shape [3, H, W_total], uint8.
+        perturbation : str
+            Name of the perturbation (same names as perturb_wide_image).
+        intensity : float
+            Perturbation strength (same semantics as perturb_wide_image).
+        camera_index : int | None
+            If provided, perturbation is applied only to that camera
+            (0..n_cameras-1). If None, applied to all cameras.
+        n_cameras : int
+            Number of cameras concatenated horizontally (default: 6 for TFV6).
+
+        Returns
+        -------
+        np.ndarray
+            Perturbed image, shape [3, H, W_total], uint8.
+        """
+        if perturbation not in _WIDE_IMAGE_REGISTRY:
+            available = ", ".join(self.list_perturbations())
+            raise ValueError(
+                f"Unknown perturbation '{perturbation}'. "
+                f"Available: {available}"
+            )
+
+        if self.verbose:
+            cam_info = f"camera {camera_index}" if camera_index is not None else "all cameras"
+            print(f"[PerturbationManager] TFV6 — applying '{perturbation}' "
+                  f"(intensity={intensity}) to {cam_info}.")
+
+        # [3, H, W_total] → [H, W_total, 3] then split per camera
+        rgb_hwc = np.ascontiguousarray(rgb_chw.transpose(1, 2, 0))
+        h, w_total, _ = rgb_hwc.shape
+        w_per_cam = w_total // n_cameras
+        cameras = [
+            rgb_hwc[:, i * w_per_cam:(i + 1) * w_per_cam, :]
+            for i in range(n_cameras)
+        ]
+
+        fn = _WIDE_IMAGE_REGISTRY[perturbation]
+
+        if camera_index is not None:
+            target = [cameras[camera_index]]
+            cameras[camera_index] = fn(target, intensity)[0]
+        else:
+            cameras = fn(cameras, intensity)
+
+        # Re-concatenate → [H, W_total, 3] → [3, H, W_total]
+        rgb_hwc_out = np.concatenate(cameras, axis=1)
+        return np.ascontiguousarray(rgb_hwc_out.transpose(2, 0, 1)).astype(np.uint8)
+
     @staticmethod
     def list_perturbations() -> List[str]:
         """Return the names of all registered wide-image perturbations."""
@@ -718,7 +792,7 @@ def _camera_swap(
         return wide_rgbs
 
     result = list(wide_rgbs)
-    result[0], result[2] = wide_rgbs[2], wide_rgbs[0]
+    result[0], result[-1] = wide_rgbs[-1], wide_rgbs[0]
     return result
 
 

@@ -8,11 +8,11 @@ import torch.nn.functional as F
 from beartype import beartype
 from torch import nn
 
-from lead.common.jaxtyping_stub import jt
-import lead.common.common_utils as common_utils
-from lead.common.constants import RadarLabels
-from lead.tfv6 import fn
-from lead.training.config_training import TrainingConfig
+from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
+import pcla_agents.transfuserv6.lead.common.common_utils as common_utils
+from pcla_agents.transfuserv6.lead.common.constants import RadarLabels
+from pcla_agents.transfuserv6.lead.tfv6 import fn
+from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
 
 logger = logging.getLogger(__name__)
 

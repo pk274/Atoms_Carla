@@ -7,10 +7,10 @@ from beartype import beartype
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
-from lead.common.jaxtyping_stub import jt
-from lead.common.constants import RadarDataIndex, RadarLabels
-from lead.tfv6 import fn
-from lead.training.config_training import TrainingConfig
+from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
+from pcla_agents.transfuserv6.lead.common.constants import RadarDataIndex, RadarLabels
+from pcla_agents.transfuserv6.lead.tfv6 import fn
+from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
 
 
 class RadarDetector(nn.Module):

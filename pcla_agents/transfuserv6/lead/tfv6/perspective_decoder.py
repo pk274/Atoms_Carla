@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from beartype import beartype
 
-from lead.common.constants import SOURCE_DATASET_NAME_MAP, SourceDataset
-from lead.training.config_training import TrainingConfig
+from pcla_agents.transfuserv6.lead.common.constants import SOURCE_DATASET_NAME_MAP, SourceDataset
+from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
 
 
 class PerspectiveDecoder(nn.Module):

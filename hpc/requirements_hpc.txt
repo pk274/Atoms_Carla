@@ -1,0 +1,31 @@
+# HPC requirements for ATOMs baseline computation on MPCDF Viper-CPU.
+# Install with:
+#   pip install -r hpc/requirements_hpc.txt
+#
+# PyTorch CPU wheels are fetched from the PyTorch index (see --extra-index-url below).
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core ML
+torch==2.2.0+cpu
+torchvision==0.17.0+cpu
+timm==1.0.20
+
+# LRP
+zennit
+
+# TFV6 dependencies
+beartype==0.19.0
+opencv-python-headless>=4.8.0
+
+# ATOMs / data processing
+numpy==1.24.4
+pandas>=2.0.0,<3
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# Plotting (imported at module level by visualization_carla.py)
+matplotlib>=3.5.0
+
+# Config / misc
+pyyaml>=6.0

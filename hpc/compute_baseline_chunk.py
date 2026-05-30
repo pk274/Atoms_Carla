@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+compute_baseline_chunk.py
+-------------------------
+HPC worker: process one run .npz through LRP + ATOMs and write a partial
+attention series (.npz with keys: series, class_ids, class_names).
+
+Called by array_task.sh — one SLURM array task per run file.
+
+Usage (standalone test):
+    python hpc/compute_baseline_chunk.py \
+        --run-file  data/TFV6/baseline_data/frames/run_001.npz \
+        --output    /ptmp/$USER/atoms_baseline/partials/partial_0.npz \
+        --model-dir pcla_agents/transfuserv6_pretrained/visiononly_resnet34
+"""
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser()
+    p.add_argument("--run-file",  required=True, type=Path,
+                   help="Path to a single run_*.npz baseline frame file.")
+    p.add_argument("--output",    required=True, type=Path,
+                   help="Output path for the partial .npz (series + class metadata).")
+    p.add_argument("--model-dir", required=True, type=Path,
+                   help="Directory containing config.json and model*.pth for TFV6.")
+    p.add_argument("--agent",     default="TFV6", choices=["TFV6"],
+                   help="Agent architecture. Only TFV6 is currently supported.")
+    return p.parse_args()
+
+
+def load_run_npz(filepath: Path) -> dict:
+    """Load one run .npz; mirrors BaselineDataLoader.load_run."""
+    data = np.load(filepath, allow_pickle=False)
+    return {
+        "wide_rgb":     data["wide_rgb"],
+        "narr_rgb":     data["narr_rgb"]     if "narr_rgb"     in data else None,
+        "seg_red_wide": data["seg_red_wide"],
+        "seg_red_narr": data["seg_red_narr"] if "seg_red_narr" in data else None,
+        "cmd":          data["cmd"],
+        "speed":        data["speed"],
+        "frame_idx":    data["frame_idx"],
+    }
+
+
+def build_tfv6_lrp(model_dir: Path, device: torch.device):
+    from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+    from pcla_agents.transfuserv6.lead.tfv6.tfv6 import TFv6
+    from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
+
+    with open(model_dir / "config.json") as f:
+        training_config = TrainingConfig(json.load(f))
+
+    model = TFv6(device, training_config)
+
+    ckpt_files = sorted(model_dir.glob("model*.pth"))
+    if not ckpt_files:
+        raise FileNotFoundError(f"No model*.pth checkpoint found in {model_dir}")
+    print(f"  Loading checkpoint: {ckpt_files[0].name}")
+
+    state_dict = torch.load(ckpt_files[0], map_location=device, weights_only=True)
+    current_state = model.state_dict()
+    drop_keys = [k for k, v in state_dict.items()
+                 if k in current_state and current_state[k].shape != v.shape]
+    for k in drop_keys:
+        print(f"  Dropping mismatched weight: {k}")
+        state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+
+    lrp = LRPTFv6Model(
+        backbone_eval    = model.backbone,
+        planning_decoder = model.planning_decoder,
+        device           = device,
+    )
+    return lrp
+
+
+def main() -> None:
+    args = parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[chunk] device={device}  run={args.run_file.name}")
+
+    # --- LRP model ---
+    print("[chunk] Loading model...")
+    lrp = build_tfv6_lrp(args.model_dir, device)
+
+    # --- ATOMs ---
+    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+    from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES
+
+    atoms = ATOMsCarla(
+        lrp_model     = lrp,
+        p_relevance   = 0.25,   # FC_RELEVANCE_FILTER
+        default_cmd   = 2,      # DEFAULT_CMD (FOLLOW_LANE)
+        mode_analysis = 1,      # MODE_ANALYSIS (paper default)
+        use_reduced   = False,
+        class_map     = TFV6_CLASSES,
+    )
+    print(f"[chunk] ATOMs tracking {atoms.num_classes} classes: "
+          f"{', '.join(atoms.class_names[:4])}, ...")
+
+    # --- Load frame data ---
+    data = load_run_npz(args.run_file)
+    n_frames = data["wide_rgb"].shape[0]
+    print(f"[chunk] {n_frames} frames loaded.")
+
+    has_narr     = data["narr_rgb"]     is not None
+    has_seg_narr = data["seg_red_narr"] is not None
+
+    # --- Process frames ---
+    # NOTE: process_frame is called without the optional `data` dict argument,
+    # matching the current behaviour of BaselineComputer.compute_and_save.
+    # The per-frame `data` dict (needed to avoid zero command vector in TFV6 LRP)
+    # is an open improvement; updating both this script and BaselineComputer in
+    # tandem will make local and HPC results consistent.
+    attention_series = []
+    t0 = time.time()
+
+    for i in range(n_frames):
+        wide     = torch.from_numpy(data["wide_rgb"][i:i+1]).float()
+        narr     = torch.from_numpy(data["narr_rgb"][i:i+1]).float() if has_narr     else None
+        seg_wide = data["seg_red_wide"][i]
+        seg_narr = data["seg_red_narr"][i]                           if has_seg_narr else None
+        cmd      = int(data["cmd"][i])
+        spd      = float(data["speed"][i])
+
+        frame_att = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+        attention_series.append(frame_att)
+
+        if (i + 1) % 10 == 0:
+            elapsed = time.time() - t0
+            fps     = (i + 1) / elapsed
+            eta     = (n_frames - i - 1) / max(fps, 1e-6)
+            print(f"  {i+1}/{n_frames}  ({fps:.2f} fr/s, ETA {eta:.0f}s)")
+
+    atoms.reset()
+
+    series = np.stack(attention_series, axis=0)   # [N, num_classes]
+    print(f"[chunk] series shape: {series.shape}")
+
+    # --- Save partial result ---
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        args.output,
+        series      = series.astype(np.float32),
+        class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
+        class_names = np.array(atoms.class_names, dtype=object),
+    )
+
+    elapsed = time.time() - t0
+    print(f"[chunk] Done. {n_frames} frames in {elapsed:.1f}s → {args.output}")
+
+
+if __name__ == "__main__":
+    main()

@@ -6,10 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a **master's thesis research project** on explainability-based out-of-distribution (OOD) detection for autonomous driving agents. The codebase has two layers:
 
-1. **PCLA** (Pretrained CARLA Leaderboard Agents) — infrastructure for deploying pretrained agents in the CARLA simulator. Used here solely to run the **World on Rails (WoR)** agent and collect driving data.
+1. **PCLA** (Pretrained CARLA Leaderboard Agents) — infrastructure for deploying pretrained agents in the CARLA simulator. Used to run agents and collect driving data.
 2. **ATOMs_Analysis** — the research core. Implements the full pipeline for computing attention profiles via LRP + ATOMs, fitting baseline distributions, and detecting OOD inputs by measuring divergence from those baselines.
 
 The scientific goal is to show that attention profiles derived from LRP are a meaningful signal for OOD detection: when the agent encounters perturbed or adversarial inputs, its attention distribution shifts measurably away from the clean-driving baseline.
+
+**Primary agent: TransFuser v6 (TFV6).** The World on Rails (WoR) agent is also supported but TFV6 is the current experimental focus. Set `conf.AGENT = "TFV6"` or `"WOR"` in `atoms_config.py` to switch.
 
 Target platform: **Linux Ubuntu 22**, **CARLA 0.9.16**, **Python 3.10**.
 
@@ -18,14 +20,31 @@ Target platform: **Linux Ubuntu 22**, **CARLA 0.9.16**, **Python 3.10**.
 ## Key Concepts
 
 ### LRP (Layer-wise Relevance Propagation)
-Backpropagates relevance from the network output to the input pixels, producing a saliency/heatmap that indicates which pixels drove the network's decision. Uses the z⁺-rule throughout (`zennit` library). Implemented in `ATOMs_Analysis/saliency/lrp_analysis.py` as `LRPCameraModel`, which wraps the WoR `CameraModel` for a single-pass joint LRP through both camera streams.
+Backpropagates relevance from the network output to the input pixels. Two implementations:
+
+- **WoR** (`ATOMs_Analysis/saliency/lrp_analysis.py`, `LRPCameraModel`): z⁺-rule throughout via `zennit`. Single-pass joint LRP over the dual-camera WoR `CameraModel`.
+- **TFV6** (`ATOMs_Analysis/saliency/lrp_transfuser.py`, `LRPTFv6Model`): AttnLRP (Achtibat et al. 2024) — custom autograd Functions for softmax (Prop 3.1) and bilinear matmul (Prop 3.3); ε-rule for attention Linear layers; AlphaBeta for Conv/FFN. Wraps backbone + PlanningDecoder in `TFv6FullModelForLRP` so a single zennit composite context covers the full attribution graph.
+
+**TFV6 two-pass scheme:**
+- **LRP1** (`beg="output", end="fc"`): softmax-distribution seed over 8 speed bins → backprop through `target_speed_decoder` (Linear→ReLU→Linear) to `speed_query` level. Returns 256-dim node relevance vector.
+- **LRP2** (`beg="fc", end="input"` with `node_id`): one-hot at F_c node k → backprop through full model to input pixels. Returns [1,3,H,W] pixel map.
+- **Output→input** (`beg="output", end="input"`): same softmax seed, backprop all the way to pixels in one pass.
+
+**LRP1 seed rationale:** `target_speed_decoder` is trained with a two-hot target over 8 speed bins [0, 4, 8, 10, 13.9, 16, 17.8, 20] m/s. Using argmax causes discontinuities at bin boundaries. The softmax distribution seed is used instead (`grad_outputs = softmax(speed_logits.detach())`), giving a smooth attribution that reflects the full predicted speed distribution.
+
+**F_c layer:** 256-dim `speed_query` token output by `PlanningDecoder.transformer_decoder`, just before `target_speed_decoder`. This is the closest equivalent to the ATOMs paper's F_c ("the final world model on which the agent chooses its action"). See `lrp_todo.md` Decision A/B for rationale.
 
 ### ATOMs (Attention-Oriented Metrics)
 Introduced by Beylier et al. (NeurIPS 2024 workshop). Converts raw LRP heatmaps into structured, object-level attention vectors by intersecting relevance maps with semantic segmentation masks. Two levels:
 - **Hierarchical-attention** `h(o)`: fraction of total relevance falling on object `o`.
 - **Combinatorial-attention** `c(T)`: fraction of frames where a neuron attends jointly to a subset of objects `T` (using threshold α = 0.25).
 
-In this project ATOMs is applied to the WoR `CameraModel`'s penultimate FC layer (256-dim). CARLA's red-channel semantic segmentation (23 classes) provides the object labels. Implemented in `ATOMs_Analysis/saliency/atoms_carla.py`.
+For TFV6, CARLA's grouped semantic segmentation (10 classes, `save_grouped_semantic=True`) is used via `TFV6_CLASSES` in `atoms_carla.py`. Implemented in `ATOMs_Analysis/saliency/atoms_carla.py`.
+
+**ATOMs saliency attributes** (set after each `process_frame`):
+- `saliency_data_wide_default` — map from the default (softmax) seed; this is what feeds `_hierarchical`.
+- `saliency_data_wide_brake` / `saliency_data_wide_drive` — forced brake/drive maps, populated only when `PLOT_COMPARATIVE_REL=True`; do **not** feed `_hierarchical`.
+- When `PLOT_COMPARATIVE_REL=False`, brake/drive slots mirror the default map.
 
 ### OOD Detection Strategy
 1. Collect clean baseline driving frames; compute one ATOMs profile (23-dim attention vector) per frame.
@@ -67,7 +86,8 @@ ATOMs_Analysis/
 ├── atoms_config.py            # Central ExperimentConfig — all paths, hyperparameters
 ├── perturbation_manager.py    # Registry of image perturbations (@_register_wide decorator)
 ├── saliency/
-│   ├── lrp_analysis.py        # LRPCameraModel — zennit-based LRP over WoR dual-camera model
+│   ├── lrp_analysis.py        # LRPCameraModel — zennit LRP for WoR (z+-rule, dual-camera)
+│   ├── lrp_transfuser.py      # LRPTFv6Model — AttnLRP for TFV6 (see Key Concepts above)
 │   └── atoms_carla.py         # ATOMsCarla — per-frame hierarchical + combinatorial attention
 ├── detection/
 │   ├── baseline_dataset.py    # BaselineDataCollector, BaselineComputer, BaselineDataLoader
@@ -80,15 +100,17 @@ ATOMs_Analysis/
     ├── visualization_carla.py # All plotting functions (PCA, ROC, bar charts, trajectory plots)
     ├── viz_config.py          # Shared style config (colors, DPI, thesis-wide formatting)
     ├── distance_computer.py   # DistanceComputer — Mahalanobis, Euclidean, k-NN, JSD (stateless)
-    └── lrp_test_suite.py      # Diagnostic suite for validating LRP + ATOMs correctness
+    ├── lrp_test_suite.py      # Diagnostic suite for validating LRP + ATOMs correctness (WoR)
+    └── tfv6_test_suite.py     # TFV6TestSuite — property-based tests for LRPTFv6Model + ATOMs
 ```
 
 ### Key design notes
 - `atoms_config.py` is the single source of truth for all paths and hyperparameters. Edit it rather than hardcoding values in scripts.
-- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd)` is the per-frame API; call `atoms.reset()` between datasets.
+- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd, spd, data)` is the per-frame API; call `atoms.reset()` between datasets. Pass the real `data` dict (from the frame npz) for TFV6 — the fallback `_make_minimal_data` uses a zero command vector which distorts LRP attributions.
 - `DistanceComputer` is stateless (static methods); detectors (`MahalanobisDetector`, etc.) are stateful (fit/save/load).
 - Visualization functions return `matplotlib.Figure` objects; use `save_figure(fig, path)` to write them.
 - `viz_config.py` defines `apply_default_style()` — call it at the top of any new plotting script to keep figures consistent across the thesis.
+- For `LRPTFv6Model`, see `lrp_todo.md` for the full history of design decisions and remaining open issues (BatchNorm canonization, contrastive seeding).
 
 ### Perturbation types (via `PerturbationManager`)
 | Name | Description |
@@ -123,12 +145,23 @@ Frame `.npz` files contain: `wide_rgb`, `narr_rgb`, `seg_red_wide`, `seg_red_nar
 
 ---
 
-## World on Rails (WoR) Agent
+## TransFuser v6 (TFV6) Agent — primary
 
-The only agent analyzed in this project. Entry point: `pcla_agents/wor/image_agent.py` (`ImageAgent`). The neural network is `pcla_agents/wor/rails/models/main_model.py` (`CameraModel`):
+Entry point: `pcla_agents/transfuserv6/lead/inference/sensor_agent_data_collection.py`. The neural network is `TFv6` in `tfv6.py`:
+- **Input**: 6-camera RGB concatenated → [B, 3, 384, 2304]; LiDAR as 2-ch positional grid (LTF mode)
+- **Architecture**: timm ResNet34 image encoder + ResNet34 LiDAR encoder → 4× GPT cross-modal fusion → BEV features → PlanningDecoder (6-layer TransformerDecoder) → speed/waypoint predictions
+- **F_c node space**: 256-dim `speed_query` token, output of `PlanningDecoder.transformer_decoder` at index `_speed_query_idx`
+- **Speed output**: `target_speed_decoder` (Linear 256→256 → ReLU → Linear 256→8) → 8-bin two-hot speed distribution → decoded scalar in m/s
+- **Speed bins**: [0.0, 4.0, 8.0, 10.0, 13.89, 16.0, 17.78, 20.0] m/s
+- **LRP model**: `LRPTFv6Model` in `lrp_transfuser.py`. Construct with `LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder)`
+
+## World on Rails (WoR) Agent — secondary
+
+Entry point: `pcla_agents/wor/image_agent.py` (`ImageAgent`). The neural network is `pcla_agents/wor/rails/models/main_model.py` (`CameraModel`):
 - **Input**: wide RGB (160×704) + narrow RGB (88×352), both preprocessed to float tensors
 - **Architecture**: two ResNet streams → shared FC layers → action heads (steer/throttle/brake logits per speed bin)
 - **LRP target layer**: the second hidden FC layer (256-dim), referred to as F_c in the ATOMs paper
+- **LRP model**: `LRPCameraModel` in `lrp_analysis.py`
 - **Weights**: `pcla_agents/wor_pretrained/leaderboard_weights/main_model_10.th`
 - **Config**: `pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml`
 
@@ -171,3 +204,22 @@ from PCLA import location_to_waypoint, route_maker
 waypoints = location_to_waypoint(client, startLoc, endLoc)
 route_maker(waypoints, "my_route.xml")
 ```
+
+---
+
+## Documentation Policy
+
+Whenever you make a meaningful change to the codebase, **update the relevant `.md` files** to reflect that change. Do not let documentation go stale. The living documentation files in this project are:
+
+| File | What it tracks |
+|------|----------------|
+| `CLAUDE.md` | Architecture, pipeline, key concepts, module responsibilities |
+| `ATOMs_Analysis/design_decisions.md` | Design choices for the ATOMs/LRP pipeline — why things are done the way they are |
+| `lrp_todo.md` | Open questions, remaining work, and decision history for the LRP implementation |
+
+**Rules:**
+- If you add or change a module, class, or key function → update `CLAUDE.md` (module structure, key concepts, or pipeline sections as appropriate).
+- If you make a design choice that isn't obvious from the code (algorithm selection, rule variant, architectural tradeoff) → record it in `design_decisions.md`.
+- If you resolve an open issue or make a decision on something tracked in `lrp_todo.md` → mark it resolved and document the outcome there.
+- If a change doesn't fit any existing file, you may create a new `.md` file — but **ask the user first**.
+- If you are unsure which file to update, or whether a change warrants documentation, **ask the user** before proceeding.

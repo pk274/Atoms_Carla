@@ -1310,7 +1310,8 @@ class LRPTestSuite:
         np_ = np.array(narr_fracs_pixel)
         dim_expected = 64 / 576  # ≈ 0.111
 
-        min_rel, max_rel = np.min(total_rel_c), np.max(total_rel_c)
+        crs = np.array(concat_relevance_sums)
+        min_rel, max_rel = float(crs.min()), float(crs.max())
 
         # Diagnosis
         # Absolute gap between pixel and concat level — this is what the correction fixes

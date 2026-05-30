@@ -13,9 +13,9 @@ import numpy as np
 import numpy.typing as npt
 from beartype import beartype
 
-from lead.common.jaxtyping_stub import jt
-from lead.common import common_utils
-from lead.training.config_training import TrainingConfig
+from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
+from pcla_agents.transfuserv6.lead.common import common_utils
+from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
 
 # Compatibility aliases for legacy numpy type names used in annotations.
 if not hasattr(np, "ndarray32"):

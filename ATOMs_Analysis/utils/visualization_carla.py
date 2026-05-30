@@ -52,6 +52,8 @@ import viz_config as vc
 vc.apply_default_style()
 
 
+# Raw CARLA semantic class IDs (CARLA 0.9.x tags 0-28).
+# Used for WoR data where the segmentation camera stores these IDs directly.
 CARLA_CLASSES: Dict[int, str] = {
     0:  "Unlabeled",
     1:  "Roads",
@@ -84,6 +86,23 @@ CARLA_CLASSES: Dict[int, str] = {
     28: "GuardRail"
 }
 
+# TransFuser / LEAD grouped semantic class IDs.
+# Used for TFV6 data: the LEAD dataset applies save_grouped_semantic=True,
+# collapsing the 32 raw CARLA classes into 10 classes via
+# constants.SEMANTIC_SEGMENTATION_CONVERTER before saving the PNG.
+TFV6_CLASSES: Dict[int, str] = {
+    0: "Unlabeled",       # background: sky, buildings, vegetation, sidewalks, …
+    1: "Vehicle",         # Car, Truck, Bus, Motorcycle
+    2: "Road",            # drivable surface
+    3: "TrafficLight",
+    4: "Pedestrian",
+    5: "RoadLine",        # lane markings
+    6: "Obstacle",        # cones, traffic warnings
+    7: "SpecialVehicle",
+    8: "StopSign",
+    9: "Biker",           # Rider, Bicycle
+}
+
 
 def visualize_relevance(relevance, rgb_image=None, alpha=None, save_path: Optional[str] = None, is_brake: bool = None):
     """
@@ -112,16 +131,14 @@ def visualize_relevance(relevance, rgb_image=None, alpha=None, save_path: Option
             print(f"[Visualizer] Saved image to {save_path}")
         #plt.show()
     else:
-        fig, axes = plt.subplots(1, 3, figsize=vc.FIGSIZE_ATTENTION_OVERLAY)
-        axes[0].imshow(rgb_image.astype(np.uint8));  axes[0].set_title('Input'); axes[0].axis('off')
-        axes[1].imshow(heatmap, cmap=cmap);          axes[1].set_title('Relevance'); axes[1].axis('off')
-        # overlay: colormap heatmap blended onto rgb
+        fig, axes = plt.subplots(1, 2, figsize=vc.FIGSIZE_ATTENTION_OVERLAY)
+        axes[0].imshow(heatmap, cmap=cmap);  axes[0].set_title('Relevance'); axes[0].axis('off')
         cmap = plt.get_cmap(cmap)
         colored = (cmap(heatmap)[..., :3] * 255).astype(np.uint8)
         overlay = ((1 - alpha) * rgb_image + alpha * colored).astype(np.uint8)
-        axes[2].imshow(overlay)
-        axes[2].set_title('Overlay'); axes[2].axis('off')
-        plt.tight_layout();
+        axes[1].imshow(overlay)
+        axes[1].set_title('Overlay'); axes[1].axis('off')
+        plt.tight_layout()
         if save_path:
             plt.savefig(save_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
         else:
@@ -131,41 +148,40 @@ def visualize_relevance(relevance, rgb_image=None, alpha=None, save_path: Option
 
 def visualize_comparative_relevance(relevance, rgb_image=None, alpha=None, save_path: Optional[str] = None, is_brake: bool = None):
     """
-    relevance:  [1, 3, H, W] or [3, H, W] tensor (output of attribute_action)
-    rgb_image:  [H, W, 3] numpy array in [0,255] for overlay (optional)
-    alpha:      overlay transparency (unused here -- per-pixel alpha is derived
-                from signal magnitude)
+    Visualize a signed (drive − brake) relevance map with a diverging colormap.
+
+    relevance:  [1, 3, H, W] or [3, H, W] tensor — should be pre-normalized to [-1, 1]
+    rgb_image:  [H, W, 3] numpy array in [0,255] — shown as first panel for reference
+    alpha:      unused (per-pixel alpha is derived from signal magnitude)
+
+    Layout (with rgb_image): Input | Drive − Brake | Overlay
     """
     rel = relevance.squeeze(0)          # [3, H, W]
     heatmap = rel.sum(dim=0).numpy()    # [H, W]
-
     cmap = vc.SALIENCY_CMAP_DIVERGING
+    vmax = np.abs(heatmap).max() + 1e-12
 
     if rgb_image is None:
-        vmax = np.abs(heatmap).max() + 1e-12
         plt.imshow(heatmap, cmap=cmap, vmin=-vmax, vmax=vmax)
         plt.colorbar(); plt.axis('off')
         if save_path:
             plt.savefig(save_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
             print(f"[Visualizer] Saved image to {save_path}")
-        #plt.show()
     else:
         fig, axes = plt.subplots(1, 2, figsize=vc.FIGSIZE_ATTENTION_OVERLAY)
-        vmax = np.abs(heatmap).max() + 1e-12
         axes[0].imshow(heatmap, cmap=cmap, vmin=-vmax, vmax=vmax)
-        axes[0].set_title('Heatmap'); axes[0].axis('off')
-        heatmap_norm = heatmap / vmax   # [-1, 1], sign preserved
+        axes[0].set_title('Drive − Brake'); axes[0].axis('off')
 
-        # Map [-1,1] to [0,1] for the diverging cmap.
+        heatmap_norm = heatmap / vmax   # [-1, 1], sign preserved
         cmap_fn = plt.get_cmap(cmap)
         colored = (cmap_fn((heatmap_norm + 1) / 2)[..., :3] * 255).astype(np.uint8)
-
         # Opacity proportional to |signal|: strong features opaque, near-zero transparent
         pixel_alpha = (np.abs(heatmap_norm) ** 0.99)[..., np.newaxis]
         overlay = (pixel_alpha * colored + (1 - pixel_alpha) * rgb_image).astype(np.uint8)
         axes[1].imshow(overlay)
         axes[1].set_title('Overlay'); axes[1].axis('off')
-        plt.tight_layout();
+
+        plt.tight_layout()
         if save_path:
             plt.savefig(save_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
         else:
@@ -174,9 +190,10 @@ def visualize_comparative_relevance(relevance, rgb_image=None, alpha=None, save_
 
 
 def visualize_segmentation(
-    seg_red: np.ndarray,
-    title:   str = "Segmentation",
+    seg_red:   np.ndarray,
+    title:     str = "Segmentation",
     save_path: Optional[str] = None,
+    class_map: Optional[Dict[int, str]] = None,
 ) -> None:
     """
     Visualise a CARLA semantic segmentation map.
@@ -185,9 +202,13 @@ def visualize_segmentation(
     ----------
     seg_red : np.ndarray [H, W] uint8  -- class ID per pixel (red channel of
               CARLA seg image in BGRA layout, i.e. seg_array[:, :, 2])
+    class_map : optional dict mapping class ID -> name; defaults to CARLA_CLASSES.
+                Pass TFV6_CLASSES when visualising LEAD/TFV6 data.
     """
     import matplotlib.patches as mpatches
     import torch
+
+    _class_map = class_map if class_map is not None else CARLA_CLASSES
 
     # Ensure numpy
     if isinstance(seg_red, torch.Tensor):
@@ -213,7 +234,7 @@ def visualize_segmentation(
     patches = [
         mpatches.Patch(
             color=base_cmap(id_to_idx[cid]),
-            label=f"{cid}: {CARLA_CLASSES.get(cid, 'Unknown')}"
+            label=f"{cid}: {_class_map.get(cid, 'Unknown')}"
         )
         for cid in present_ids
     ]

@@ -30,24 +30,39 @@ and `narr_rgb` / `narr_seg` are passed as `None`.
 
 ---
 
-## TFV6: FC-layer equivalent (Option A — backbone 512-dim)
+## TFV6: FC-layer equivalent (Option B — PlanningDecoder speed_query 256-dim)
 
-**Choice:** The FC-layer node space for TFV6 is the **512-dim globally averaged
-image backbone output** produced after 4 rounds of ResNet stage + GPT fusion.
+**Choice (updated 2026-05-27):** F_c = the **256-dim speed-query token** from
+the `PlanningDecoder`'s `TransformerDecoder`, extracted after the final norm
+layer.  This is the representation from which `target_speed_decoder` directly
+predicts the target speed distribution — the closest equivalent of "the layer
+just before the output" described in the ATOMs paper.
 
 **Rationale:**
-- The `visiononly_resnet34` planning decoder (`PlanningDecoder`) contains a
-  6-layer `nn.TransformerDecoderLayer` that also uses fused flash-attention
-  internally.  Propagating LRP through it would require implementing AttnLRP
-  for those layers too, roughly tripling implementation complexity.
-- The 512-dim pooled backbone is the direct equivalent of LBC's 512-dim node
-  space and is analogous to WoR's 256-dim FC node space.
-- The backbone output already captures 4 rounds of cross-modal image-LiDAR
-  fusion, making it a meaningful high-level visual representation.
+- Option A (512-dim backbone) described the image encoder's representation,
+  not the driving decision layer.  ATOMs profiles under Option A captured
+  "what the visual encoder attends to," not "what the decision-maker attends to."
+- The TransformerDecoder's cross-attention attends over BEV + status tokens,
+  making the speed_query a truly decision-conditioned representation.
+- All AttnLRP rules needed for Option B are now implemented:
+  `LRPSoftmax`, `LRPMatMul`, `MultiheadAttentionExplicit`,
+  `TransformerDecoderLayerExplicit`.
 
-**Future work:** Option B (256-dim target-speed query after TransformerDecoder)
-would tie attribution more tightly to the driving decision.  It requires
-wrapping `nn.TransformerDecoderLayer` for AttnLRP.
+**LRP1 seed:** One-hot at the argmax of `target_speed_decoder(speed_query)`.
+**Node space:** 256 dimensions (speed_query token, F_c per ATOMs paper).
+
+**Alternative worth trying — Option A (512-dim backbone output):**
+The globally averaged backbone output (`avgpool_final` → flatten → `[B, 512]`)
+is a simpler F_c candidate.  Switching back to it requires:
+1. Change `TFv6FullModelForLRP.forward` to return `avgpool_final(image_features).flatten(1)` instead of `speed_query`.
+2. Remove `target_speed_decoder` from the LRP1 path — seed directly from the
+   backbone output (e.g. positive activations, or backprop from the planning
+   decoder logits all the way through).
+3. Update `node_dim = 512`.
+The `SelfAttentionExplicit`, `LRPSoftmax`, `LRPMatMul` GPT-block improvements
+carry over unchanged regardless of which option is used.
+Option A profiles describe "what the image encoder attends to" rather than
+"what the decision-maker attends to", which may be useful for comparison.
 
 ---
 
@@ -62,27 +77,32 @@ This means:
 
 ---
 
-## TFV6 LRP: SelfAttention replacement
+## TFV6 LRP: AttnLRP for attention blocks (updated 2026-05-27)
 
-The GPT fusion blocks in `TransfuserBackbone` use
-`torch.nn.functional.scaled_dot_product_attention` — a fused CUDA kernel that
-appears as a single opaque node in the autograd graph and cannot be intercepted
-by zennit.
+**Problem:** Both the GPT backbone fusion blocks (using
+`F.scaled_dot_product_attention`) and the PlanningDecoder TransformerDecoder
+(using `nn.MultiheadAttention` internally via `nn.TransformerDecoderLayer`)
+use fused CUDA kernels opaque to zennit.
 
-**Solution:** At LRP-model construction time, every `SelfAttention` module in
-the deep-copied GPT blocks is replaced with `SelfAttentionExplicit`, which
-computes the same result using:
-```
-scale   = (head_dim)**-0.5
-scores  = Q @ K^T * scale     # explicit matmul
-weights = softmax(scores)     # explicit softmax
-out     = weights @ V          # explicit matmul
-```
-The constituent `nn.Linear` layers (key, query, value, proj) are shared with
-the copied transformer, so zennit's AlphaBeta rule applies to them normally.
-Gradient flow through `softmax` and `matmul` uses standard autograd
-(not the full AttnLRP DTD rule), which is a conservative but common
-simplification.
+**Solution:**
+
+### GPT backbone blocks
+`SelfAttention` → `SelfAttentionExplicit`:
+- K/Q/V/proj wrapped as `AttentionLinear` (subclass of `nn.Linear`)
+- Q·K^T and A·V computed via `LRPMatMul.apply` (AttnLRP Prop 3.3)
+- Softmax via `LRPSoftmax.apply` (AttnLRP Prop 3.1)
+
+### PlanningDecoder TransformerDecoder
+`nn.TransformerDecoderLayer` → `TransformerDecoderLayerExplicit`:
+- Self-attn and cross-attn use `MultiheadAttentionExplicit`
+  - Extracts Q/K/V from `in_proj_weight` as separate `AttentionLinear` layers
+  - Uses `LRPSoftmax` and `LRPMatMul` for AttnLRP-compliant backward
+
+### Composite rule split (Bug 3 fix)
+- `AttentionLinear` → `Epsilon(ε=1e-6)`  (K/Q/V/proj in all attention blocks)
+- `Convolution` → `AlphaBeta(α=1, β=0)`
+- `nn.Linear` (FFN) → `AlphaBeta(α=1, β=0)`
+- `BatchNorm`, `LayerNorm`, activations → `Pass`
 
 ---
 
@@ -91,11 +111,12 @@ simplification.
 timm's ResNet34 `BasicBlock` type differs from torchvision's, so
 `zennit.torchvision.ResNetCanonizer` cannot be used.
 
-**Solution:** Use a plain `LayerMapComposite` without canonizers:
+**Solution:** Use a plain `SpecialFirstLayerMapComposite` without canonizers:
+- First `Convolution` → `WSquare`
+- `AttentionLinear` → `Epsilon(ε=1e-6)` (K/Q/V/proj; matched before AnyLinear)
 - `Convolution` → `AlphaBeta(α=1, β=0)`
-- `Linear`      → `AlphaBeta(α=1, β=0)`
+- `nn.Linear` (FFN/classification) → `AlphaBeta(α=1, β=0)`  — no `zero_params`
 - `BatchNorm`, `LayerNorm`, activations → `Pass`
-- First `Convolution` (via `SpecialFirstLayerMapComposite`) → `WSquare`
 
 Without canonization, BatchNorm is not merged into the preceding Conv.
 `Pass` on BatchNorm means its scaling factor is ignored in LRP, which can
@@ -137,7 +158,184 @@ the CARLA semantic class ID (0–22 in CARLA 0.9.16).
 
 ---
 
+## Comparative relevance maps in mode 1: LRP1-reweighted node maps
+
+`PLOT_COMPARATIVE_REL=True` renders `saliency_data_wide_drive - saliency_data_wide_brake`
+to show what the model attends to differently when braking vs driving.
+
+**Bug:** `_lrp2_pixels` (mode 1, node-level) was computing forced maps via `beg="fc",
+end="input"` with `forced_brake=True` / `forced_drive=True`.  In the `fc→input` path,
+`forced_brake`/`forced_drive` only update `is_brake` as a side effect — the actual backward
+seed is always the one-hot at `node_id`.  Both forced calls returned identical maps →
+`drive - brake = 0` (uniform).
+
+**Fix:** `_compute_node_level` now caches the per-node LRP2 pixel maps during the main
+node loop, then calls `_set_comparative_maps_node_level` after the loop:
+
+1. Run LRP1 (`output→fc`) with `forced_brake` → per-node weight vector `r_brake`
+2. Run LRP1 (`output→fc`) with `forced_drive` → per-node weight vector `r_drive`
+3. Re-weight the cached LRP2 maps:
+   `saliency_wide_brake = Σ_k |r_brake[k]| * lrp2_map[k]`
+   `saliency_wide_drive = Σ_k |r_drive[k]| * lrp2_map[k]`
+
+Only two extra LRP1 passes (FC-only, no ResNet backward — cheap).  The LRP2 maps are
+reused from the main loop.  The comparative map is non-trivial when the brake and drive
+LRP1 weight distributions differ across nodes, which they do for TFV6.  For WoR, the GAP
+collapse makes all LRP2 maps identical, so the comparative map remains flat regardless.
+
+---
+
 ## WoR and LBC: no changes
 
 `lrp_analysis.py`, `lrp_lbc.py`, and `atoms_carla.py` are not modified.
 The `atoms_config.py` change is strictly additive (`TFV6` branch added).
+
+---
+
+## WoR: per-FC-node pixel maps are identical (GAP collapse — architectural limit)
+
+`forward_relevance(beg='fc', end='input', node_id=k)` produces the **same pixel
+map for every k** in WoR. This is not a code bug.
+
+**Mechanism:**
+1. ResNet backbone outputs `[B, 512, H', W']` (spatial feature map).
+2. `AdaptiveAvgPool2d((1,1))` collapses it to `[B, 512, 1, 1]` — all spatial
+   information averaged away.
+3. AvgPool has **no LRP rule** registered (intentionally excluded from the
+   composite; see `_create_composite` comment). Standard autograd backward
+   uniformly redistributes each channel's scalar relevance back to all H'×W'
+   positions.
+4. The ResNet z+ backward then uses the same fixed activation patterns
+   (`R_i = a_i^+ * w^+/z^+`) regardless of which FC node was seeded.
+
+Result: all 256 FC nodes produce cosine ≈ 1.0 pixel maps — determined by
+backbone activations, not by the node identity.
+
+**Implication:** The `fc→input` attribution path is uninformative for WoR.
+Only `output→input` (full-path) and `output→fc` (node relevance vector) are
+meaningful.  This is the primary motivation for adopting TFV6, whose
+`speed_query` token is produced by attention (no GAP) so per-node LRP gives
+genuinely distinct spatial maps.
+
+The `W07_fc_node_cosine_matrix` diagnostic test now reports WARN (not FAIL)
+when all pairs are cosine ≈ 1.0, with a note explaining the mechanism.
+
+---
+
+## TFV6 baseline data: LEAD dataset migration
+
+Instead of collecting baseline frames live in CARLA (0.5 fps on CPU due to
+the model being trained on 4× L40S GPUs), the official LEAD dataset is used:
+
+    git clone https://huggingface.co/datasets/ln2697/lead_carla data/carla_leaderboard2/zip
+
+The dataset stores per-route data as:
+- `rgb/{frame:04d}.jpg`      — all 6 cameras concatenated horizontally (expected 2304×384)
+- `semantics/{frame:04d}.png` — channel 0 = CARLA semantic class IDs (same layout)
+- `metas/{frame:04d}.pkl`    — pickle dict with at least `speed`, `command`, `brake`
+
+`migrate_lead_to_baseline.py` (project root) converts these into the standard
+`conf.BASELINE_DATA_DIR/frames/run_<town>_<route>.npz` format consumed by
+`BaselineDataLoader`.  It groups routes by CARLA town and samples
+`~n_frames / n_towns` frames per town; Town05 is reserved for the test set.
+
+**Three TODOs remain until a sample file is inspected:**
+- `TODO_SHAPE`: confirm image dimensions are (384, 2304, 3)
+- `TODO_CMD`:   verify meta dict command key name and integer encoding
+- `TODO_TOWN`:  verify meta dict town key name
+
+`noScenarios` routes are used for the clean driving baseline; accident/obstacle
+scenarios are reserved for the test set perturbation mix.
+
+---
+
+## TFV6 minimal data dict: command one-hot fix
+
+`_make_minimal_data` (fallback used when no full data dict is available) was
+building `command = torch.zeros(1, 6)` — an all-zero vector that is never a
+valid one-hot.  `PlanningContextEncoder` passes this through
+`command_encoder` (Linear 6→256); the resulting command token was entirely
+bias-driven with no directional information, distorting the
+TransformerDecoder cross-attention and causing ~80% of baseline frames to
+predict speed bin 0 (stop).
+
+**Fix:**
+- `_make_minimal_data(spd, device, cmd=3)` now accepts a `cmd` integer
+  (0–5, leaderboard one-hot index) and sets `cmd_vec[0, cmd] = 1.0`.
+  Default is 3 (FOLLOW_LANE).
+- `LRPTFv6Model.update_context` gains `cmd: Optional[int] = None` and
+  passes it to `_make_minimal_data`.
+- `ATOMsCarla.process_frame` detects TFV6 via `hasattr(lrp, '_data_cache')`
+  and passes `cmd` to `update_context` when no full data dict is supplied.
+
+`target_point` and `acceleration` remain zero (not stored in npz files).
+These are secondary conditioning inputs; their effect on LRP is smaller
+than the command, which governs the primary cross-attention token.
+
+---
+
+## Data dict backport: why `BaselineComputer` deliberately omits `data=`
+
+An HPC agent suggested passing the full frame data dict to `process_frame`
+(instead of just `cmd`/`spd` scalars) to improve TFV6 LRP conditioning.
+This was assessed and rejected for the following reasons:
+
+**The `.npz` files do not contain the missing fields.**
+The only keys stored are `wide_rgb`, `narr_rgb`, `seg_red_wide`, `seg_red_narr`,
+`cmd`, `speed`, `is_brake`, `frame_idx`. The fields that `_make_minimal_data`
+zeroes out (`target_point` ×3, `acceleration`) are not in the files, so
+constructing a data dict from the `.npz` would still zero those fields — no
+improvement over `_make_minimal_data`.
+
+**Passing a raw `.npz` dict would break inference.**
+`planning_decoder.py` uses direct `data["key"]` indexing with no graceful
+fallback. The file stores `"cmd"` (int scalar) but the model expects `"command"`
+(one-hot float32 tensor `[1,6]`). Passing the raw dict causes a `KeyError`
+immediately.
+
+**No LiDAR cheating risk in LTF mode.**
+TFV6 is run in LTF mode (`config.LTF = True`). In this mode
+`transfuser_backbone.py` generates LiDAR as a deterministic 2-channel
+positional grid — it never reads `data["rasterized_lidar"]`. Even if the
+`.npz` contained recorded LiDAR it would be ignored. `LRPTFv6Model.__init__`
+now asserts `backbone_eval.config.LTF` to make this invariant explicit and
+prevent silent breakage if the config is changed.
+
+**Current approach is already correct.**
+`_make_minimal_data` (with the correct `cmd` one-hot fix) provides exactly the
+same information that a properly constructed data dict from the `.npz` would
+provide. `BaselineComputer.compute_and_save` passes `cmd=cmd` and `spd=spd`
+scalars, giving `_make_minimal_data` the only frame-specific information
+available. A comment at the call site documents this intent.
+
+---
+
+## BaselineDataLoader: narr_rgb now optional
+
+`BaselineDataLoader.load_run()` and `load_all_runs()` used to assume `narr_rgb`
+and `seg_red_narr` keys always exist in npz files.  TFV6 (wide-only) npz files
+do not contain these keys (matching `DataCollectionSensorAgent` which passes
+`narr_rgb=None`).
+
+**Fix:** both methods now return `None` for missing narr keys.
+`BaselineComputer.compute_and_save()` gates narr access on `has_narr` / `has_seg_narr`
+booleans derived from the loaded data.  `reference_narr` is only saved when present.
+
+---
+
+## run_analysis.py: agent-conditional loading
+
+`run_analysis.py` is the single entry-point for the full pipeline and must
+support both WoR and TFV6.  The adaptation strategy is:
+
+- **Step 1**: conditional on `conf.AGENT`.  WoR loads `CameraModel` + `LRPCameraModel`;
+  TFV6 loads `TFv6` + `LRPTFv6Model` (backbone_eval = `net.backbone`, planning_decoder = `net.planning_decoder`).
+- **`action_logits_available` flag**: set `True` for WoR, `False` for TFV6.
+  Gates Step 2.5 (MDX fit), action logit collection in Step 8, MDX scoring in
+  Step 9d, and MDX evaluation in Steps 10–11.
+- **narr_rgb guards**: all `data["narr_rgb"]` accesses are conditioned on
+  `data["narr_rgb"] is not None` (returns `None` from the patched loader).
+- **ATT_DIR**: fixed to `conf.TEST_DATA_DIR / "attention"` (was hardcoded WoR path).
+
+TFV6-specific action entropy and MDX are left as TODOs; the ATOMs-based
+detectors (Mahalanobis, GMM, Euclidean, JSD, kNN) are fully agent-agnostic.

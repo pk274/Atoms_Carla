@@ -9,12 +9,12 @@ class ExperimentConfig:
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
     AGENT = "TFV6"
 
-    TOWN = "Town02"
+    TOWN = "Town01"
     WEATHER = "sunny"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
-    BASELINE_RECORDING_MODE = True
+    BASELINE_RECORDING_MODE = False
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = False
 
@@ -29,14 +29,14 @@ class ExperimentConfig:
     CAM_INDEX = None               # None for all cams
     MANUAL_SPAWNS = False
 
-    RECOMPUTE_BASELINE = False
-    RECOMPUTE_TEST_ATOMS = False
+    RECOMPUTE_BASELINE = True
+    RECOMPUTE_TEST_ATOMS = True
     REAPPLY_PERTURBATIONS = False
     RECOMPUTE_MDX_BASELINE = False
 
     PLOT_SEG_AND_REL = True
-    PLOT_COMPARATIVE_REL = False
-    PLOT_INTERVAL = 20           # 50
+    PLOT_COMPARATIVE_REL = True
+    PLOT_INTERVAL = 20           # 20
 
 
     IMAGE_SAMPLE_INTERVAL = 25   # 25
@@ -54,14 +54,14 @@ class ExperimentConfig:
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
     EPSILON = 8.0           # 5 -> No effect
 
-    DEFAULT_CMD = 3
+    DEFAULT_CMD = 2
     MAHAL_RIDGE = 0.01
-    GMM_MAX_K = 4
+    GMM_MAX_K = 10
     GMM_COV_TYPE = "full"
     RANDOM_SEED = 17
 
-    MODE_ANALYSIS = 2
-    FC_RELEVANCE_FILTER = 0.9
+    MODE_ANALYSIS = 1
+    FC_RELEVANCE_FILTER = 0.25       # 0.9
 
     # If True, attention profiles are built from the wide-camera relevance map
     # only.  The narrow-camera contribution is ignored in _give_element_selectivity.

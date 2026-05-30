@@ -155,17 +155,17 @@ class ATOMsTestSuite:
         results: Dict[str, TestResult] = {}
 
         tests = [
-            #("A01_seg_to_masks_correctness",        self._a01_seg_to_masks),
-            #("A02_relevance_filter_coverage",        self._a02_relevance_filter),
+            ("A01_seg_to_masks_correctness",        self._a01_seg_to_masks),
+            ("A02_relevance_filter_coverage",        self._a02_relevance_filter),
             ("A03_v_normalization_nonzero_pixels",   self._a03_v_normalization),
-            #("A04_process_frame_output_normalized",  self._a04_process_frame_normalized),
-            #("A05_hierarchical_accumulation",        self._a05_hierarchical_accumulation),
-            #("A06_reset_clears_state",               self._a06_reset),
-            #("A07_node_map_diversity",               self._a07_node_map_diversity),
+            ("A04_process_frame_output_normalized",  self._a04_process_frame_normalized),
+            ("A05_hierarchical_accumulation",        self._a05_hierarchical_accumulation),
+            ("A06_reset_clears_state",               self._a06_reset),
+            ("A07_node_map_diversity",               self._a07_node_map_diversity),
             ("A08_command_conditioning_sensitivity", self._a08_command_sensitivity),
-            #("A09_series_df_integrity",              self._a09_series_df_integrity),
-            #("A10_contributions_non_negative",       self._a10_contributions_nonneg),
-            #("A11_mean_df_grouped_by_command",       self._a11_mean_df_groupby),
+            ("A09_series_df_integrity",              self._a09_series_df_integrity),
+            ("A10_contributions_non_negative",       self._a10_contributions_nonneg),
+            ("A11_mean_df_grouped_by_command",       self._a11_mean_df_groupby),
             ("A12_command_lrp_routing_diagnostic", self._a12_command_lrp_routing),
         ]
 

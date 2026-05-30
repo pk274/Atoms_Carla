@@ -11,4 +11,12 @@ env/
 .ipynb_checkpoints/
 pcla_agents/pretrained.zip
 .vscode
-.mp4
+*.mp4
+
+# Large data files — transfer separately via rsync/scp (see hpc/sync_to_hpc.sh)
+data/
+
+# Binary outputs
+*.pdf
+*.npy
+*.npz

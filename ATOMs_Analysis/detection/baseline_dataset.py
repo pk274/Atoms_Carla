@@ -317,18 +317,18 @@ class BaselineDataLoader:
         filepath = Path(filepath)
         if not filepath.exists():
             raise FileNotFoundError(f"Run file not found: {filepath}")
-        data = np.load(filepath)
+        data = np.load(filepath, allow_pickle=False)
         n = data["wide_rgb"].shape[0]
         return {
-            "wide_rgb":  data["wide_rgb"],
-            "narr_rgb":  data["narr_rgb"],
-            "seg_red_wide":   data["seg_red_wide"],
-            "seg_red_narr":   data["seg_red_narr"],
-            "cmd":       data["cmd"],
-            "speed":     data["speed"],
-            "is_brake":  data["is_brake"],
-            "frame_idx": data["frame_idx"],
-            "run_id":    np.zeros(n, dtype=np.int32),
+            "wide_rgb":      data["wide_rgb"],
+            "narr_rgb":      data["narr_rgb"]      if "narr_rgb"      in data else None,
+            "seg_red_wide":  data["seg_red_wide"],
+            "seg_red_narr":  data["seg_red_narr"]  if "seg_red_narr"  in data else None,
+            "cmd":           data["cmd"],
+            "speed":         data["speed"],
+            "is_brake":      data["is_brake"],
+            "frame_idx":     data["frame_idx"],
+            "run_id":        np.zeros(n, dtype=np.int32),
         }
 
     @staticmethod
@@ -362,25 +362,31 @@ class BaselineDataLoader:
 
         parts: List[Dict[str, np.ndarray]] = []
         for run_id, fpath in enumerate(files):
-            d = np.load(fpath)
+            d = np.load(fpath, allow_pickle=False)
             n = d["wide_rgb"].shape[0]
             parts.append({
-                "wide_rgb":  d["wide_rgb"],
-                "narr_rgb":  d["narr_rgb"],
-                "seg_red_wide":   d["seg_red_wide"],
-                "seg_red_narr":   d["seg_red_narr"],
-                "cmd":       d["cmd"],
-                "speed":     d["speed"],
-                "is_brake":  d["is_brake"],
-                "frame_idx": d["frame_idx"],
-                "run_id":    np.full(n, run_id, dtype=np.int32),
+                "wide_rgb":     d["wide_rgb"],
+                "narr_rgb":     d["narr_rgb"]     if "narr_rgb"     in d else None,
+                "seg_red_wide": d["seg_red_wide"],
+                "seg_red_narr": d["seg_red_narr"] if "seg_red_narr" in d else None,
+                "cmd":          d["cmd"],
+                "speed":        d["speed"],
+                "is_brake":     d["is_brake"],
+                "frame_idx":    d["frame_idx"],
+                "run_id":       np.full(n, run_id, dtype=np.int32),
             })
             print(f"  Loaded run {run_id:03d}: {n} frames ← {fpath.name}")
 
         total = sum(d["wide_rgb"].shape[0] for d in parts)
         print(f"[BaselineDataLoader] Total: {total} frames from {len(parts)} runs.")
 
-        return {k: np.concatenate([d[k] for d in parts], axis=0) for k in parts[0]}
+        def _concat(key):
+            arrays = [d[key] for d in parts]
+            if all(a is None for a in arrays):
+                return None
+            return np.concatenate(arrays, axis=0)
+
+        return {k: _concat(k) for k in parts[0]}
 
     @staticmethod
     def get_run_files(directory: str | Path, pattern: str = "run_*.npz") -> List[Path]:
@@ -397,7 +403,7 @@ class BaselineDataLoader:
             f"Frames     : {n}",
             f"Runs       : {len(runs)}",
             f"Wide res   : {data['wide_rgb'].shape[2:]}",
-            f"Narr res   : {data['narr_rgb'].shape[2:]}",
+            f"Narr res   : {data['narr_rgb'].shape[2:] if data.get('narr_rgb') is not None else 'N/A'}",
             f"Commands   : {cmd_counts}",
             f"Speed range: [{data['speed'].min():.1f}, {data['speed'].max():.1f}] m/s",
         ]
@@ -473,22 +479,42 @@ class BaselineComputer:
         #from ATOMs_Analysis.utils.atoms_test_suite import ATOMsTestSuite
         #self.atoms_tester = ATOMsTestSuite(atoms=self.atoms)
         #self.atoms_tester.run_all_tests(data)
+        #from ATOMs_Analysis.utils.tfv6_test_suite import TFV6TestSuite
+        #suite  = TFV6TestSuite(self.lrp, self.atoms)
+        #report = suite.run_all_tests(data)
+        #suite.print_report(report)
+
+
+        #from ATOMs_Analysis.utils.tfv6_lrp_diagnostics import TFV6LRPDiagnostics
+        #diag   = TFV6LRPDiagnostics(self.lrp)
+        #report = diag.run_all_tests(data)   # testframes from baseline data
+        #diag.print_report(report)
+        #from ATOMs_Analysis.utils.wor_lrp_diagnostics import WoRLRPDiagnostics
+        #diag   = WoRLRPDiagnostics(self.lrp)
+        #report = diag.run_all_tests(data)
+        #diag.print_report(report)
         # END OF TESTING ---------------------------------------------------------------
         
         # Process each frame
         attention_series: List[np.ndarray] = []
         t0 = time.time()
 
+        has_narr = data["narr_rgb"] is not None
+        has_seg_narr = data["seg_red_narr"] is not NotImplementedError and data["seg_red_narr"] is not None
+
         for i in range(n_frames):
             if i % 20 == 0:
                 print("Processing frame no.", i)
-            wide = torch.from_numpy(data["wide_rgb"][i:i+1]).float()   # [1, 3, H, W]
-            narr = torch.from_numpy(data["narr_rgb"][i:i+1]).float()   # [1, 3, H, W])
-            seg_wide  = data["seg_red_wide"][i]                                   # [H, W]
-            seg_narr = data["seg_red_narr"][i]
+            wide = torch.from_numpy(data["wide_rgb"][i:i+1]).float()        # [1, 3, H, W]
+            narr     = torch.from_numpy(data["narr_rgb"][i:i+1]).float() if has_narr     else None
+            seg_wide = data["seg_red_wide"][i]                               # [H, W]
+            seg_narr = data["seg_red_narr"][i]                          if has_seg_narr else None
             cmd  = int(data["cmd"][i])
             spd = float(data["speed"][i])
 
+            # data= is intentionally omitted: .npz files lack target_point/acceleration.
+            # _make_minimal_data (called inside process_frame) provides all required keys
+            # from cmd and spd, which is equivalent for vision-only/LTF mode.
             frame_att = self.atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)   # [num_classes]
             attention_series.append(frame_att)
 
@@ -497,30 +523,32 @@ class BaselineComputer:
                 savepath_seg_n = conf.BASELINE_DATA_DIR / "segmentation_examples" / f"seg_narr{conf.image_counter}"
                 savepath_rel_w = conf.BASELINE_DATA_DIR / "relevance_examples" / f"rel_wide{conf.image_counter}"
                 savepath_rel_n = conf.BASELINE_DATA_DIR / "relevance_examples" / f"rel_narr{conf.image_counter}"
-                visualize_segmentation(seg_wide, f"Segmentation Frame {i}", save_path=savepath_seg_w)
-                visualize_segmentation(seg_narr, f"Segmentation Frame {i}", save_path=savepath_seg_n)
+                visualize_segmentation(seg_wide, f"Segmentation Frame {i}", save_path=savepath_seg_w, class_map=self.atoms.class_map)
+                if has_seg_narr:
+                    visualize_segmentation(seg_narr, f"Segmentation Frame {i}", save_path=savepath_seg_n, class_map=self.atoms.class_map)
                 if conf.PLOT_COMPARATIVE_REL:
                     comp_map_wide = self.atoms.saliency_data_wide_drive - self.atoms.saliency_data_wide_brake
-                    comp_map_narr = self.atoms.saliency_data_narr_drive - self.atoms.saliency_data_narr_brake
+                    global_max = comp_map_wide.abs().max().item()
 
-                    global_max = max(comp_map_wide.abs().max().item(), comp_map_narr.abs().max().item()) + 1e-12
-                    comp_map_wide = comp_map_wide / global_max
-                    comp_map_narr = comp_map_narr / global_max
+                    if has_narr:
+                        comp_map_narr = self.atoms.saliency_data_narr_drive - self.atoms.saliency_data_narr_brake
+                        global_max = max(comp_map_wide.abs().max().item(), comp_map_narr.abs().max().item()) + 1e-12
+                        comp_map_wide = comp_map_wide / global_max
+                        comp_map_narr = comp_map_narr / global_max
 
+                        rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
+                        visualize_comparative_relevance(comp_map_narr, rgb_image=rgb_narr, save_path=f"{savepath_rel_n}_comparative",
+                                                        is_brake=self.atoms._last_is_brake)
+                    
                     rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
-                    rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
 
                     visualize_comparative_relevance(comp_map_wide, rgb_image=rgb_wide, save_path=f"{savepath_rel_w}_comparative",
                                                     is_brake=self.atoms._last_is_brake)
-                    visualize_comparative_relevance(comp_map_narr, rgb_image=rgb_narr, save_path=f"{savepath_rel_n}_comparative",
-                                                    is_brake=self.atoms._last_is_brake)
                 
-                if self.atoms._last_is_brake:
-                    visualize_relevance(self.atoms.saliency_data_wide_brake, save_path=savepath_rel_w, is_brake=True)
-                    visualize_relevance(self.atoms.saliency_data_narr_brake, save_path=savepath_rel_n, is_brake=True)
-                else:
-                    visualize_relevance(self.atoms.saliency_data_wide_drive, save_path=savepath_rel_w, is_brake=False)
-                    visualize_relevance(self.atoms.saliency_data_narr_drive, save_path=savepath_rel_n, is_brake=False)
+                visualize_relevance(self.atoms.saliency_data_wide_default, rgb_image=rgb_wide, save_path=savepath_rel_w,
+                                    is_brake=self.atoms._last_is_brake)
+                if has_narr:
+                    visualize_relevance(self.atoms.saliency_data_narr_default, save_path=savepath_rel_n, is_brake=self.atoms._last_is_brake)
                 conf.image_counter += 1
 
             if (i + 1) % 100 == 0:
@@ -536,14 +564,11 @@ class BaselineComputer:
         mean   = series.mean(axis=0)                   # [num_classes]
         cov    = np.cov(series.T)                      # [num_classes, num_classes]
 
-        # Save the first narr_rgb frame as a reference for fix_context.
-        # Any typical frame works — we just need a representative narrow image
-        # to initialize the frozen context embedding.
-        reference_narr = data["narr_rgb"][0:1]   # [1, 3, H, W]
+        # Save a narr_rgb reference for fix_context (WoR only; None for TFV6 wide-only).
+        reference_narr = data["narr_rgb"][0:1] if has_narr else None
 
         self._output_path.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            self._output_path,
+        save_kwargs = dict(
             series      = series.astype(np.float32),
             mean        = mean.astype(np.float32),
             cov         = cov.astype(np.float32),
@@ -551,8 +576,10 @@ class BaselineComputer:
             class_names = np.array(self.atoms.class_names, dtype=object),
             cmd_filter  = np.array([cmd_filter if cmd_filter is not None else -1]),
             n_frames    = np.array([n_frames]),
-            reference_narr = reference_narr.astype(np.uint8),
         )
+        if reference_narr is not None:
+            save_kwargs["reference_narr"] = reference_narr.astype(np.uint8)
+        np.savez_compressed(self._output_path, **save_kwargs)
 
         elapsed = time.time() - t0
         print(f"[BaselineComputer] Done. {n_frames} frames in {elapsed:.1f}s.")

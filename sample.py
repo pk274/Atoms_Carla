@@ -55,6 +55,8 @@ def main():
 
         if conf.AGENT == "LBC":
             agent = "lbc_lb"
+        elif conf.AGENT == "TFV6" and conf.LIVE_PERTURBATION_RECORDING_MODE:
+            agent = "tfv6_livepert"
         elif conf.AGENT == "TFV6":
             agent = "tfv6_datacollect"
         else:

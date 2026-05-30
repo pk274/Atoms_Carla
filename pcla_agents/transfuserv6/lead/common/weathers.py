@@ -1,4 +1,4 @@
-from lead.common.constants import WeatherVisibility
+from pcla_agents.transfuserv6.lead.common.constants import WeatherVisibility
 
 WEATHER_VISIBILITY_MAPPING = {
     "ClearNight": WeatherVisibility.VERY_LIMITED,

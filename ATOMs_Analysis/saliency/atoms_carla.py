@@ -50,9 +50,10 @@ from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 
 
 # ---------------------------------------------------------------------------
-# CARLA semantic class registry (CARLA 0.9.x, tags 0-22)
+# Semantic class registries
 # ---------------------------------------------------------------------------
 
+# Raw CARLA class IDs (CARLA 0.9.x, tags 0-28). Used for WoR data.
 CARLA_CLASSES: Dict[int, str] = {
     0:  "Unlabeled",
     1:  "Roads",
@@ -85,8 +86,23 @@ CARLA_CLASSES: Dict[int, str] = {
     28: "GuardRail"
 }
 
-# Driving-relevant subset for reduced-class mode.
-# Covers the objects most likely to influence driving decisions.
+# TransFuser/LEAD grouped class IDs (save_grouped_semantic=True). Used for TFV6 data.
+# The LEAD dataset maps CARLA's 32 raw tags to these 10 classes via
+# SEMANTIC_SEGMENTATION_CONVERTER before saving segmentation PNGs.
+TFV6_CLASSES: Dict[int, str] = {
+    0: "Unlabeled",       # sky, buildings, vegetation, sidewalks, terrain, …
+    1: "Vehicle",         # Car, Truck, Bus, Motorcycle
+    2: "Road",
+    3: "TrafficLight",
+    4: "Pedestrian",
+    5: "RoadLine",        # lane markings
+    6: "Obstacle",        # cones / traffic warnings
+    7: "SpecialVehicle",
+    8: "StopSign",
+    9: "Biker",           # Rider, Bicycle
+}
+
+# Driving-relevant subset for WoR reduced-class mode.
 REDUCED_CLASS_IDS: List[int] = [12, 24, 1, 2, 14, 7, 9, 11]
 # Pedestrian, RoadLine, Road, SideWalk, Car, TrafficLight, Vegetation, Sky
 
@@ -225,15 +241,23 @@ class ATOMsCarla:
         default_cmd:   int   = 3,
         mode_analysis: int   = 2,
         use_reduced:   bool  = False,
+        class_map:     Optional[Dict[int, str]] = None,
     ):
         self.lrp           = lrp_model
         self.p_relevance   = p_relevance
         self.default_cmd   = default_cmd
         self.mode_analysis = mode_analysis
 
-        # Class configuration
-        self.class_ids   = REDUCED_CLASS_IDS if use_reduced else list(CARLA_CLASSES.keys())
-        self.class_names = [CARLA_CLASSES.get(c, f"Class_{c}") for c in self.class_ids]
+        # Class configuration — use the supplied class_map if provided, else CARLA defaults.
+        # For TFV6 data (save_grouped_semantic=True) pass class_map=TFV6_CLASSES so that
+        # the 10 TransFuser class IDs are interpreted correctly.
+        _class_map = class_map if class_map is not None else CARLA_CLASSES
+        self.class_map = _class_map          # stored for callers (e.g. visualize_segmentation)
+        if use_reduced and class_map is None:
+            self.class_ids = REDUCED_CLASS_IDS
+        else:
+            self.class_ids = list(_class_map.keys())
+        self.class_names = [_class_map.get(c, f"Class_{c}") for c in self.class_ids]
         self.num_classes = len(self.class_ids)
 
         # Dispatch table — mirrors reference ATOMs
@@ -249,9 +273,11 @@ class ATOMsCarla:
         self._frame_cmds:   List[int]    = []
         self._n_frames:     int          = 0
 
-        self.saliency_data_wide_brake = None
+        self.saliency_data_wide_default = None   # default (softmax) seed — feeds _hierarchical
+        self.saliency_data_narr_default = None
+        self.saliency_data_wide_brake = None     # forced brake seed (PLOT_COMPARATIVE_REL only)
         self.saliency_data_narr_brake = None
-        self.saliency_data_wide_drive = None
+        self.saliency_data_wide_drive = None     # forced drive seed (PLOT_COMPARATIVE_REL only)
         self.saliency_data_narr_drive = None
 
         self._frame_brake: List[bool] = []
@@ -272,13 +298,22 @@ class ATOMsCarla:
         seg_narr:  np.ndarray,
         cmd:       Optional[int]   = None,
         spd:       Optional[float] = None,
+        data:      Optional[dict]  = None,
     ) -> np.ndarray:
         if cmd is None:
             cmd = self.default_cmd
         if spd is None:
             spd = 0.0
 
-        self.lrp.update_context(wide_rgb, narr_rgb, spd)
+        # Pass data dict if the LRP model supports it (TFV6 Option B)
+        if data is not None and hasattr(self.lrp, '_data_cache'):
+            self.lrp.update_context(wide_rgb, narr_rgb, spd, data=data)
+        elif hasattr(self.lrp, '_data_cache'):
+            # TFV6 without full data dict — pass cmd so the command token is
+            # a valid one-hot (not all-zeros), reducing conditioning distortion.
+            self.lrp.update_context(wide_rgb, narr_rgb, spd, cmd=cmd)
+        else:
+            self.lrp.update_context(wide_rgb, narr_rgb, spd)
 
         self._current_masks_wide = seg_to_masks(seg_wide, self.class_ids)
         self._current_masks_narr = (
@@ -379,14 +414,32 @@ class ATOMsCarla:
         self, wide_rgb: torch.Tensor, narr_rgb: torch.Tensor, cmd: int
     ) -> None:
         r_nodes = self._lrp1_nodes(wide_rgb, narr_rgb, cmd)
+        # LRP1 (output→fc) correctly sets _last_is_brake; LRP2 (fc→input) always
+        # returns is_brake=False and would overwrite it — save and restore here.
+        is_brake_lrp1 = self._last_is_brake
         node_ids = _relevance_filter(r_nodes, self.p_relevance)
         if not node_ids:
             return
+
+        lrp2_cache: dict = {} if conf.PLOT_COMPARATIVE_REL else None
+
         for node_id in node_ids:
             wide_r, narr_r = self._lrp2_pixels(wide_rgb, narr_rgb, node_id=node_id, cmd=cmd)
+            if lrp2_cache is not None:
+                lrp2_cache[node_id] = (wide_r, narr_r)
             R_sum  = self._give_element_selectivity(wide_r, narr_r)
-            node_w = r_nodes[node_id].item()
+            # abs(): AttnLRP (softmax/matmul rules) can produce negative F_c
+            # relevances.  The paper formula assumes z+-only LRP (R_k ≥ 0).
+            # Taking abs preserves the non-negativity of ATOMs attention
+            # profiles, consistent with how _relevance_filter selects nodes.
+            node_w = abs(r_nodes[node_id].item())
             self._hierarchical += np.asarray(R_sum, dtype=np.float64) * node_w
+        self._last_is_brake = is_brake_lrp1
+
+        if lrp2_cache:
+            self._set_comparative_maps_node_level(
+                wide_rgb, narr_rgb, cmd, node_ids, lrp2_cache
+            )
 
     def _compute_layer_level(
         self, wide_rgb: torch.Tensor, narr_rgb: torch.Tensor, cmd: int
@@ -423,48 +476,103 @@ class ATOMsCarla:
         )
         self._last_is_brake  = is_brake
         self._last_wide_frac = 1.0   # fc mode has no narrow relevance
-        r = wide_r.abs()
-        return r / (r.sum() + 1e-12)
+        # Return raw LRP1 relevances (paper formula uses R_k(x), not normalized)
+        return wide_r
 
     def _lrp2_pixels(
         self, wide_rgb: torch.Tensor, narr_rgb: torch.Tensor, node_id: int, cmd: int
     ):
-        if conf.PLOT_COMPARATIVE_REL:
-            wide_r_b, narr_r_b, wide_frac_b, is_brake = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg="fc", end="input", cmd=cmd, spd=self._current_spd,
-                node_id=node_id, forced_brake=True
-                )
-            self.saliency_data_wide_brake = wide_r_b / wide_frac_b
-            self.saliency_data_narr_brake = narr_r_b / (1 - wide_frac_b) if narr_r_b is not None else None
-            wide_r_d, narr_r_d, wide_frac_d, is_brake = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg="fc", end="input", cmd=cmd, spd=self._current_spd,
-                node_id=node_id, forced_drive=True
-                )
-            self.saliency_data_wide_drive = wide_r_d / wide_frac_d
-            self.saliency_data_narr_drive = narr_r_d / (1 - wide_frac_d) if narr_r_d is not None else None
-            if is_brake:
-                self._last_wide_frac = wide_frac_b if wide_frac_b is not None else 1.0
-                wide_r, narr_r = wide_r_b, narr_r_b
-            else:
-                self._last_wide_frac = wide_frac_d if wide_frac_d is not None else 1.0
-                wide_r, narr_r = wide_r_d, narr_r_d
+        # Always compute the default map — this is the one used for _hierarchical.
+        wide_r, narr_r, wide_frac, is_brake = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg="fc", end="input", cmd=cmd, spd=self._current_spd,
+            node_id=node_id
+        )
+        self._last_is_brake  = is_brake
+        self._last_wide_frac = wide_frac if wide_frac is not None else 1.0
+        norm_w = self._last_wide_frac
+        self.saliency_data_wide_default = wide_r / norm_w
+        self.saliency_data_narr_default = narr_r / (1 - norm_w) if narr_r is not None else None
+        # Mirror into brake/drive for backwards-compatible access
+        if is_brake:
+            self.saliency_data_wide_brake = self.saliency_data_wide_default
+            self.saliency_data_narr_brake = self.saliency_data_narr_default
         else:
-            wide_r, narr_r, wide_frac, is_brake = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg="fc", end="input", cmd=cmd, spd=self._current_spd,
-                node_id=node_id
-            )
-            if is_brake:
-                self.saliency_data_wide_brake = wide_r / wide_frac
-                self.saliency_data_narr_brake = narr_r / (1 - wide_frac) if narr_r is not None else None
-            else:
-                self.saliency_data_wide_drive = wide_r / wide_frac
-                self.saliency_data_narr_drive = narr_r / (1 - wide_frac) if narr_r is not None else None
-            self._last_wide_frac = wide_frac if wide_frac is not None else 1.0
+            self.saliency_data_wide_drive = self.saliency_data_wide_default
+            self.saliency_data_narr_drive = self.saliency_data_narr_default
+
+        # Comparative maps for mode 1 are handled by _set_comparative_maps_node_level
+        # in _compute_node_level after all nodes are processed — not here.
 
         return wide_r, narr_r
+
+    def _set_comparative_maps_node_level(
+        self,
+        wide_rgb: torch.Tensor,
+        narr_rgb: torch.Tensor,
+        cmd: int,
+        node_ids: list,
+        lrp2_cache: dict,
+    ) -> None:
+        """
+        Set saliency_data_wide_brake/drive for mode 1 visualization.
+
+        Runs two cheap LRP1 (output→fc) passes with forced_brake/forced_drive
+        seeds to get per-node weight vectors r_brake and r_drive. The
+        already-computed LRP2 pixel maps are then re-weighted:
+
+            saliency_wide_brake = Σ_k |r_brake[k]| * lrp2_map[k]
+            saliency_wide_drive = Σ_k |r_drive[k]| * lrp2_map[k]
+
+        Nodes brake-dominant under their respective LRP1 seed contribute more
+        to the brake map; drive-dominant nodes contribute more to the drive map.
+        The comparative map (drive - brake) is non-trivial when the two LRP1
+        weight distributions differ — which they do for TFV6 where the seed
+        controls which speed-bin output is emphasized.
+        """
+        r_brake, _, _, _ = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg="output", end="fc", cmd=cmd, spd=self._current_spd,
+            forced_brake=True,
+        )
+        r_drive, _, _, _ = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg="output", end="fc", cmd=cmd, spd=self._current_spd,
+            forced_drive=True,
+        )
+
+        brake_wide = None
+        drive_wide = None
+        brake_narr = None
+        drive_narr = None
+
+        for node_id in node_ids:
+            wide_r, narr_r = lrp2_cache[node_id]
+            wb = abs(float(r_brake[node_id].item())) if node_id < len(r_brake) else 0.0
+            wd = abs(float(r_drive[node_id].item())) if node_id < len(r_drive) else 0.0
+            if brake_wide is None:
+                brake_wide = wide_r * wb
+                drive_wide = wide_r * wd
+                if narr_r is not None:
+                    brake_narr = narr_r * wb
+                    drive_narr = narr_r * wd
+            else:
+                brake_wide = brake_wide + wide_r * wb
+                drive_wide = drive_wide + wide_r * wd
+                if narr_r is not None:
+                    brake_narr = brake_narr + narr_r * wb
+                    drive_narr = drive_narr + narr_r * wd
+
+        if brake_wide is None:
+            return
+
+        norm_b = brake_wide.abs().sum().item() + 1e-12
+        norm_d = drive_wide.abs().sum().item() + 1e-12
+        self.saliency_data_wide_brake = brake_wide / norm_b
+        self.saliency_data_wide_drive = drive_wide / norm_d
+        if brake_narr is not None:
+            self.saliency_data_narr_brake = brake_narr / (brake_narr.abs().sum().item() + 1e-12)
+            self.saliency_data_narr_drive = drive_narr / (drive_narr.abs().sum().item() + 1e-12)
 
     def _saliency_map(
         self,
@@ -474,43 +582,42 @@ class ATOMsCarla:
         end: str,
         cmd: int,
     ):
+        # Always compute the default map — this is the one used for _hierarchical.
+        wide_r, narr_r, wide_frac, is_brake = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg=beg, end=end, cmd=cmd, spd=self._current_spd
+        )
+        self._last_is_brake  = is_brake
+        self._last_wide_frac = wide_frac if wide_frac is not None else 1.0
+        norm_w = self._last_wide_frac
+        self.saliency_data_wide_default = wide_r / norm_w
+        self.saliency_data_narr_default = narr_r / (1 - norm_w) if narr_r is not None else None
+        # Mirror into brake/drive for backwards-compatible access
+        if is_brake:
+            self.saliency_data_wide_brake = self.saliency_data_wide_default
+            self.saliency_data_narr_brake = self.saliency_data_narr_default
+        else:
+            self.saliency_data_wide_drive = self.saliency_data_wide_default
+            self.saliency_data_narr_drive = self.saliency_data_narr_default
+
         if conf.PLOT_COMPARATIVE_REL:
-            wide_r_b, narr_r_b, wide_frac_b, is_brake = self.lrp.forward_relevance(
+            # Compute forced maps for visualization only — does NOT feed _hierarchical.
+            wide_r_b, narr_r_b, wide_frac_b, _ = self.lrp.forward_relevance(
                 wide_rgb, narr_rgb=narr_rgb,
                 beg=beg, end=end, cmd=cmd, spd=self._current_spd,
                 forced_brake=True
-                )
-            self.saliency_data_wide_brake = wide_r_b / wide_frac_b
-            self.saliency_data_narr_brake = narr_r_b / (1 - wide_frac_b) if narr_r_b is not None else None
-            wide_r_d, narr_r_d, wide_frac_d, is_brake = self.lrp.forward_relevance(
+            )
+            wide_r_d, narr_r_d, wide_frac_d, _ = self.lrp.forward_relevance(
                 wide_rgb, narr_rgb=narr_rgb,
                 beg=beg, end=end, cmd=cmd, spd=self._current_spd,
                 forced_drive=True
-                )
-            self.saliency_data_wide_drive = wide_r_d / wide_frac_d
-            self.saliency_data_narr_drive = narr_r_d / (1 - wide_frac_d) if narr_r_d is not None else None
-            if is_brake:
-                self._last_wide_frac = wide_frac_b if wide_frac_b is not None else 1.0
-                wide_r, narr_r = wide_r_b, narr_r_b
-            else:
-                self._last_wide_frac = wide_frac_d if wide_frac_d is not None else 1.0
-                wide_r, narr_r = wide_r_d, narr_r_d
-
-        else:
-            wide_r, narr_r, wide_frac, is_brake = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg=beg, end=end, cmd=cmd, spd=self._current_spd
             )
-            if is_brake:
-                self.saliency_data_wide_brake = wide_r / wide_frac
-                self.saliency_data_narr_brake = narr_r / (1 - wide_frac) if narr_r is not None else None
-            else:
-                self.saliency_data_wide_drive = wide_r / wide_frac
-                self.saliency_data_narr_drive = narr_r / (1 - wide_frac) if narr_r is not None else None
-
-            self._last_wide_frac = wide_frac if wide_frac is not None else 1.0
-
-        self._last_is_brake  = is_brake
+            norm_b = wide_frac_b if wide_frac_b is not None else 1.0
+            norm_d = wide_frac_d if wide_frac_d is not None else 1.0
+            self.saliency_data_wide_brake = wide_r_b / norm_b
+            self.saliency_data_narr_brake = narr_r_b / (1 - norm_b) if narr_r_b is not None else None
+            self.saliency_data_wide_drive = wide_r_d / norm_d
+            self.saliency_data_narr_drive = narr_r_d / (1 - norm_d) if narr_r_d is not None else None
 
         return wide_r, narr_r
 
