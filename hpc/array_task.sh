@@ -24,7 +24,8 @@ module load python-waterboa/2025.06
 source /u/$USER/venvs/pcla/bin/activate
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export PYTHONPATH="$CODE_DIR:$PYTHONPATH"
+# hpc/stubs must come first so its carla.py stub shadows any real carla install
+export PYTHONPATH="$CODE_DIR/hpc/stubs:$CODE_DIR:$PYTHONPATH"
 
 mkdir -p "$PARTIALS_DIR" /ptmp/$USER/atoms_baseline/logs
 

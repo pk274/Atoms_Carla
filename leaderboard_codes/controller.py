@@ -8,7 +8,12 @@
 from collections import deque
 import math
 import numpy as np
-import carla
+try:
+    import carla
+except ImportError:
+    class _CarlaStub:
+        class Vehicle: pass
+    carla = _CarlaStub()
 from .misc import get_speed
 
 
