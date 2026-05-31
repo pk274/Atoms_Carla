@@ -29,7 +29,7 @@ class ExperimentConfig:
     CAM_INDEX = None               # None for all cams
     MANUAL_SPAWNS = False
 
-    RECOMPUTE_BASELINE = True
+    RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = True
     REAPPLY_PERTURBATIONS = False
     RECOMPUTE_MDX_BASELINE = False
