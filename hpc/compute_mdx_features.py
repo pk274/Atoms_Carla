@@ -32,10 +32,13 @@ import sys
 import time
 from pathlib import Path
 
-# Add the project root (parent of hpc/) to sys.path so that pcla_agents and
-# ATOMs_Analysis are importable when the script is run directly without the
-# shell wrappers that normally set PYTHONPATH.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add paths so the script is importable when run directly (without the shell
+# wrappers that normally set PYTHONPATH via --export).
+# 1. Project root  → pcla_agents, ATOMs_Analysis importable
+# 2. pcla_agents/transfuserv6 → 'lead' importable (uses absolute imports internally)
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "pcla_agents" / "transfuserv6"))
 
 import numpy as np
 import torch
