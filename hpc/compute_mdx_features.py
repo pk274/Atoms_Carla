@@ -28,8 +28,14 @@ Or as a quick SLURM job:
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
+
+# Add the project root (parent of hpc/) to sys.path so that pcla_agents and
+# ATOMs_Analysis are importable when the script is run directly without the
+# shell wrappers that normally set PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
