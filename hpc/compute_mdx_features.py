@@ -34,11 +34,13 @@ from pathlib import Path
 
 # Add paths so the script is importable when run directly (without the shell
 # wrappers that normally set PYTHONPATH via --export).
-# 1. Project root  → pcla_agents, ATOMs_Analysis importable
-# 2. pcla_agents/transfuserv6 → 'lead' importable (uses absolute imports internally)
+# 1. hpc/stubs     → carla stub shadows missing CARLA install (must be first)
+# 2. Project root  → pcla_agents, ATOMs_Analysis importable
+# 3. pcla_agents/transfuserv6 → 'lead' importable (uses absolute imports internally)
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "pcla_agents" / "transfuserv6"))
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "hpc" / "stubs"))
 
 import numpy as np
 import torch
