@@ -32,7 +32,7 @@ Backpropagates relevance from the network output to the input pixels. Two implem
 
 **LRP1 seed rationale:** `target_speed_decoder` is trained with a two-hot target over 8 speed bins [0, 4, 8, 10, 13.9, 16, 17.8, 20] m/s. Using argmax causes discontinuities at bin boundaries. The softmax distribution seed is used instead (`grad_outputs = softmax(speed_logits.detach())`), giving a smooth attribution that reflects the full predicted speed distribution.
 
-**F_c layer:** 256-dim `speed_query` token output by `PlanningDecoder.transformer_decoder`, just before `target_speed_decoder`. This is the closest equivalent to the ATOMs paper's F_c ("the final world model on which the agent chooses its action"). See `lrp_todo.md` Decision A/B for rationale.
+**F_c layer:** 256-dim `speed_query` token output by `PlanningDecoder.transformer_decoder`, just before `target_speed_decoder`. This is the closest equivalent to the ATOMs paper's F_c ("the final world model on which the agent chooses its action"). See `docs/lrp_todo.md` Decision A/B for rationale.
 
 ### ATOMs (Attention-Oriented Metrics)
 Introduced by Beylier et al. (NeurIPS 2024 workshop). Converts raw LRP heatmaps into structured, object-level attention vectors by intersecting relevance maps with semantic segmentation masks. Two levels:
@@ -110,7 +110,7 @@ ATOMs_Analysis/
 - `DistanceComputer` is stateless (static methods); detectors (`MahalanobisDetector`, etc.) are stateful (fit/save/load).
 - Visualization functions return `matplotlib.Figure` objects; use `save_figure(fig, path)` to write them.
 - `viz_config.py` defines `apply_default_style()` — call it at the top of any new plotting script to keep figures consistent across the thesis.
-- For `LRPTFv6Model`, see `lrp_todo.md` for the full history of design decisions and remaining open issues (BatchNorm canonization, contrastive seeding).
+- For `LRPTFv6Model`, see `docs/lrp_todo.md` for the full history of design decisions and remaining open issues (BatchNorm canonization, contrastive seeding).
 
 ### Perturbation types (via `PerturbationManager`)
 | Name | Description |
@@ -214,12 +214,13 @@ Whenever you make a meaningful change to the codebase, **update the relevant `.m
 | File | What it tracks |
 |------|----------------|
 | `CLAUDE.md` | Architecture, pipeline, key concepts, module responsibilities |
-| `ATOMs_Analysis/design_decisions.md` | Design choices for the ATOMs/LRP pipeline — why things are done the way they are |
-| `lrp_todo.md` | Open questions, remaining work, and decision history for the LRP implementation |
+| `docs/design_decisions.md` | Design choices for the ATOMs/LRP pipeline — why things are done the way they are |
+| `docs/docs/lrp_todo.md` | Open questions, remaining work, and decision history for the LRP implementation |
+| `docs/cluster_explanations.md` | HPC/Viper file transfer and job submission how-to |
 
 **Rules:**
 - If you add or change a module, class, or key function → update `CLAUDE.md` (module structure, key concepts, or pipeline sections as appropriate).
-- If you make a design choice that isn't obvious from the code (algorithm selection, rule variant, architectural tradeoff) → record it in `design_decisions.md`.
-- If you resolve an open issue or make a decision on something tracked in `lrp_todo.md` → mark it resolved and document the outcome there.
+- If you make a design choice that isn't obvious from the code (algorithm selection, rule variant, architectural tradeoff) → record it in `docs/design_decisions.md`.
+- If you resolve an open issue or make a decision on something tracked in `docs/lrp_todo.md` → mark it resolved and document the outcome there.
 - If a change doesn't fit any existing file, you may create a new `.md` file — but **ask the user first**.
 - If you are unsure which file to update, or whether a change warrants documentation, **ask the user** before proceeding.

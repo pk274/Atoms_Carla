@@ -30,7 +30,7 @@ class ExperimentConfig:
     MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
-    RECOMPUTE_TEST_ATOMS = True
+    RECOMPUTE_TEST_ATOMS = False
     REAPPLY_PERTURBATIONS = False
     RECOMPUTE_MDX_BASELINE = False
 
@@ -61,7 +61,7 @@ class ExperimentConfig:
     RANDOM_SEED = 17
 
     MODE_ANALYSIS = 1
-    FC_RELEVANCE_FILTER = 0.25       # 0.9
+    FC_RELEVANCE_FILTER = 0.9       # 0.9
 
     # If True, attention profiles are built from the wide-camera relevance map
     # only.  The narrow-camera contribution is ignored in _give_element_selectivity.

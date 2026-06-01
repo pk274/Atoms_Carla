@@ -118,7 +118,8 @@ def main() -> None:
     print(f"[chunk] ATOMs: {atoms.num_classes} classes: "
           f"{', '.join(atoms.class_names[:4])}, ...")
 
-    profiles = []
+    profiles      = []
+    speed_logits  = []   # [N_chunk, 8] — for PEOC scoring (no fitting needed)
     t0 = time.time()
 
     for i in range(chunk_start, chunk_end):
@@ -130,6 +131,9 @@ def main() -> None:
         profile = atoms.process_frame(wide, None, seg_wide, None, cmd=cmd, spd=spd)
         profiles.append(profile)
 
+        # Speed logits for PEOC (cheap: no LRP backward, model already loaded)
+        speed_logits.append(lrp.get_speed_logits(wide.float(), cmd=cmd, spd=spd))
+
         local_i = i - chunk_start + 1
         if local_i % 10 == 0:
             elapsed = time.time() - t0
@@ -139,16 +143,19 @@ def main() -> None:
 
     atoms.reset()
 
-    profiles_arr = np.stack(profiles, axis=0).astype(np.float32)
-    print(f"[chunk] profiles shape: {profiles_arr.shape}")
+    profiles_arr     = np.stack(profiles,     axis=0).astype(np.float32)  # [N_chunk, C]
+    speed_logits_arr = np.stack(speed_logits, axis=0).astype(np.float32)  # [N_chunk, 8]
+    print(f"[chunk] profiles shape    : {profiles_arr.shape}")
+    print(f"[chunk] speed_logits shape: {speed_logits_arr.shape}")
 
     np.savez_compressed(
         args.output,
-        profiles    = profiles_arr,
-        chunk_start = np.array([chunk_start], dtype=np.int32),
-        chunk_end   = np.array([chunk_end],   dtype=np.int32),
-        class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
-        class_names = np.array(atoms.class_names, dtype=object),
+        profiles     = profiles_arr,
+        speed_logits = speed_logits_arr,
+        chunk_start  = np.array([chunk_start], dtype=np.int32),
+        chunk_end    = np.array([chunk_end],   dtype=np.int32),
+        class_ids    = np.array(atoms.class_ids,   dtype=np.int32),
+        class_names  = np.array(atoms.class_names, dtype=object),
     )
 
     elapsed = time.time() - t0

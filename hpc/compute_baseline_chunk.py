@@ -123,7 +123,9 @@ def main() -> None:
     # The per-frame `data` dict (needed to avoid zero command vector in TFV6 LRP)
     # is an open improvement; updating both this script and BaselineComputer in
     # tandem will make local and HPC results consistent.
-    attention_series = []
+    attention_series    = []
+    backbone_feat_list  = []   # [N, 512] — for MDX fitting
+    mdx_actions_list    = []   # [N, 3]   — speed-derived action proxy [steer, throt, brake]
     t0 = time.time()
 
     for i in range(n_frames):
@@ -137,6 +139,12 @@ def main() -> None:
         frame_att = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
         attention_series.append(frame_att)
 
+        # Backbone features for MDX (cheap: no LRP backward, model already loaded)
+        backbone_feat_list.append(lrp.get_backbone_features(wide.float()))
+        brake_proxy    = 1.0 if spd < 0.5 else 0.0
+        throttle_proxy = min(spd / 25.0, 1.0)
+        mdx_actions_list.append([0.0, throttle_proxy, brake_proxy])
+
         if (i + 1) % 10 == 0:
             elapsed = time.time() - t0
             fps     = (i + 1) / elapsed
@@ -145,16 +153,21 @@ def main() -> None:
 
     atoms.reset()
 
-    series = np.stack(attention_series, axis=0)   # [N, num_classes]
+    series           = np.stack(attention_series, axis=0)              # [N, num_classes]
+    backbone_features = np.stack(backbone_feat_list, axis=0)           # [N, 512]
+    mdx_actions       = np.array(mdx_actions_list, dtype=np.float32)   # [N, 3]
     print(f"[chunk] series shape: {series.shape}")
+    print(f"[chunk] backbone_features shape: {backbone_features.shape}")
 
     # --- Save partial result ---
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.output,
-        series      = series.astype(np.float32),
-        class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
-        class_names = np.array(atoms.class_names, dtype=object),
+        series             = series.astype(np.float32),
+        backbone_features  = backbone_features.astype(np.float32),
+        mdx_actions        = mdx_actions,
+        class_ids          = np.array(atoms.class_ids,   dtype=np.int32),
+        class_names        = np.array(atoms.class_names, dtype=object),
     )
 
     elapsed = time.time() - t0

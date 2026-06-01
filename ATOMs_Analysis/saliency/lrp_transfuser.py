@@ -863,6 +863,65 @@ class LRPTFv6Model:
         return rgb_rel.detach().cpu(), is_brake
 
     # ------------------------------------------------------------------
+    # Inference helpers (no LRP, no grad)
+    # ------------------------------------------------------------------
+
+    def get_speed_logits(
+        self,
+        wide_rgb: torch.Tensor,
+        cmd:      int   = 3,
+        spd:      float = 0.0,
+    ) -> "np.ndarray":
+        """
+        Forward pass → 8-bin speed logits from target_speed_decoder.
+
+        Used by PEOCDetector (Sedlmeier et al., 2020) to compute policy entropy
+        H(π) as the OOD anomaly score.
+
+        Parameters
+        ----------
+        wide_rgb : [1, 3, H, W] float tensor (raw uint8 range [0, 255])
+        cmd      : navigation command integer (0–5, leaderboard one-hot index)
+        spd      : current speed in m/s
+
+        Returns
+        -------
+        np.ndarray [8]  raw speed logits (before softmax)
+        """
+        import numpy as np
+        wide_t = wide_rgb.float().to(self.device)
+        data   = _make_minimal_data(float(spd), self.device, cmd=int(cmd))
+        with torch.no_grad():
+            speed_query  = self.full_model(wide_t, data)
+            speed_logits = self.full_model.target_speed_decoder(speed_query)
+        return speed_logits.squeeze(0).cpu().numpy()  # [8]
+
+    def get_backbone_features(self, wide_rgb: torch.Tensor) -> "np.ndarray":
+        """
+        Extract 512-dim globally-averaged backbone features for MDX detection.
+
+        Runs the image through the ResNet34 + GPT-fusion backbone and applies
+        adaptive average pooling to produce a flat feature vector matching the
+        penultimate-layer feature extraction used by MDXDetector.
+
+        Parameters
+        ----------
+        wide_rgb : [1, 3, H, W] float tensor (raw uint8 range [0, 255])
+
+        Returns
+        -------
+        np.ndarray [512]  ReLU-clamped, globally-pooled backbone features
+        """
+        import numpy as np
+        wide_t = wide_rgb.float().to(self.device)
+        with torch.no_grad():
+            _, image_features = self.full_model._run_backbone(wide_t)
+            # image_features: [1, 512, H', W']  (H'=12, W'=72 for 384×2304 input)
+            pooled = F.adaptive_avg_pool2d(image_features, (1, 1))
+            feat   = pooled.flatten(1).clamp(min=0).squeeze(0)  # [512]
+        return feat.cpu().numpy()
+
+    # ------------------------------------------------------------------
     # Selectors
     # ------------------------------------------------------------------
 
@@ -889,13 +948,13 @@ def _make_minimal_data(spd: float, device: torch.device, cmd: int = 3) -> dict:
           target_point and acceleration remain zero — these are secondary
           conditioning inputs that require data not stored in the npz.
     """
-    cmd_vec = torch.zeros(1, 6, dtype=torch.float32)
+    cmd_vec = torch.zeros(1, 6, dtype=torch.float32, device=device)
     cmd_vec[0, max(0, min(cmd, 5))] = 1.0
     return {
-        "speed":              torch.tensor([[spd]], dtype=torch.float32),
+        "speed":              torch.tensor([[spd]], dtype=torch.float32, device=device),
         "command":            cmd_vec,
-        "target_point":       torch.zeros(1, 2, dtype=torch.float32),
-        "target_point_previous": torch.zeros(1, 2, dtype=torch.float32),
-        "target_point_next":  torch.zeros(1, 2, dtype=torch.float32),
-        "acceleration":       torch.zeros(1, 1, dtype=torch.float32),
+        "target_point":       torch.zeros(1, 2, dtype=torch.float32, device=device),
+        "target_point_previous": torch.zeros(1, 2, dtype=torch.float32, device=device),
+        "target_point_next":  torch.zeros(1, 2, dtype=torch.float32, device=device),
+        "acceleration":       torch.zeros(1, 1, dtype=torch.float32, device=device),
     }

@@ -140,9 +140,11 @@ if conf.AGENT == "TFV6":
     model.eval()
 
     lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
-    # TFV6 has no WoR-compatible discrete action head. ActionEntropyDetector
-    # and the WoR-style MDX are disabled; TFV6 MDX uses backbone features instead.
+    # TFV6 has no WoR-compatible discrete action head; WoR-style MDX is disabled.
+    # speed_logits_available enables PEOC (Sedlmeier et al. 2020) via the 8-bin
+    # speed distribution from target_speed_decoder, and TFV6 MDX via backbone features.
     action_logits_available = False
+    speed_logits_available  = True
 
     # ------------------------------------------------------------------
     # ANSWERED (2026-05-28): SequentialMergeBatchNorm covers all 72 BN
@@ -169,6 +171,7 @@ else:
         uitb       = False,    # <<< set True if using UITB-style model
     )
     action_logits_available = True
+    speed_logits_available  = False
 
 # Select segmentation class map based on the active agent.
 # TFV6/LEAD data uses the 10-class TransFuser grouped scheme (save_grouped_semantic=True).
@@ -281,28 +284,42 @@ elif conf.AGENT == "TFV6":
     # TFV6 MDX: backbone 512-dim features + speed-derived action proxy
     # -----------------------------------------------------------------------
     if conf.RECOMPUTE_MDX_BASELINE:
-        runs_dict = BaselineDataLoader.load_all_runs(
-            Path(conf.BASELINE_DATA_DIR) / "frames"
-        )
-        features_list, actions_list = [], []
-        n_mdx = len(runs_dict["frame_idx"])
+        # Fast path: backbone features were pre-computed on HPC by
+        # compute_baseline_chunk.py and gathered into mdx_features.npz.
+        # If the file exists, skip the slow per-frame extraction loop.
+        mdx_features_path = Path(conf.BASELINE_DATA_DIR) / "mdx_features.npz"
+        if mdx_features_path.exists():
+            print(f"  Loading pre-computed MDX features from {mdx_features_path}")
+            _mdx_data     = np.load(mdx_features_path)
+            features_arr  = _mdx_data["features"].astype(np.float64)  # [N, 512]
+            actions_arr   = _mdx_data["actions"].astype(np.float64)   # [N, 3]
+            print(f"  features: {features_arr.shape}  actions: {actions_arr.shape}")
+        else:
+            # Slow path: extract backbone features locally frame by frame.
+            print("  mdx_features.npz not found — extracting locally (slow).")
+            print("  Tip: run compute_baseline_chunk.py + gather_baseline.py on HPC "
+                  "to generate mdx_features.npz and avoid this step.")
+            runs_dict = BaselineDataLoader.load_all_runs(
+                Path(conf.BASELINE_DATA_DIR) / "frames"
+            )
+            features_list, actions_list = [], []
+            n_mdx = len(runs_dict["frame_idx"])
 
-        for i in range(n_mdx):
-            if i % 20 == 0:
-                print(f"Extracting TFV6 MDX backbone features from frame {i}/{n_mdx}")
-            wide_t = torch.from_numpy(runs_dict["wide_rgb"][i]).unsqueeze(0).float().to(lrp.device)
-            with torch.no_grad():
-                feat = lrp.backbone_model(wide_t).squeeze(0).clamp(min=0).cpu().numpy()
-            features_list.append(feat)   # [512] raw activations
+            for i in range(n_mdx):
+                if i % 20 == 0:
+                    print(f"  Extracting TFV6 MDX backbone features from frame {i}/{n_mdx}")
+                wide_t = torch.from_numpy(runs_dict["wide_rgb"][i]).unsqueeze(0)
+                features_list.append(lrp.get_backbone_features(wide_t))
 
-            spd           = float(runs_dict["speed"][i])
-            brake_proxy   = 1.0 if spd < 0.5 else 0.0
-            throttle_proxy = min(spd / 25.0, 1.0)     # normalised by max_speed
-            actions_list.append([0.0, throttle_proxy, brake_proxy])
+                spd = float(runs_dict["speed"][i])
+                actions_list.append([0.0, min(spd / 25.0, 1.0), 1.0 if spd < 0.5 else 0.0])
+
+            features_arr = np.array(features_list)
+            actions_arr  = np.array(actions_list)
 
         mdx = MDXDetector(n_pca_components=50)
         print("\nFitting TFV6 MDX Detector!\n")
-        mdx.fit(np.array(features_list), np.array(actions_list))
+        mdx.fit(features_arr, actions_arr)
         mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
     else:
         mdx = MDXDetector()
@@ -363,7 +380,7 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
-N_COMPONENTS = 1
+N_COMPONENTS = 5
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 
@@ -577,9 +594,10 @@ if conf.RECOMPUTE_TEST_ATOMS:
 
     atoms.reset()   # clear any accumulated state from baseline computation
 
-    n_test          = test_data["wide_rgb"].shape[0]
-    test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = [] if action_logits_available else None
+    n_test                 = test_data["wide_rgb"].shape[0]
+    test_profiles          = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+    test_logits_all        = [] if action_logits_available  else None
+    test_speed_logits_list = [] if speed_logits_available   else None
 
     has_narr_test     = test_data["narr_rgb"]     is not None
     has_seg_narr_test = test_data["seg_red_narr"] is not None
@@ -606,6 +624,15 @@ if conf.RECOMPUTE_TEST_ATOMS:
                 ]).cpu().numpy()
             test_logits_all.append(flat_logits)
 
+        # Speed logits for PEOC (TFV6 only)
+        if speed_logits_available:
+            spd_logits = lrp.get_speed_logits(
+                wide.float(),
+                cmd=cmd,
+                spd=float(test_data["speed"][i]),
+            )
+            test_speed_logits_list.append(spd_logits)
+
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
             print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
@@ -613,22 +640,31 @@ if conf.RECOMPUTE_TEST_ATOMS:
     atoms.reset()
     if action_logits_available:
         test_logits_all = np.array(test_logits_all, dtype=np.float32)   # [N, num_logits]
+    if speed_logits_available:
+        test_speed_logits = np.array(test_speed_logits_list, dtype=np.float32)  # [N, 8]
+    else:
+        test_speed_logits = None
     test_labels = test_data["label"].astype(np.int32)
     print(f"  Done. {n_test} frames processed.\n")
 
     np.save(ATT_DIR / "test_profiles.npy", test_profiles)
     if action_logits_available:
         np.save(ATT_DIR / "test_logits.npy", test_logits_all)
+    if speed_logits_available:
+        np.save(ATT_DIR / "test_speed_logits.npy", test_speed_logits)
     print("  Test profiles saved.\n")
 
 else:
     # Reload test data and pre-computed profiles
-    test_data       = LabeledTestLoader.load()
-    test_profiles   = np.load(ATT_DIR / "test_profiles.npy")
-    test_logits_all = (
+    test_data         = LabeledTestLoader.load()
+    test_profiles     = np.load(ATT_DIR / "test_profiles.npy")
+    test_logits_all   = (
         np.load(ATT_DIR / "test_logits.npy") if action_logits_available else None
     )
-    test_labels     = test_data["label"].astype(np.int32)
+    test_speed_logits = (
+        np.load(ATT_DIR / "test_speed_logits.npy") if speed_logits_available else None
+    )
+    test_labels       = test_data["label"].astype(np.int32)
 
     print(f"  Loaded {len(test_profiles)} test profiles, "
           f"{int(test_labels.sum())} perturbed.\n")
@@ -674,7 +710,7 @@ class_names  = [_seg_class_map.get(i, f"cls_{i}") for i in range(_max_class)]
 
 
 # ---------------------------------------------------------------------------
-# 8.5a — Compute ATOMs profiles for the CLEAN test frames
+# 10.a — Compute ATOMs profiles for the CLEAN test frames
 # ---------------------------------------------------------------------------
 # The clean frames live in conf.TEST_DATA_DIR/frames/ and are NOT stored in
 # test_labeled.npz (which only holds copies of whichever frames were
@@ -719,7 +755,7 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# 8.5b — Build lookup: (run_id, frame_idx) → clean profile index
+# 10.b — Build lookup: (run_id, frame_idx) → clean profile index
 # ---------------------------------------------------------------------------
 # Both clean_raw and test_labeled use the same (run_id, frame_idx) keys
 # inherited from _load_all_runs / PerturbationApplier, so this composite
@@ -734,108 +770,108 @@ print(f"[Step 10b] Clean index built: {len(clean_key_to_idx)} unique (run_id, fr
 
 
 # ---------------------------------------------------------------------------
-# 8.5c — Build per-perturbation-type paired arrays
+# 10.c — Build per-perturbation-type paired arrays
 # ---------------------------------------------------------------------------
 # Only use perturbed frames (label == 1).  For each one, look up the
 # matching clean profile by composite key.  Group by perturbation type.
 # ---------------------------------------------------------------------------
 
 # paired_dict: {pert_name: {"clean": list[np.ndarray[C]], "perturbed": list}}
-paired_dict: dict = defaultdict(lambda: {"clean": [], "perturbed": []})
-
-n_matched   = 0
-n_unmatched = 0
-
-perturbed_mask = test_labels == 1
-
-for i in np.where(perturbed_mask)[0]:
-    run_id    = int(test_data["run_id"][i])
-    frame_idx = int(test_data["frame_idx"][i])
-    key       = (run_id, frame_idx)
-
-    if key not in clean_key_to_idx:
-        n_unmatched += 1
-        continue
-
-    clean_idx   = clean_key_to_idx[key]
-    pert_name   = str(test_data["perturbation"][i])
-
-    paired_dict[pert_name]["clean"].append(clean_profiles[clean_idx])
-    paired_dict[pert_name]["perturbed"].append(test_profiles[i])
-    n_matched += 1
-
-# Convert lists → arrays
-paired_dict = {
-    name: {
-        "clean":     np.stack(pair["clean"]),      # [N, C]
-        "perturbed": np.stack(pair["perturbed"]),  # [N, C]
-    }
-    for name, pair in paired_dict.items()
-}
-
-print(f"[Step 10c] Matched {n_matched} perturbed frames to clean originals.")
-if n_unmatched:
-    print(f"  WARNING: {n_unmatched} frames could not be matched (run_id/frame_idx mismatch).")
-for name, pair in paired_dict.items():
-    print(f"  [{name}]  {len(pair['clean'])} pairs")
-print()
-
-
-# ---------------------------------------------------------------------------
-# 8.5d — Displacement statistics
-# ---------------------------------------------------------------------------
-
-print("[Step 10d] Computing displacement statistics...")
-stats = compute_perturbation_displacement_stats(paired_dict)
-
-stats_text = format_displacement_stats_text(stats)
-print(stats_text)
-
-stats_path = TRAJ_OUT_DIR / "displacement_stats.txt"
-stats_path.write_text(stats_text)
-print(f"\n  Stats saved → {stats_path}\n")
-
+#paired_dict: dict = defaultdict(lambda: {"clean": [], "perturbed": []})
+#
+#n_matched   = 0
+#n_unmatched = 0
+#
+#perturbed_mask = test_labels == 1
+#
+#for i in np.where(perturbed_mask)[0]:
+#    run_id    = int(test_data["run_id"][i])
+#    frame_idx = int(test_data["frame_idx"][i])
+#    key       = (run_id, frame_idx)
+#
+#    if key not in clean_key_to_idx:
+#        n_unmatched += 1
+#        continue
+#
+#    clean_idx   = clean_key_to_idx[key]
+#    pert_name   = str(test_data["perturbation"][i])
+#
+#    paired_dict[pert_name]["clean"].append(clean_profiles[clean_idx])
+#    paired_dict[pert_name]["perturbed"].append(test_profiles[i])
+#    n_matched += 1
+#
+## Convert lists → arrays
+#paired_dict = {
+#    name: {
+#        "clean":     np.stack(pair["clean"]),      # [N, C]
+#        "perturbed": np.stack(pair["perturbed"]),  # [N, C]
+#    }
+#    for name, pair in paired_dict.items()
+#}
+#
+#print(f"[Step 10c] Matched {n_matched} perturbed frames to clean originals.")
+#if n_unmatched:
+#    print(f"  WARNING: {n_unmatched} frames could not be matched (run_id/frame_idx mismatch).")
+#for name, pair in paired_dict.items():
+#    print(f"  [{name}]  {len(pair['clean'])} pairs")
+#print()
 
 
 # ---------------------------------------------------------------------------
-# 8.5f — Figures
+# 10.d — Displacement statistics
+# ---------------------------------------------------------------------------
+
+#print("[Step 10d] Computing displacement statistics...")
+#stats = compute_perturbation_displacement_stats(paired_dict)
+#
+#stats_text = format_displacement_stats_text(stats)
+#print(stats_text)
+#
+#stats_path = TRAJ_OUT_DIR / "displacement_stats.txt"
+#stats_path.write_text(stats_text)
+#print(f"\n  Stats saved → {stats_path}\n")
+
+
+
+# ---------------------------------------------------------------------------
+# 10.f — Figures
 # ---------------------------------------------------------------------------
 
 print("[Step 10f] Generating figures...")
 
 # --- Standard PCA trajectories ---
-fig_traj, proj_info = plot_pca_perturbation_trajectories(
-    baseline_profiles = baseline_series,
-    paired_dict       = paired_dict,
-    cov               = None,           # standard PCA
-    subsample         = 60,
-    arrow_alpha       = 0.3,
-    title             = "ATOMs Attention Trajectories Under Perturbation (PCA)",
-    class_names       = class_names,
-)
-save_figure(fig_traj, TRAJ_OUT_DIR / "trajectory_pca.png")
-
-# --- Whitened PCA trajectories (Mahalanobis geometry) ---
-fig_wtraj, _ = plot_pca_perturbation_trajectories(
-    baseline_profiles = baseline_series,
-    paired_dict       = paired_dict,
-    cov               = baseline_cov,            # activates whitened PCA
-    subsample         = 60,
-    arrow_alpha       = 0.3,
-    title             = "ATOMs Attention Trajectories Under Perturbation (Whitened PCA)",
-    class_names       = class_names,
-)
-save_figure(fig_wtraj, TRAJ_OUT_DIR / "trajectory_whitened_pca.png")
-
-# --- Cosine similarity heatmap ---
-fig_coh = plot_displacement_coherence_bar(stats)
-save_figure(fig_coh, TRAJ_OUT_DIR / "displacement_coherence.png")
-
-# --- Magnitude boxplot ---
-fig_mag = plot_displacement_magnitude_boxplot(stats)
-save_figure(fig_mag, TRAJ_OUT_DIR / "displacement_magnitude.png")
-
-print(f"\n[Step 10] Done. All outputs in {TRAJ_OUT_DIR}\n")
+#fig_traj, proj_info = plot_pca_perturbation_trajectories(
+#    baseline_profiles = baseline_series,
+#    paired_dict       = paired_dict,
+#    cov               = None,           # standard PCA
+#    subsample         = 60,
+#    arrow_alpha       = 0.3,
+#    title             = "ATOMs Attention Trajectories Under Perturbation (PCA)",
+#    class_names       = class_names,
+#)
+#save_figure(fig_traj, TRAJ_OUT_DIR / "trajectory_pca.png")
+#
+## --- Whitened PCA trajectories (Mahalanobis geometry) ---
+#fig_wtraj, _ = plot_pca_perturbation_trajectories(
+#    baseline_profiles = baseline_series,
+#    paired_dict       = paired_dict,
+#    cov               = baseline_cov,            # activates whitened PCA
+#    subsample         = 60,
+#    arrow_alpha       = 0.3,
+#    title             = "ATOMs Attention Trajectories Under Perturbation (Whitened PCA)",
+#    class_names       = class_names,
+#)
+#save_figure(fig_wtraj, TRAJ_OUT_DIR / "trajectory_whitened_pca.png")
+#
+## --- Cosine similarity heatmap ---
+#fig_coh = plot_displacement_coherence_bar(stats)
+#save_figure(fig_coh, TRAJ_OUT_DIR / "displacement_coherence.png")
+#
+## --- Magnitude boxplot ---
+#fig_mag = plot_displacement_magnitude_boxplot(stats)
+#save_figure(fig_mag, TRAJ_OUT_DIR / "displacement_magnitude.png")
+#
+#print(f"\n[Step 10] Done. All outputs in {TRAJ_OUT_DIR}\n")
 
 
 # ===========================================================================
@@ -911,7 +947,6 @@ if action_logits_available and test_logits_all is not None:
     scores_entropy   = entropy_detector.score_batch(test_logits_all)
 
 # ----- 9d: MDX detection ----
-mdx = None  # Demporarily disabled
 scores_mdx = None
 if mdx is not None:
     scores_list = []
@@ -928,18 +963,27 @@ if mdx is not None:
             )
             feat_vec = features[0].cpu().detach().numpy()
         else:
-            # TFV6: raw 512-dim backbone activations (clamped, pre-normalisation)
-            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0).float().to(lrp.device)
-            with torch.no_grad():
-                feat_vec = lrp.backbone_model(wide_t).squeeze(0).clamp(min=0).cpu().numpy()
+            # TFV6: 512-dim globally-pooled backbone features
+            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+            feat_vec = lrp.get_backbone_features(wide_t)
         scores_list.append(mdx.score(feat_vec))
     scores_mdx = np.array(scores_list)
+    print(f"  MDX: scored {len(scores_mdx)} frames")
+
+# ----- 9e: PEOC — Policy Entropy OOD Classifier (Sedlmeier et al., 2020) ----
+# H(π) of the 8-bin speed distribution. No fitting required.
+scores_peoc = None
+if speed_logits_available and test_speed_logits is not None:
+    peoc_detector = ActionEntropyDetector(from_logits=True, cmd=None)
+    scores_peoc   = peoc_detector.score_batch(test_speed_logits)
+    print(f"  PEOC: scored {len(scores_peoc)} frames")
 
 # --- Quick sanity check ---
 _knn_sanity = [(f"k-NN (k={k})", scores_knn_by_k[k]) for k in KNN_K_VALUES]
 _optional = [
     ("Action entropy",  scores_entropy  if action_logits_available else None),
     ("MDX Detection",   scores_mdx),
+    ("PEOC",            scores_peoc),
 ]
 for name, scores in [
     ("Mahalanobis (single)", scores_mahal_single),
@@ -1012,10 +1056,16 @@ results_mdx = evaluator.evaluate(
     detector_name = "MDX Detection",
 ) if scores_mdx is not None else None
 
+results_peoc = evaluator.evaluate(
+    scores        = scores_peoc,
+    labels        = test_labels,
+    detector_name = "PEOC (speed entropy)",
+) if scores_peoc is not None else None
+
 all_results = [
     r for r in [
         results_single, results_gmm, results_entropy,
-        results_euclidean, results_jsd, results_knn, results_mdx,
+        results_euclidean, results_jsd, results_knn, results_mdx, results_peoc,
     ] if r is not None
 ]
 evaluator.compare(all_results)
@@ -1090,12 +1140,17 @@ for pert_name, subset in split_data.items():
         detector_name=f"Entropy | {pert_name}",
     ) if action_logits_available else None
 
+    r_peoc = evaluator.evaluate(
+        scores_peoc[eval_mask], eval_labels,
+        detector_name=f"PEOC | {pert_name}",
+    ) if scores_peoc is not None else None
+
     perturb_results[pert_name] = [
-        r for r in [r_single, r_gmm, r_entropy, r_jsd, r_euclidean, r_mdx, r_knn]
+        r for r in [r_single, r_gmm, r_entropy, r_jsd, r_euclidean, r_mdx, r_knn, r_peoc]
         if r is not None
     ]
     print(f"\n  Perturbation: {pert_name}")
-    evaluator.compare([r for r in [r_single, r_gmm, r_entropy] if r is not None])
+    evaluator.compare([r for r in [r_single, r_gmm, r_peoc] if r is not None])
 
 with open(OUT_DIR / "results_per_perturbation.json", "w") as f:
     json.dump(

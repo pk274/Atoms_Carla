@@ -30,10 +30,22 @@ date
 
 srun python3 "$CODE_DIR/hpc/gather_baseline.py" \
     --partials-dir "$PARTIALS_DIR" \
-    --output       "$PARTIALS_DIR/baseline.npz"
+    --output       "$PARTIALS_DIR/baseline.npz" \
+    --mdx-output   "$PARTIALS_DIR/mdx_features.npz"
 
 echo "Gather finished with exit code $?"
-echo "baseline.npz is at: $PARTIALS_DIR/baseline.npz"
-echo "Copy it back with:"
-echo "  rsync -avz \$HPC_USER@viper.mpcdf.mpg.de:$PARTIALS_DIR/baseline.npz data/TFV6/baseline_data/"
+echo ""
+echo "baseline.npz     : $PARTIALS_DIR/baseline.npz"
+echo "mdx_features.npz : $PARTIALS_DIR/mdx_features.npz"
+echo ""
+echo "Copy both into the repo and push:"
+echo "  cp $PARTIALS_DIR/baseline.npz     /u/\$USER/pcla/data/TFV6/baseline_data/baseline.npz"
+echo "  cp $PARTIALS_DIR/mdx_features.npz /u/\$USER/pcla/data/TFV6/baseline_data/mdx_features.npz"
+echo "  cd /u/\$USER/pcla"
+echo "  git add -f data/TFV6/baseline_data/baseline.npz"
+echo "  git add -f data/TFV6/baseline_data/mdx_features.npz"
+echo "  git commit -m 'add TFV6 baseline.npz and mdx_features.npz from HPC'"
+echo "  git push"
+echo ""
+echo "Then locally: git pull, set RECOMPUTE_BASELINE=False and RECOMPUTE_MDX_BASELINE=False"
 date

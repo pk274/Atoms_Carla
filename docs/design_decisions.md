@@ -331,11 +331,38 @@ support both WoR and TFV6.  The adaptation strategy is:
 - **Step 1**: conditional on `conf.AGENT`.  WoR loads `CameraModel` + `LRPCameraModel`;
   TFV6 loads `TFv6` + `LRPTFv6Model` (backbone_eval = `net.backbone`, planning_decoder = `net.planning_decoder`).
 - **`action_logits_available` flag**: set `True` for WoR, `False` for TFV6.
-  Gates Step 2.5 (MDX fit), action logit collection in Step 8, MDX scoring in
-  Step 9d, and MDX evaluation in Steps 10–11.
+  Gates WoR-style MDX fit (Step 3), steer/throt/brake logit collection in Step 9,
+  and `ActionEntropyDetector` scoring.
+- **`speed_logits_available` flag**: set `True` for TFV6, `False` for WoR.
+  Gates TFV6 MDX fit (Step 3), speed logit collection in Step 9 (saved as
+  `test_speed_logits.npy`), PEOC scoring (Step 11e), and PEOC evaluation.
 - **narr_rgb guards**: all `data["narr_rgb"]` accesses are conditioned on
   `data["narr_rgb"] is not None` (returns `None` from the patched loader).
 - **ATT_DIR**: fixed to `conf.TEST_DATA_DIR / "attention"` (was hardcoded WoR path).
 
-TFV6-specific action entropy and MDX are left as TODOs; the ATOMs-based
-detectors (Mahalanobis, GMM, Euclidean, JSD, kNN) are fully agent-agnostic.
+---
+
+## TFV6 PEOC detector (Sedlmeier et al., 2020)
+
+**PEOC = Policy Entropy Out-of-distribution Classifier.**  H(π) of the 8-bin
+speed distribution from `target_speed_decoder` is used as the OOD score:
+high entropy → the agent is uncertain → likely OOD.  This is exactly the
+existing `ActionEntropyDetector(from_logits=True, cmd=None)` applied to the
+speed logits — no new class is needed.
+
+Speed logits are extracted via `LRPTFv6Model.get_speed_logits(wide_rgb, cmd, spd)`,
+which runs a no-grad forward through `full_model` + `target_speed_decoder`.
+
+---
+
+## TFV6 MDX feature extraction fix
+
+`lrp.backbone_model` was referenced in Steps 3 and 11 of `run_analysis.py` but
+never existed as an attribute on `LRPTFv6Model`.  Fixed by adding
+`LRPTFv6Model.get_backbone_features(wide_rgb)` which calls
+`full_model._run_backbone()`, applies global average pooling, and clamps with
+ReLU to produce a 512-dim feature vector matching the MDX paper's penultimate-layer
+feature extraction.
+
+Also fixed: `_make_minimal_data` created all tensors on CPU regardless of the
+`device` argument.  All tensor constructors now pass `device=device`.

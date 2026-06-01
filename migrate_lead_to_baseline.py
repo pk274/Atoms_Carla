@@ -8,7 +8,7 @@ Usage
 -----
     python migrate_lead_to_baseline.py \
         --lead_dir data/carla_leaderboard2/noScenarios \
-        --n_frames 1500 \
+        --n_frames 3000 \
         --exclude_towns Town05
 
 The script discovers all route subdirectories that contain rgb/, semantics/,
@@ -337,7 +337,7 @@ def _write_plan(
 
 def migrate(
     lead_dir: Path,
-    n_frames: int = 1500,
+    n_frames: int = 3000,
     exclude_towns: Optional[List[str]] = None,
 ) -> None:
     """Convert LEAD routes to ATOMs baseline npz files (Town05 excluded by default)."""
@@ -360,7 +360,7 @@ def migrate(
 
 def migrate_testset(
     lead_dir: Path,
-    n_frames: int = 200,
+    n_frames: int = 500,
     include_towns: Optional[List[str]] = None,
 ) -> None:
     """
@@ -373,7 +373,7 @@ def migrate_testset(
     Parameters
     ----------
     lead_dir      : root of the LEAD dataset (same as for migrate()).
-    n_frames      : target frame count across all included towns (default 200).
+    n_frames      : target frame count across all included towns (default 500).
     include_towns : towns to sample from (default: ["Town05"]).
     """
     if include_towns is None:
@@ -414,16 +414,16 @@ if __name__ == "__main__":
         help="What to generate (default: baseline)",
     )
     parser.add_argument(
-        "--n_frames", type=int, default=1500,
-        help="Target frame count for baseline (default: 1500)",
+        "--n_frames", type=int, default=3000,
+        help="Target frame count for baseline (default: 3000)",
     )
     parser.add_argument(
         "--exclude_towns", nargs="*", default=["Town05"],
         help="Towns to exclude from baseline (default: Town05)",
     )
     parser.add_argument(
-        "--testset_n_frames", type=int, default=200,
-        help="Target frame count for test set (default: 200)",
+        "--testset_n_frames", type=int, default=500,
+        help="Target frame count for test set (default: 500)",
     )
     parser.add_argument(
         "--testset_towns", nargs="*", default=["Town05"],
