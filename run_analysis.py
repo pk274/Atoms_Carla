@@ -33,8 +33,13 @@ import matplotlib
 matplotlib.use("Agg")   # non-interactive backend — must be set before any pyplot import
 
 import json
+import sys
 import time
 from pathlib import Path
+
+# Add transfuserv6 to sys.path so its internal `lead` package resolves correctly
+# without modifying the agent's own import statements.
+sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
 
 import numpy as np
 import torch
@@ -54,8 +59,8 @@ from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
 # Agent-specific LRP imports (loaded conditionally in Step 1 to avoid hard deps)
 if conf.AGENT == "TFV6":
     from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
-    from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
-    from pcla_agents.transfuserv6.lead.tfv6.tfv6 import TFv6
+    from lead.training.config_training import TrainingConfig
+    from lead.tfv6.tfv6 import TFv6
 else:  # WOR (default)
     from pcla_agents.wor.rails.models.main_model import CameraModel
     from pcla_agents.wor.image_agent import ImageAgent
@@ -574,7 +579,8 @@ print("  Figures saved.\n")
 # Common options (adjust names to match your pm interface):
 #   "gaussian_noise", "brightness", "dropout", "fgsm", "right_camera_loss"
 # ---------------------------------------------------------------------------
-if conf.REAPPLY_PERTURBATIONS:
+_labeled_npz = Path(conf.TEST_DATA_DIR) / "test_labeled.npz"
+if conf.REAPPLY_PERTURBATIONS or not _labeled_npz.exists():
     print("[Step 8] Applying perturbations to test set...")
 
     # Import your PerturbationManager
@@ -605,7 +611,7 @@ if conf.REAPPLY_PERTURBATIONS:
     applier = PerturbationApplier(pm, model)
     labeled_path = applier.apply(
         spec        = spec,
-        seed        = conf.RANDOM_SEED,    # <<< fix seed for reproducibility
+        seed        = 42,   # must match hpc/prep_test_task.sh --seed 42
         output_name = "test_labeled",
     )
 
