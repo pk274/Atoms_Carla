@@ -40,10 +40,15 @@ _pcla_root = Path(__file__).resolve().parents[5]
 if str(_pcla_root) not in sys.path:
     sys.path.insert(0, str(_pcla_root))
 
+# Add transfuserv6 dir so that `lead.*` imports resolve
+_transfuserv6_dir = Path(__file__).resolve().parents[2]
+if str(_transfuserv6_dir) not in sys.path:
+    sys.path.insert(0, str(_transfuserv6_dir))
+
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 from ATOMs_Analysis.detection.baseline_dataset import BaselineDataCollector
 
-from pcla_agents.transfuserv6.lead.inference.sensor_agent import SensorAgent
+from lead.inference.sensor_agent import SensorAgent
 
 LOG = logging.getLogger(__name__)
 

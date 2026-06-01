@@ -37,16 +37,22 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
+import torch
 
 _pcla_root = Path(__file__).resolve().parents[5]
 if str(_pcla_root) not in sys.path:
     sys.path.insert(0, str(_pcla_root))
 
+# Add transfuserv6 dir so that `lead.*` imports resolve
+_transfuserv6_dir = Path(__file__).resolve().parents[2]
+if str(_transfuserv6_dir) not in sys.path:
+    sys.path.insert(0, str(_transfuserv6_dir))
+
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 from ATOMs_Analysis.detection.dataset import TestDataCollector
 from ATOMs_Analysis.perturbation_manager import PerturbationManager
 
-from pcla_agents.transfuserv6.lead.inference.sensor_agent_data_collection import (
+from lead.inference.sensor_agent_data_collection import (
     DataCollectionSensorAgent,
 )
 
@@ -99,16 +105,37 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                      "no live-pert frames will be saved.")
 
     # ------------------------------------------------------------------
+    # Adversarial perturbation hook — called from SensorAgent.run_step
+    # after tensor prep, before the forward pass
+    # ------------------------------------------------------------------
+
+    def _perturb_tensor_hook(self, tensors: dict) -> dict:
+        if not self._injection_active or conf.PERTURBATION != "pgd":
+            return tensors
+
+        with torch.enable_grad():
+            tensors["rgb"] = self._pm.pgd_attack_tfv6(
+                nets=self.closed_loop_inference.nets,
+                data=tensors,
+                target=conf.PGD_TARGET,
+                epsilon=conf.EPSILON,
+                n_steps=conf.PGD_N_STEPS,
+            )
+        return tensors
+
+    # ------------------------------------------------------------------
     # run_step override — sets injection flag from timestamp
     # ------------------------------------------------------------------
 
     def run_step(self, input_data: dict, timestamp=None, vehicle=None):
         if timestamp is not None and timestamp >= conf.INJECTION_TIME:
             if not self._injection_active:
-                LOG.info(
+                msg = (
                     f"!!! PERTURBATION '{conf.PERTURBATION}' ACTIVATED "
                     f"at t={timestamp:.1f}s (intensity={conf.INTENSITY}) !!!"
                 )
+                LOG.warning(msg)
+                print(msg, flush=True)
             self._injection_active = True
         return super().run_step(input_data, timestamp, vehicle)
 
@@ -126,7 +153,9 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             return input_data
 
         # ── Inject perturbation ────────────────────────────────────────
-        if self._injection_active:
+        # "pgd" is handled as a tensor-level attack in _perturb_tensor_hook;
+        # all other names go through the numpy registry here.
+        if self._injection_active and conf.PERTURBATION != "pgd":
             n_cams = (
                 self.training_config.num_cameras
                 if hasattr(self, "training_config")

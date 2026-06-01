@@ -707,6 +707,100 @@ def plot_attention_comparison(
     return fig
 
 
+def plot_attention_bars_separate(
+    attention_dict: Dict[str, np.ndarray],
+    class_names:    List[str],
+    top_k:          Optional[int] = 15,
+    colors:         Optional[List] = None,
+    error_dict:     Optional[Dict[str, np.ndarray]] = None,
+) -> Dict[str, "plt.Figure"]:
+    """
+    Produce one attention bar chart per entry in *attention_dict*.
+
+    Intended for building collages: each figure is identically styled so
+    they can be placed side-by-side next to a PCA scatter.  Uses the same
+    ``top_k`` classes across all sub-plots so the y-axis is directly
+    comparable between figures.
+
+    Parameters
+    ----------
+    attention_dict : dict mapping label (str) -> attention vector [C].
+    class_names    : List[str] [C]
+    top_k          : number of top classes to show (by max attention across
+                     all conditions); None shows all classes.
+    colors         : optional list of bar colours, one per condition (aligned
+                     to attention_dict order).  Defaults to CLEAN_TEST_COLOR.
+    error_dict     : optional dict mapping label -> std vector [C] for error bars.
+
+    Returns
+    -------
+    dict mapping the same labels to individual ``matplotlib.figure.Figure``
+    objects.
+    """
+    labels   = list(attention_dict.keys())
+    profiles = np.stack(list(attention_dict.values()), axis=0)   # [n_cond, C]
+
+    # Shared class selection: top-k by max attention across all conditions.
+    if top_k is not None:
+        max_att = profiles.max(axis=0)
+        shared_idx = np.argsort(max_att)[-top_k:]          # ascending, bottom→top
+    else:
+        shared_idx = np.argsort(profiles.max(axis=0))      # all classes, sorted
+
+    figs: Dict[str, "plt.Figure"] = {}
+    for i, label in enumerate(labels):
+        att    = attention_dict[label]
+        error  = error_dict[label] if error_dict is not None else None
+        color  = colors[i % len(colors)] if colors is not None else vc.CLEAN_TEST_COLOR
+
+        vals   = att[shared_idx]
+        names  = [class_names[j] for j in shared_idx]
+        errors = error[shared_idx] if error is not None else None
+
+        fig, ax = plt.subplots(figsize=vc.figsize_attention_bar(len(shared_idx)))
+        y_pos   = np.arange(len(shared_idx))
+        ax.barh(y_pos, vals, xerr=errors, color=color, alpha=0.85, capsize=3)
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(names, fontsize=vc.FONTSIZE_TICK)
+        ax.set_xlabel("Normalized attention")
+        ax.set_title(label)
+        ax.set_xlim(0, None)
+        fig.tight_layout()
+        figs[label] = fig
+
+    return figs
+
+
+def plot_cluster_representative(
+    img_chw: np.ndarray,
+    title:   str = "",
+) -> "plt.Figure":
+    """
+    Wrap a [3, H, W] uint8 RGB image in a labelled matplotlib figure.
+
+    Intended for saving one representative frame per GMM cluster so the
+    images can be tiled next to the attention bar charts in a collage.
+
+    Parameters
+    ----------
+    img_chw : np.ndarray [3, H, W] uint8 — wide-camera RGB frame.
+    title   : string shown above the image (e.g. "Cluster 0  (n=412)").
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    img_hwc = img_chw.transpose(1, 2, 0)   # CHW → HWC
+    h, w    = img_hwc.shape[:2]
+    fig, ax = plt.subplots(figsize=(w / 100, h / 100))
+    ax.imshow(img_hwc)
+    ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=vc.FONTSIZE_TICK)
+    fig.tight_layout(pad=0.2)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Detector evaluation
 # ---------------------------------------------------------------------------

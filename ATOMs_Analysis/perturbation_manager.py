@@ -78,6 +78,7 @@ class PerturbationManager:
         self.attack_interval = ExperimentConfig.FRAMES_TO_SKIP + 1  # Recompute attack every 3rd frame
         self.last_wide_noise = None
         self.last_narr_noise = None
+        self.last_tfv6_noise = None   # cached δ for pgd_attack_tfv6
 
     # ------------------------------------------------------------------
     # Public API
@@ -365,6 +366,129 @@ class PerturbationManager:
             narr_adv = torch.clamp(narr_adv + self.last_narr_noise, 0.0, 255.0)
 
         return wide_adv, narr_adv
+
+    def pgd_attack_tfv6(
+        self,
+        nets: list,
+        data: dict,
+        target: Literal["brake", "max_speed", "steer_left", "steer_right"] = "brake",
+        epsilon: float = 8.0,
+        n_steps: int = 10,
+        step_size: float = None,
+        random_start: bool = True,
+    ) -> "torch.Tensor":
+        """
+        PGD adversarial attack for the TFV6 agent.
+
+        Backpropagates through `net.forward(data)` — specifically through
+        `pred_target_speed_distribution` (raw 8-bin speed logits) or
+        `pred_future_waypoints` — to craft a perturbation δ on the RGB tensor.
+
+        The gradient flows only through `data["rgb"]`; all other inputs
+        (LiDAR, target points, command, speed) are held fixed.
+
+        Parameters
+        ----------
+        nets : list[TFv6]
+            The TFV6 model ensemble (``self.closed_loop_inference.nets``).
+            Gradients are averaged across all ensemble members.
+        data : dict
+            Tensor dict as built in ``SensorAgent.run_step`` — must contain
+            key ``"rgb"`` with shape ``[1, 3, H, W]``, dtype float32.
+        target : str
+            Attack objective:
+            - ``"brake"``       — maximise P(speed bin 0 = 0 m/s) → force stop.
+            - ``"max_speed"``   — maximise P(speed bin 7 = 20 m/s) → force max speed.
+            - ``"steer_left"``  — minimise mean predicted waypoint x (push left).
+            - ``"steer_right"`` — maximise mean predicted waypoint x (push right).
+        epsilon : float
+            ℓ∞ pixel budget (same scale as ``data["rgb"]``, i.e. 0–255).
+        n_steps : int
+            PGD iterations.
+        step_size : float | None
+            Per-step size; defaults to 2.5 * epsilon / n_steps (Madry heuristic).
+        random_start : bool
+            Initialise δ from U(−ε, ε) rather than zero (strongly recommended).
+
+        Returns
+        -------
+        torch.Tensor
+            Adversarially perturbed RGB tensor, same shape as ``data["rgb"]``,
+            pixel values clipped to [0, 255].
+        """
+        if step_size is None:
+            step_size = 2.5 * epsilon / n_steps
+
+        rgb_clean = data["rgb"]   # [1, 3, H, W] float32, no grad
+
+        if self.frame_counter % self.attack_interval == 0:
+            with torch.enable_grad():
+                # Initialise perturbation δ
+                if random_start:
+                    delta = torch.empty_like(rgb_clean).uniform_(-epsilon, epsilon)
+                else:
+                    delta = torch.zeros_like(rgb_clean)
+                delta = delta.detach().requires_grad_(True)
+
+                was_training = [net.training for net in nets]
+                for net in nets:
+                    net.eval()
+
+                for step in range(n_steps):
+                    data_adv = {**data, "rgb": rgb_clean.detach() + delta}
+
+                    total_loss = torch.tensor(0.0, device=rgb_clean.device)
+                    for net in nets:
+                        pred = net.forward(data_adv)
+
+                        if target in ("brake", "max_speed"):
+                            logits = pred.pred_target_speed_distribution   # [B, 8]
+                            tgt_bin = 0 if target == "brake" else 7
+                            tgt_tensor = torch.full(
+                                (logits.shape[0],), tgt_bin,
+                                dtype=torch.long, device=logits.device,
+                            )
+                            loss = torch.nn.functional.cross_entropy(logits, tgt_tensor)
+                        elif target == "steer_left":
+                            # Minimise mean waypoint x → steer left
+                            loss = pred.pred_future_waypoints[..., 0].mean()
+                        elif target == "steer_right":
+                            # Maximise mean waypoint x → steer right
+                            loss = -pred.pred_future_waypoints[..., 0].mean()
+                        else:
+                            raise ValueError(
+                                f"Unknown PGD TFV6 target '{target}'. "
+                                "Choose: brake, max_speed, steer_left, steer_right."
+                            )
+                        total_loss = total_loss + loss
+
+                    (total_loss / len(nets)).backward()
+
+                    with torch.no_grad():
+                        delta.data = torch.clamp(
+                            delta + step_size * delta.grad.sign(),
+                            -epsilon, epsilon,
+                        )
+                        delta.grad.zero_()
+
+                    if self.verbose:
+                        print(
+                            f"[PerturbationManager] PGD-TFV6 | target={target} | "
+                            f"step={step + 1}/{n_steps} | ε={epsilon} | "
+                            f"loss={total_loss.item():.4f}"
+                        )
+
+                for net, training in zip(nets, was_training):
+                    net.train(training)
+
+                self.last_tfv6_noise = delta.detach()
+
+        self.frame_counter += 1
+
+        if self.last_tfv6_noise is None:
+            return rgb_clean.detach().clone()
+
+        return torch.clamp(rgb_clean.detach() + self.last_tfv6_noise, 0.0, 255.0)
 
     def fgsm_attack(
         self,

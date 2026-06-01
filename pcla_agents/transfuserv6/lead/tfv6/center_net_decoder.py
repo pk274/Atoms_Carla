@@ -15,14 +15,14 @@ from beartype import beartype
 from torch import nn
 
 import pcla_agents.transfuserv6.lead.common.common_utils as common_utils
-from pcla_agents.transfuserv6.lead.common.constants import (
+from lead.common.constants import (
     SOURCE_DATASET_NAME_MAP,
     SourceDataset,
     TransfuserBoundingBoxIndex,
 )
-from pcla_agents.transfuserv6.lead.data_loader import carla_dataset_utils
-from pcla_agents.transfuserv6.lead.tfv6 import fn
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.data_loader import carla_dataset_utils
+from lead.tfv6 import fn
+from lead.training.config_training import TrainingConfig
 
 
 class CenterNetDecoder(nn.Module):

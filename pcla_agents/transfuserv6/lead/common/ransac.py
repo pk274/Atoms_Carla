@@ -15,8 +15,8 @@ import numpy.typing as npt
 from beartype import beartype
 from numba import njit, prange
 
-from pcla_agents.transfuserv6.lead.expert.config_expert import ExpertConfig
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.expert.config_expert import ExpertConfig
+from lead.training.config_training import TrainingConfig
 
 
 @njit(cache=True)

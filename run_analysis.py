@@ -75,7 +75,8 @@ from ATOMs_Analysis.utils.visualization_carla import (
     plot_tsne_baseline, plot_tsne_clusters, plot_tsne_ood,
     fit_pca, fit_tsne, fit_tsne_joint,
     get_cluster_colors, make_output_dirs,
-    plot_attention_bar, plot_attention_comparison,
+    plot_attention_bar, plot_attention_comparison, plot_attention_bars_separate,
+    plot_cluster_representative,
     plot_roc, plot_mahal_distribution, plot_bic_aic,
     plot_knn_sensitivity,
     save_figure,
@@ -450,6 +451,20 @@ fig_cluster_bar = plot_attention_comparison(
 )
 save_figure(fig_cluster_bar, dirs["attention"] / "attention_by_cluster.png")
 
+# --- 6a.6: Separate attention bar chart per cluster (for collage) ---
+# One identically-styled figure per cluster so they can be tiled next to
+# the PCA scatter without any post-processing rescaling.
+figs_per_cluster = plot_attention_bars_separate(
+    attention_dict = cluster_attention,
+    class_names    = atoms.class_names,
+    top_k          = 10,
+    colors         = cluster_colors,
+)
+for label, fig in figs_per_cluster.items():
+    # label is e.g. "Cluster 0  (n=412)" — sanitise for filename
+    safe_label = label.split("(")[0].strip().lower().replace(" ", "_")
+    save_figure(fig, dirs["attention"] / f"{safe_label}_attention_bar.png")
+
 # --- 6b: Mean attention per navigation command ---
 # Re-load the raw run files to get cmd metadata, then group by cmd.
 raw_baseline = BaselineDataLoader.load_all_runs(
@@ -475,6 +490,24 @@ if len(cmd_attention) > 1:
         title          = "Mean Attention by Navigation Command",
     )
     save_figure(fig_cmd, dirs["attention"] / "attention_by_command.png")
+
+# --- 6b.5: Representative image per GMM cluster (closest to cluster mean) ---
+# For each cluster find the frame whose attention vector is nearest (L2) to
+# the cluster mean.  raw_baseline["wide_rgb"] is aligned with baseline_series
+# (same sorted-file order, no filtering applied to either), so a flat index
+# into baseline_series maps directly into raw_baseline.
+_n = len(baseline_series)   # guard against any trailing frames in raw files
+for k in range(N_COMPONENTS):
+    _mask = baseline_cluster_labels == k
+    if _mask.sum() == 0:
+        continue
+    _cluster_mean = baseline_series[_mask].mean(axis=0)
+    _dists        = np.linalg.norm(baseline_series[_mask] - _cluster_mean, axis=1)
+    _global_idx   = np.where(_mask)[0][np.argmin(_dists)]
+    _img_chw      = raw_baseline["wide_rgb"][min(_global_idx, _n - 1)]   # [3,H,W] uint8
+    _label        = f"Cluster {k}  (n={_mask.sum()})"
+    fig_rep = plot_cluster_representative(_img_chw, title=_label)
+    save_figure(fig_rep, dirs["attention"] / f"cluster_{k}_representative.png")
 
 # --- 6c: PCA of baseline coloured by run ---
 # Checks whether different collection runs produce similar attention distributions.

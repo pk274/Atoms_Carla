@@ -5,8 +5,8 @@ from typing import Any, Dict, List
 import torch
 from beartype import beartype
 
-from pcla_agents.transfuserv6.lead.common.config_base import BaseConfig, overridable_property
-from pcla_agents.transfuserv6.lead.common.constants import (
+from lead.common.config_base import BaseConfig, overridable_property
+from lead.common.constants import (
     SOURCE_DATASET_NAME_MAP,
     CarlaImageCroppingType,
     NavSimBBClass,

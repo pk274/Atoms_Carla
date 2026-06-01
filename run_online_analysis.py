@@ -407,16 +407,16 @@ if conf.RECOMPUTE_TEST_ATOMS:
             print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
 
     atoms.reset()
-    np.save(ATT_DIR / "live_test_profiles.npy", test_profiles)
+    np.save(ATT_DIR / "live_pert_profiles.npy", test_profiles)
     if action_logits_available:
         test_logits_all = np.array(test_logits_all, dtype=np.float32)
-        np.save(ATT_DIR / "live_test_logits.npy", test_logits_all)
+        np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
     print(f"  Done. {n_test} frames processed.\n")
 
 else:
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
-    test_profiles = np.load(ATT_DIR / "live_test_profiles.npy")
-    test_logits_all = (np.load(ATT_DIR / "live_test_logits.npy")
+    test_profiles = np.load(ATT_DIR / "live_pert_profiles.npy")
+    test_logits_all = (np.load(ATT_DIR / "live_pert_speed_logits.npy")
                        if action_logits_available else None)
     print(f"  Loaded {len(test_profiles)} test profiles.")
 

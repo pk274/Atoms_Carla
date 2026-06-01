@@ -9,15 +9,15 @@ import torch
 from beartype import beartype
 from torch import nn
 
-from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
-from pcla_agents.transfuserv6.lead.common.constants import SourceDataset
-from pcla_agents.transfuserv6.lead.tfv6.bev_decoder import BEVDecoder
-from pcla_agents.transfuserv6.lead.tfv6.center_net_decoder import CenterNetBoundingBoxPrediction, CenterNetDecoder
-from pcla_agents.transfuserv6.lead.tfv6.perspective_decoder import PerspectiveDecoder
-from pcla_agents.transfuserv6.lead.tfv6.planning_decoder import PlanningDecoder
-from pcla_agents.transfuserv6.lead.tfv6.radar_detector import RadarDetector
-from pcla_agents.transfuserv6.lead.tfv6.transfuser_backbone import TransfuserBackbone
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.common.jaxtyping_stub import jt
+from lead.common.constants import SourceDataset
+from lead.tfv6.bev_decoder import BEVDecoder
+from lead.tfv6.center_net_decoder import CenterNetBoundingBoxPrediction, CenterNetDecoder
+from lead.tfv6.perspective_decoder import PerspectiveDecoder
+from lead.tfv6.planning_decoder import PlanningDecoder
+from lead.tfv6.radar_detector import RadarDetector
+from lead.tfv6.transfuser_backbone import TransfuserBackbone
+from lead.training.config_training import TrainingConfig
 
 
 class TFv6(nn.Module):

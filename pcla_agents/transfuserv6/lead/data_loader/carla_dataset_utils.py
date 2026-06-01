@@ -10,9 +10,9 @@ import numpy as np
 import numpy.typing as npt
 from beartype import beartype
 
-from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
-from pcla_agents.transfuserv6.lead.common import common_utils, constants, ransac
-from pcla_agents.transfuserv6.lead.common.constants import (
+from lead.common.jaxtyping_stub import jt
+from lead.common import common_utils, constants, ransac
+from lead.common.constants import (
     CONSTRUCTION_CONE_BB_SIZE,
     TRAFFIC_WARNING_BB_SIZE,
     RadarLabels,
@@ -21,9 +21,9 @@ from pcla_agents.transfuserv6.lead.common.constants import (
     TransfuserBoundingBoxIndex,
     TransfuserSemanticSegmentationClass,
 )
-from pcla_agents.transfuserv6.lead.data_loader.training_cache import SensorData
-from pcla_agents.transfuserv6.lead.tfv6 import center_net_decoder as g_t
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.data_loader.training_cache import SensorData
+from lead.tfv6 import center_net_decoder as g_t
+from lead.training.config_training import TrainingConfig
 
 LOG = logging.getLogger(__name__)
 

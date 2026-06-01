@@ -7,9 +7,9 @@ import torch.nn.functional as F
 from beartype import beartype
 from torch import nn
 
-from pcla_agents.transfuserv6.lead.common.jaxtyping_stub import jt
-from pcla_agents.transfuserv6.lead.tfv6 import fn
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.common.jaxtyping_stub import jt
+from lead.tfv6 import fn
+from lead.training.config_training import TrainingConfig
 
 
 class TransfuserBackbone(nn.Module):

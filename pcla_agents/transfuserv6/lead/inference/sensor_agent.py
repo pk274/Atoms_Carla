@@ -607,8 +607,16 @@ class SensorAgent(BaseAgent, autonomous_agent.AutonomousAgent):
 
         return input_data
 
+    def _perturb_tensor_hook(self, tensors: dict) -> dict:
+        """No-op hook called with the ready input tensor dict, before the forward pass.
+
+        Override in subclasses to inject adversarial perturbations.
+        Must return the (possibly modified) tensor dict.
+        """
+        return tensors
+
     @beartype
-    @torch.inference_mode()
+    @torch.no_grad()
     def run_step(self, input_data: dict, timestamp=None, vehicle=None) -> carla.VehicleControl:
         self.step += 1
 
@@ -652,6 +660,9 @@ class SensorAgent(BaseAgent, autonomous_agent.AutonomousAgent):
                 {k: v.to(torch.device("cpu")) if isinstance(v, torch.Tensor) else v for k, v in input_data_tensors.items()},
                 os.path.join(self.config_closed_loop.input_log_path, str(self.step).zfill(5)) + ".pth",
             )
+
+        # Optional adversarial perturbation hook (no-op by default; overridden in subclasses)
+        input_data_tensors = self._perturb_tensor_hook(input_data_tensors)
 
         # Forward pass
         closed_loop_prediction: ClosedLoopPrediction = self.closed_loop_inference.forward(data=input_data_tensors)

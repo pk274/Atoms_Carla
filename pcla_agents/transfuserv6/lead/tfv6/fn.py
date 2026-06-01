@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from beartype import beartype
 
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.training.config_training import TrainingConfig
 
 
 @beartype

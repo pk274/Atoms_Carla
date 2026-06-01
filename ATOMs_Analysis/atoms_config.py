@@ -9,25 +9,25 @@ class ExperimentConfig:
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
     AGENT = "TFV6"
 
-    TOWN = "Town01"
+    TOWN = "Town05"
     WEATHER = "sunny"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
     BASELINE_RECORDING_MODE = False
     TESTSET_RECORDING_MODE = False
-    LIVE_PERTURBATION_RECORDING_MODE = False
+    LIVE_PERTURBATION_RECORDING_MODE = True
 
 
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "phantom_obstacle"
-    INTENSITY = 0.08
-    INJECTION_TIME = 10            # 10 for live perturbation
+    PERTURBATION = "pgd"
+    INTENSITY = 0.1
+    INJECTION_TIME = 5            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
     CAM_INDEX = None               # None for all cams
-    MANUAL_SPAWNS = False
+    MANUAL_SPAWNS = True
 
     RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = False
@@ -40,10 +40,10 @@ class ExperimentConfig:
 
 
     IMAGE_SAMPLE_INTERVAL = 25   # 25
-    TEST_SAMPLE_INTERVAL = 3        # 11
+    TEST_SAMPLE_INTERVAL = 10     # 11
     MAX_BASELINE_SIZE = 100      # 100
     MAX_TEST_SIZE = 200
-    MAX_LIVE_PERT_SIZE = 100
+    MAX_LIVE_PERT_SIZE = 200
     _DATA_ROOT = Path("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/data") / AGENT
     BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data"
     TEST_DATA_DIR = _DATA_ROOT / "test_data"
@@ -53,6 +53,11 @@ class ExperimentConfig:
 
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
     EPSILON = 8.0           # 5 -> No effect
+
+    # PGD / FGSM attack settings (TFV6 adversarial perturbation)
+    # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
+    PGD_TARGET = "brake"
+    PGD_N_STEPS = 3        # PGD iterations; more steps = stronger attack # Wor: 10
 
     DEFAULT_CMD = 2
     MAHAL_RIDGE = 0.01

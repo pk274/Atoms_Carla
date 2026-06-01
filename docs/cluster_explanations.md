@@ -170,3 +170,58 @@ git push
 ```
 
 Then locally: `git pull`, set `RECOMPUTE_BASELINE = False` in `atoms_config.py`, and run `run_analysis.py` once with `RECOMPUTE_MDX_BASELINE = True` — it will detect `mdx_features.npz`, fit MDX in seconds, and save `mdx_parameters.pkl`. After that set `RECOMPUTE_MDX_BASELINE = False` too.
+
+---
+
+## Full live-perturbation pipeline
+
+Live-perturbation data is recorded in CARLA with `LIVE_PERTURBATION_RECORDING_MODE = True`.
+The frames are already perturbed at collection time, so no offline perturbation step is
+needed — the HPC pipeline is just concatenation + ATOMs.
+
+### 1. Upload live-pert frames
+
+Source: `data/TFV6/test_data/live_pert_frames/`  
+Destination on Viper: `/ptmp/paulkull/atoms_live_pert/frames/`
+
+Use the same HTTP tunnel method, pointing Terminal 1 at `data\TFV6\test_data\live_pert_frames`.
+
+### 2. Submit all jobs in one command (on Viper)
+
+Replace `pgd` with whichever perturbation name was used during recording.
+
+```bash
+cd /u/paulkull/pcla
+git pull
+bash hpc/submit_live_pert.sh \
+    /ptmp/paulkull/atoms_live_pert/frames \
+    /ptmp/paulkull/atoms_live_pert \
+    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
+    pgd
+```
+
+This chains three SLURM jobs automatically:
+1. **prep** — concatenates `run_pgd_live_pert_*.npz` files → `live_pert_concat.npz`
+2. **array** — 10 parallel ATOMs tasks (20 frames each), also computing speed logits
+3. **gather** — concatenates results → `live_pert_profiles.npy` + `live_pert_speed_logits.npy`
+
+Monitor: `squeue -u paulkull`
+
+### 3. Download results (on Viper, then git pull locally)
+
+```bash
+PERT=pgd
+ATT=/u/paulkull/pcla/data/TFV6/test_data/attention/live_pert/$PERT
+mkdir -p $ATT
+
+cp /ptmp/paulkull/atoms_live_pert/live_pert_profiles.npy      $ATT/live_pert_profiles.npy
+cp /ptmp/paulkull/atoms_live_pert/live_pert_speed_logits.npy  $ATT/live_pert_speed_logits.npy
+
+cd /u/paulkull/pcla
+git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_profiles.npy
+git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_speed_logits.npy
+git commit -m "add live_pert_profiles for $PERT from HPC"
+git push
+```
+
+Then locally: `git pull`, and set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.

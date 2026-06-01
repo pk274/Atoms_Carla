@@ -23,7 +23,7 @@ from leaderboard_codes.local_planner import RoadOption
 from beartype import beartype
 from scipy.optimize import fsolve
 
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.training.config_training import TrainingConfig
 
 LOG = logging.getLogger(__name__)
 

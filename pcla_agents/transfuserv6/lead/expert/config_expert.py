@@ -4,9 +4,9 @@ from functools import cached_property
 import carla
 import numpy as np
 
-from pcla_agents.transfuserv6.lead.common import weathers
-from pcla_agents.transfuserv6.lead.common.config_base import BaseConfig
-from pcla_agents.transfuserv6.lead.common.constants import TargetDataset, WeatherVisibility
+from lead.common import weathers
+from lead.common.config_base import BaseConfig
+from lead.common.constants import TargetDataset, WeatherVisibility
 
 # Temporal hack for points per meter conversion - needs to be fixed
 points_per_meter = 10

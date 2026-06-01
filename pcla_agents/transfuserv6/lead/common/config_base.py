@@ -4,8 +4,8 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
-from pcla_agents.transfuserv6.lead.common import constants
-from pcla_agents.transfuserv6.lead.common.constants import WAYMO_E2E_INTRINSIC, TargetDataset
+from lead.common import constants
+from lead.common.constants import WAYMO_E2E_INTRINSIC, TargetDataset
 
 
 class BaseConfig:

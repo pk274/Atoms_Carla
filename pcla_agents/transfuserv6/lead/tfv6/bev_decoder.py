@@ -4,8 +4,8 @@ from beartype import beartype
 from torch.nn import functional as F
 
 import pcla_agents.transfuserv6.lead.common.common_utils as common_utils
-from pcla_agents.transfuserv6.lead.common.constants import SOURCE_DATASET_NAME_MAP, SourceDataset
-from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
+from lead.common.constants import SOURCE_DATASET_NAME_MAP, SourceDataset
+from lead.training.config_training import TrainingConfig
 
 
 class BEVDecoder(nn.Module):
