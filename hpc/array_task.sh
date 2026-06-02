@@ -14,8 +14,8 @@
 #SBATCH -e /ptmp/%u/atoms_baseline/logs/chunk_%A_%a.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=16000MB
-#SBATCH --time=03:00:00
+#SBATCH --mem=24000MB
+#SBATCH --time=24:00:00
 # Add your account/partition here if required by your allocation, e.g.:
 # #SBATCH --account=YOUR_ACCOUNT
 

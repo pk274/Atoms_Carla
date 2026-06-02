@@ -24,7 +24,7 @@ class ExperimentConfig:
 
     PERTURBATION = "pgd"
     INTENSITY = 0.1
-    INJECTION_TIME = 5            # 10 for live perturbation
+    INJECTION_TIME = 7            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
     CAM_INDEX = None               # None for all cams
     MANUAL_SPAWNS = True
@@ -52,12 +52,12 @@ class ExperimentConfig:
     ADD_AUTOPILOT_VEHICLES = True
 
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
-    EPSILON = 8.0           # 5 -> No effect
+    EPSILON = 12.0           # 5 -> No effect   # Wor: 8
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
     PGD_TARGET = "brake"
-    PGD_N_STEPS = 3        # PGD iterations; more steps = stronger attack # Wor: 10
+    PGD_N_STEPS = 5        # PGD iterations; more steps = stronger attack # Wor: 10
 
     DEFAULT_CMD = 2
     MAHAL_RIDGE = 0.01

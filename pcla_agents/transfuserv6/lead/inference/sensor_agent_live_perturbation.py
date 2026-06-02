@@ -21,12 +21,13 @@ Data layout written to disk:
         run_<perturbation>_live_pert_<timestamp>_<n>.npz
 
 Each npz contains:
-    wide_rgb      : [N, 3, H, W]  uint8  (perturbed after INJECTION_TIME)
+    wide_rgb      : [N, 3, H, W]  uint8
     seg_red_wide  : [N, H, W]     uint8
     cmd           : [N]            int32
     speed         : [N]            float32
     is_brake      : [N]            int8
-    frame_idx     : [N]            int32
+    frame_idx     : [N]            int32  (raw CARLA tick index, sampled every TEST_SAMPLE_INTERVAL)
+    is_perturbed  : [N]            int8   (1 after INJECTION_TIME, 0 before)
 """
 
 from __future__ import annotations
@@ -191,13 +192,14 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         speed    = float(input_data.get("speed", 0.0))
 
         self._live_pert_collector.add_frame(
-            wide_rgb      = input_data["rgb"],   # [3, H, W] — perturbed or clean
-            narr_rgb      = None,                # TFV6 wide-only
-            seg_red_wide  = seg_wide,
-            seg_red_narr  = None,
-            cmd           = cmd,
-            speed         = speed,
-            live_perturbation=True,
+            wide_rgb         = input_data["rgb"],   # [3, H, W] — perturbed or clean
+            narr_rgb         = None,                # TFV6 wide-only
+            seg_red_wide     = seg_wide,
+            seg_red_narr     = None,
+            cmd              = cmd,
+            speed            = speed,
+            live_perturbation= True,
+            is_perturbed     = self._injection_active,
         )
 
         return input_data

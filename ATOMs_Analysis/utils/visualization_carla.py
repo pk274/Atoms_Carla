@@ -1347,21 +1347,19 @@ def plot_distance_over_time(
         perturbation: str,
         distance_type: str,
         results_dir: Path = None,
+        injection_frame: Optional[int] = None,
     ) -> None:
     """
     Plot mean distance vs frame index for a single perturbation type.
 
     Parameters
     ----------
-    dist          : np.ndarray [T]  -- mean distance per frame.
-    perturbation  : str            -- perturbation name (used in title & filename).
-    distance_type : str            -- one of: knn, jsd, wasserstein, gmm_*, mahalanobis, euclidean.
-    results_dir   : Path           -- directory to save the figure.  REQUIRED.
-
-    Notes
-    -----
-    `results_dir` used to default to a hardcoded Windows path; that has been
-    removed.  Callers must now pass a results directory explicitly.
+    dist            : np.ndarray [T]  -- mean distance per frame.
+    perturbation    : str            -- perturbation name (used in title & filename).
+    distance_type   : str            -- one of: knn, jsd, wasserstein, gmm_*, mahalanobis, euclidean.
+    results_dir     : Path           -- directory to save the figure.  REQUIRED.
+    injection_frame : int or None    -- saved-frame index of first perturbed frame;
+                                        draws a vertical dotted line when provided.
     """
     if results_dir is None:
         raise ValueError(
@@ -1373,6 +1371,10 @@ def plot_distance_over_time(
     frame_idx = np.arange(len(dist))
     fig, ax = plt.subplots(figsize=vc.FIGSIZE_DISTANCE_OVER_TIME)
     ax.plot(frame_idx, dist, "o-", color=color, linewidth=2, label="Mean across agents")
+
+    if injection_frame is not None:
+        ax.axvline(x=injection_frame, color="red", linestyle=":", linewidth=1.5,
+                   label=f"Injection (frame {injection_frame})")
 
     ax.set_title(f"{ylabel} from Baseline\n — {perturbation}")
     ax.set_xlabel("Frame Index")

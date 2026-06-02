@@ -404,7 +404,7 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
-N_COMPONENTS = 5
+N_COMPONENTS = 15
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 
@@ -765,12 +765,12 @@ else:
 # ---------------------------------------------------------------------------
 
 
-TRAJ_OUT_DIR = OUT_DIR / "trajectory_analysis"
-TRAJ_OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# Class names in index order for annotation (visualization optional)
-_max_class   = max(_seg_class_map.keys()) + 1
-class_names  = [_seg_class_map.get(i, f"cls_{i}") for i in range(_max_class)]
+#TRAJ_OUT_DIR = OUT_DIR / "trajectory_analysis"
+#TRAJ_OUT_DIR.mkdir(parents=True, exist_ok=True)
+#
+## Class names in index order for annotation (visualization optional)
+#_max_class   = max(_seg_class_map.keys()) + 1
+#class_names  = [_seg_class_map.get(i, f"cls_{i}") for i in range(_max_class)]
 
 
 # ---------------------------------------------------------------------------
@@ -783,39 +783,39 @@ class_names  = [_seg_class_map.get(i, f"cls_{i}") for i in range(_max_class)]
 # the original clean version of every frame.
 # ---------------------------------------------------------------------------
 
-CLEAN_PROFILES_PATH = TRAJ_OUT_DIR / "clean_test_profiles.npy"
-
-if CLEAN_PROFILES_PATH.exists():
-    print("[Step 10a] Loading cached clean test profiles...")
-    clean_raw         = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
-    clean_profiles    = np.load(CLEAN_PROFILES_PATH)
-    print(f"  Loaded {len(clean_profiles)} clean profiles.\n")
-else:
-    print("[Step 10a] Computing ATOMs profiles on clean test frames...")
-    clean_raw      = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
-    n_clean        = clean_raw["wide_rgb"].shape[0]
-    clean_profiles = np.zeros((n_clean, atoms.num_classes), dtype=np.float64)
-
-    has_narr_clean     = clean_raw["narr_rgb"]     is not None
-    has_seg_narr_clean = clean_raw["seg_red_narr"] is not None
-
-    atoms.reset()
-    t0 = time.time()
-    for i in range(n_clean):
-        wide     = torch.from_numpy(clean_raw["wide_rgb"][i:i+1]).float()
-        narr     = torch.from_numpy(clean_raw["narr_rgb"][i:i+1]).float()   if has_narr_clean     else None
-        seg_wide = clean_raw["seg_red_wide"][i]
-        seg_narr = clean_raw["seg_red_narr"][i]                             if has_seg_narr_clean else None
-        cmd      = int(clean_raw["cmd"][i])
-        profile  = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd)
-        clean_profiles[i] = profile
-        if (i + 1) % 100 == 0:
-            fps = (i + 1) / (time.time() - t0)
-            print(f"  {i+1}/{n_clean}  ({fps:.1f} fr/s)")
-
-    atoms.reset()
-    np.save(CLEAN_PROFILES_PATH, clean_profiles)
-    print(f"  Done. {n_clean} frames processed. Saved to {CLEAN_PROFILES_PATH}\n")
+#CLEAN_PROFILES_PATH = TRAJ_OUT_DIR / "clean_test_profiles.npy"
+#
+#if CLEAN_PROFILES_PATH.exists():
+#    print("[Step 10a] Loading cached clean test profiles...")
+#    clean_raw         = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
+#    clean_profiles    = np.load(CLEAN_PROFILES_PATH)
+#    print(f"  Loaded {len(clean_profiles)} clean profiles.\n")
+#else:
+#    print("[Step 10a] Computing ATOMs profiles on clean test frames...")
+#    clean_raw      = BaselineDataLoader.load_all_runs(conf.TEST_DATA_DIR / "frames")
+#    n_clean        = clean_raw["wide_rgb"].shape[0]
+#    clean_profiles = np.zeros((n_clean, atoms.num_classes), dtype=np.float64)
+#
+#    has_narr_clean     = clean_raw["narr_rgb"]     is not None
+#    has_seg_narr_clean = clean_raw["seg_red_narr"] is not None
+#
+#    atoms.reset()
+#    t0 = time.time()
+#    for i in range(n_clean):
+#        wide     = torch.from_numpy(clean_raw["wide_rgb"][i:i+1]).float()
+#        narr     = torch.from_numpy(clean_raw["narr_rgb"][i:i+1]).float()   if has_narr_clean     else None
+#        seg_wide = clean_raw["seg_red_wide"][i]
+#        seg_narr = clean_raw["seg_red_narr"][i]                             if has_seg_narr_clean else None
+#        cmd      = int(clean_raw["cmd"][i])
+#        profile  = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd)
+#        clean_profiles[i] = profile
+#        if (i + 1) % 100 == 0:
+#            fps = (i + 1) / (time.time() - t0)
+#            print(f"  {i+1}/{n_clean}  ({fps:.1f} fr/s)")
+#
+#    atoms.reset()
+#    np.save(CLEAN_PROFILES_PATH, clean_profiles)
+#    print(f"  Done. {n_clean} frames processed. Saved to {CLEAN_PROFILES_PATH}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -825,12 +825,12 @@ else:
 # inherited from _load_all_runs / PerturbationApplier, so this composite
 # key is the reliable unique identifier.
 
-clean_key_to_idx: dict = {
-    (int(clean_raw["run_id"][i]), int(clean_raw["frame_idx"][i])): i
-    for i in range(len(clean_profiles))
-}
-
-print(f"[Step 10b] Clean index built: {len(clean_key_to_idx)} unique (run_id, frame_idx) pairs.")
+#clean_key_to_idx: dict = {
+#    (int(clean_raw["run_id"][i]), int(clean_raw["frame_idx"][i])): i
+#    for i in range(len(clean_profiles))
+#}
+#
+#print(f"[Step 10b] Clean index built: {len(clean_key_to_idx)} unique (run_id, frame_idx) pairs.")
 
 
 # ---------------------------------------------------------------------------

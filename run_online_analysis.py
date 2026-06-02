@@ -43,6 +43,11 @@ import yaml
 
 from collections import defaultdict
 
+import sys
+# Add transfuserv6 to sys.path so its internal `lead` package resolves correctly
+# without modifying the agent's own import statements.
+sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
+
 
 # ---------------------------------------------------------------------------
 # Project imports — adjust paths to match your project layout
@@ -53,8 +58,8 @@ from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
 
 if conf.AGENT == "TFV6":
     from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
-    from pcla_agents.transfuserv6.lead.training.config_training import TrainingConfig
-    from pcla_agents.transfuserv6.lead.tfv6.tfv6 import TFv6
+    from lead.training.config_training import TrainingConfig
+    from lead.tfv6.tfv6 import TFv6
 else:  # WoR
     from pcla_agents.wor.rails.models.main_model import CameraModel
     from pcla_agents.wor.image_agent import ImageAgent
@@ -118,7 +123,6 @@ if conf.AGENT == "TFV6":
     model.load_state_dict(state_dict, strict=False)
     model.eval()
     lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
-    action_logits_available = False
 else:  # WoR
     WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
     with open(WOR_WEIGHTS_DIR / "config_leaderboard.yaml") as f:
@@ -127,7 +131,6 @@ else:  # WoR
     model.load_state_dict(torch.load(WOR_WEIGHTS_DIR / "main_model_10.th", map_location="cpu"))
     model.eval()
     lrp = LRPCameraModel(model_eval=model, uitb=False)
-    action_logits_available = True
 
 # Initialize ATOMs.
 #
@@ -180,36 +183,43 @@ print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]
 print()
 
 # ===========================================================================
-# STEP 2.5 — Compute MDX baseline  (WoR only — requires action logits)
+# STEP 2.5 — Compute MDX baseline
 # ===========================================================================
 mdx = None
-if action_logits_available and conf.RECOMPUTE_MDX_BASELINE:
+if conf.RECOMPUTE_MDX_BASELINE:
     loader = BaselineDataLoader()
     runs_dict = loader.load_all_runs(conf.BASELINE_DATA_DIR / "frames")
-    configPath = "C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml"
-    agent = ImageAgent(configPath)
     features_list, actions_list = [], []
+
+    if conf.AGENT == "WOR":
+        configPath = "C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/pcla_agents/wor_pretrained/leaderboard_weights/config_leaderboard.yaml"
+        agent = ImageAgent(configPath)
 
     for i in range(len(runs_dict["frame_idx"])):
         if i % 20 == 0:
             print("Extracting MDX information from frame", i)
-        steer_l, throt_l, brake_l = model.policy(torch.from_numpy(runs_dict["wide_rgb"][i]),
-                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
-                                                runs_dict["cmd"][i])
-        features = model.get_features(torch.from_numpy(runs_dict["wide_rgb"][i]),
-                                                torch.from_numpy(runs_dict["narr_rgb"][i]),
-                                                runs_dict["speed"][i])
-        features_list.append(features[0].cpu().detach().numpy())
-        # Interpolate logits
-        steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
-        throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
-        brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
-        action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
-        brake_prob = float(action_prob[-1])
-        steer = float(agent.steers @ torch.softmax(steer_logit, dim=0))
-        throt = float(agent.throts @ torch.softmax(throt_logit, dim=0))
 
-        actions_list.append([steer, throt, brake_prob])
+        if conf.AGENT == "TFV6":
+            wide_t = torch.from_numpy(runs_dict["wide_rgb"][i]).unsqueeze(0)
+            features_list.append(lrp.get_backbone_features(wide_t))
+            spd = float(runs_dict["speed"][i])
+            actions_list.append([0.0, min(spd / 25.0, 1.0), 1.0 if spd < 0.5 else 0.0])
+        else:  # WOR
+            steer_l, throt_l, brake_l = model.policy(torch.from_numpy(runs_dict["wide_rgb"][i]),
+                                                      torch.from_numpy(runs_dict["narr_rgb"][i]),
+                                                      runs_dict["cmd"][i])
+            features = model.get_features(torch.from_numpy(runs_dict["wide_rgb"][i]),
+                                          torch.from_numpy(runs_dict["narr_rgb"][i]),
+                                          runs_dict["speed"][i])
+            features_list.append(features[0].cpu().detach().numpy())
+            steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
+            throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
+            brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
+            action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
+            brake_prob  = float(action_prob[-1])
+            steer       = float(agent.steers @ torch.softmax(steer_logit, dim=0))
+            throt       = float(agent.throts @ torch.softmax(throt_logit, dim=0))
+            actions_list.append([steer, throt, brake_prob])
 
     mdx = MDXDetector(n_pca_components=50)
     print("\nFitting MDX Detector!\n")
@@ -217,9 +227,27 @@ if action_logits_available and conf.RECOMPUTE_MDX_BASELINE:
     actions_list_np = np.array(actions_list)
     mdx.fit(features_list_np, actions_list_np)
     mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
-elif action_logits_available:
-    mdx = MDXDetector()
-    mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+else:
+    _pkl_path = Path(conf.BASELINE_DATA_DIR) / "mdx_parameters.pkl"
+    _npz_path = Path(conf.BASELINE_DATA_DIR) / "mdx_features.npz"
+    if _pkl_path.exists():
+        mdx = MDXDetector()
+        mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+    elif _npz_path.exists():
+        print(f"  mdx_parameters.pkl not found — fitting from {_npz_path}")
+        _mdx_data    = np.load(_npz_path)
+        features_arr = _mdx_data["features"].astype(np.float64)
+        actions_arr  = _mdx_data["actions"].astype(np.float64)
+        print(f"  features: {features_arr.shape}  actions: {actions_arr.shape}")
+        mdx = MDXDetector(n_pca_components=50)
+        mdx.fit(features_arr, actions_arr)
+        mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
+        print("  Saved fitted MDX → mdx_parameters.pkl")
+    else:
+        raise FileNotFoundError(
+            "Neither mdx_parameters.pkl nor mdx_features.npz found in "
+            f"{conf.BASELINE_DATA_DIR}. Set RECOMPUTE_MDX_BASELINE=True to recompute."
+        )
 
 
 # ===========================================================================
@@ -335,7 +363,7 @@ if conf.RECOMPUTE_TEST_ATOMS:
     atoms.reset()
     n_test          = test_data["wide_rgb"].shape[0]
     test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = [] if action_logits_available else None
+    test_logits_all = []
     t0 = time.time()
     for i in range(n_test):
         wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
@@ -393,14 +421,14 @@ if conf.RECOMPUTE_TEST_ATOMS:
                                                     save_path=f"{savepath_rel_n}_comparative",
                                                     is_brake=atoms._last_is_brake)
 
-        if action_logits_available:
-            with torch.no_grad():
-                narr_l = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
-                steer, throt, brake = model.policy(wide, narr_l, cmd=cmd)
-                flat_logits = torch.cat([
-                    steer.flatten(), throt.flatten(), brake.unsqueeze(0).flatten(),
-                ]).cpu().numpy()
-            test_logits_all.append(flat_logits)
+
+        with torch.no_grad():
+            narr_l = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
+            steer, throt, brake = model.policy(wide, narr_l, cmd=cmd)
+            flat_logits = torch.cat([
+                steer.flatten(), throt.flatten(), brake.unsqueeze(0).flatten(),
+            ]).cpu().numpy()
+        test_logits_all.append(flat_logits)
 
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
@@ -408,16 +436,14 @@ if conf.RECOMPUTE_TEST_ATOMS:
 
     atoms.reset()
     np.save(ATT_DIR / "live_pert_profiles.npy", test_profiles)
-    if action_logits_available:
-        test_logits_all = np.array(test_logits_all, dtype=np.float32)
-        np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
+    test_logits_all = np.array(test_logits_all, dtype=np.float32)
+    np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
     print(f"  Done. {n_test} frames processed.\n")
 
 else:
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
     test_profiles = np.load(ATT_DIR / "live_pert_profiles.npy")
-    test_logits_all = (np.load(ATT_DIR / "live_pert_speed_logits.npy")
-                       if action_logits_available else None)
+    test_logits_all = np.load(ATT_DIR / "live_pert_speed_logits.npy")
     print(f"  Loaded {len(test_profiles)} test profiles.")
 
 
@@ -485,20 +511,24 @@ nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # us
 
 # --- 9c: Action entropy (WoR only) ---
 scores_entropy = None
-if action_logits_available and test_logits_all is not None:
+if test_logits_all is not None:
     entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
     scores_entropy   = entropy_detector.score_batch(test_logits_all)
 
-# --- 9d: MDX detection (WoR only) ---
+# --- 9d: MDX detection ---
 scores_mdx = None
-if action_logits_available and mdx is not None:
+if mdx is not None:
     scores_list = []
     for i in range(len(test_data["frame_idx"])):
-        features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
-                                      torch.from_numpy(test_data["narr_rgb"][i]),
-                                      test_data["speed"][i])
-        score = mdx.score(features[0].cpu().detach().numpy())
-        scores_list.append(score)
+        if conf.AGENT == "TFV6":
+            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+            feat_vec = lrp.get_backbone_features(wide_t)
+        else:  # WOR
+            features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
+                                          torch.from_numpy(test_data["narr_rgb"][i]),
+                                          test_data["speed"][i])
+            feat_vec = features[0].cpu().detach().numpy()
+        scores_list.append(mdx.score(feat_vec))
     scores_mdx = np.array(scores_list)
 
 
@@ -507,14 +537,28 @@ print()
 ### ================= PLOT ALL OF THIS =================================================
 live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
 live_pert_dir.mkdir(parents=True, exist_ok=True)
-plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir)
-plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir)
-plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          live_pert_dir)
-plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                live_pert_dir)
-plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                live_pert_dir)
+
+# Determine injection frame for the vertical marker.
+# New recordings carry is_perturbed; old files fall back to tick-based estimate.
+if "is_perturbed" in test_data and test_data["is_perturbed"].any():
+    _injection_frame = int(np.argmax(test_data["is_perturbed"]))
+    print(f"  Injection frame from is_perturbed flag: {_injection_frame}")
+else:
+    _CARLA_HZ = 20
+    _injection_frame = int(np.searchsorted(
+        test_data["frame_idx"], conf.INJECTION_TIME * _CARLA_HZ
+    ))
+    print(f"  Injection frame estimated from INJECTION_TIME={conf.INJECTION_TIME}s "
+          f"@ {_CARLA_HZ} Hz: {_injection_frame}  (no is_perturbed key in data)")
+
+plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir, _injection_frame)
+plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir, _injection_frame)
+plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          live_pert_dir, _injection_frame)
+plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                live_pert_dir, _injection_frame)
+plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                live_pert_dir, _injection_frame)
 if scores_entropy is not None:
-    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               live_pert_dir)
+    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               live_pert_dir, _injection_frame)
 if scores_mdx is not None:
-    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                live_pert_dir)
+    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                live_pert_dir, _injection_frame)
 
 

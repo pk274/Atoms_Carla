@@ -135,13 +135,15 @@ class TestDataCollector:
         self._buf_narr:  List        = []
         self._buf_seg_wide:   List        = []
         self._buf_seg_narr:   List        = []
-        self._buf_cmd:   List[int]   = []
-        self._buf_speed: List[float] = []
-        self._buf_brake: List[bool]  = []
-        self._buf_idx:   List[int]   = []
+        self._buf_cmd:       List[int]   = []
+        self._buf_speed:     List[float] = []
+        self._buf_brake:     List[bool]  = []
+        self._buf_idx:       List[int]   = []
+        self._buf_perturbed: List[bool]  = []
 
     def add_frame(self, wide_rgb, narr_rgb, seg_red_wide, seg_red_narr, cmd: int, speed: float = 0.0,
-                  is_brake: bool = False, live_perturbation: bool = False) -> bool:
+                  is_brake: bool = False, live_perturbation: bool = False,
+                  is_perturbed: bool = False) -> bool:
         sampled = (self._step % self._sample_every == 0)
         self._step += 1
         if not sampled:
@@ -156,6 +158,7 @@ class TestDataCollector:
         self._buf_speed.append(float(speed))
         self._buf_brake.append(bool(is_brake))
         self._buf_idx.append(self._step - 1)
+        self._buf_perturbed.append(bool(is_perturbed))
         if len(self._buf_idx) >= conf.MAX_TEST_SIZE or (live_perturbation and len(self._buf_idx) >= conf.MAX_LIVE_PERT_SIZE):
             print("Buffer full, saving run!")
             self.save_run(live_perturbation = live_perturbation)
@@ -179,10 +182,11 @@ class TestDataCollector:
         save_kwargs = dict(
             wide_rgb     = np.stack(self._buf_wide),
             seg_red_wide = np.stack(self._buf_seg_wide),
-            cmd          = np.array(self._buf_cmd,   dtype=np.int32),
-            speed        = np.array(self._buf_speed, dtype=np.float32),
-            is_brake     = np.array(self._buf_brake, dtype=np.int8),
-            frame_idx    = np.array(self._buf_idx,   dtype=np.int32),
+            cmd          = np.array(self._buf_cmd,       dtype=np.int32),
+            speed        = np.array(self._buf_speed,     dtype=np.float32),
+            is_brake     = np.array(self._buf_brake,     dtype=np.int8),
+            frame_idx    = np.array(self._buf_idx,       dtype=np.int32),
+            is_perturbed = np.array(self._buf_perturbed, dtype=np.int8),
         )
         if self._buf_narr:
             save_kwargs['narr_rgb']     = np.stack(self._buf_narr)
@@ -197,6 +201,7 @@ class TestDataCollector:
     def clear(self):
         self._buf_wide.clear(); self._buf_narr.clear(); self._buf_seg_wide.clear(); self._buf_seg_narr.clear()
         self._buf_cmd.clear();  self._buf_speed.clear(); self._buf_idx.clear(); self._buf_brake.clear()
+        self._buf_perturbed.clear()
         self._step = 0
 
 
