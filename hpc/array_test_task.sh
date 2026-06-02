@@ -25,7 +25,7 @@ module load python-waterboa/2025.06
 source /u/$USER/venvs/pcla/bin/activate
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export PYTHONPATH="$CODE_DIR/hpc/stubs:$CODE_DIR:$PYTHONPATH"
+export PYTHONPATH="$CODE_DIR/hpc/stubs:$CODE_DIR:$CODE_DIR/pcla_agents/transfuserv6:$PYTHONPATH"
 
 mkdir -p "$PARTIALS_DIR" /ptmp/$USER/atoms_test/logs
 
