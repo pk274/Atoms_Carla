@@ -18,7 +18,7 @@
 #   MODEL_DIR    path to TFV6 pretrained model directory
 #                e.g. /u/$USER/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34
 #   CODE_DIR     project root (default: parent of this script)
-#   CHUNK_SIZE   frames per array task (default: 20; 10 tasks for 200 frames)
+#   CHUNK_SIZE   frames per array task (default: 20; N_TASKS derived from actual frame count)
 #
 # Example:
 #   bash hpc/submit_test.sh \
@@ -38,9 +38,16 @@ LABELED_FILE="$WORK_DIR/test_labeled.npz"
 PARTIALS_DIR="$WORK_DIR/partials"
 PROFILES_OUT="$WORK_DIR/test_profiles.npy"
 
-# Upper bound on frame count — tasks past the actual data exit cleanly
-MAX_FRAMES=200
-N_TASKS=$(( (MAX_FRAMES + CHUNK_SIZE - 1) / CHUNK_SIZE ))
+# Count frames dynamically from the clean run_*.npz files in FRAMES_DIR
+N_FRAMES=$(python3 -c "
+import numpy as np, pathlib, sys
+files = sorted(pathlib.Path('${FRAMES_DIR}').glob('run_*.npz'))
+if not files:
+    sys.exit('Error: no run_*.npz files found in ${FRAMES_DIR}')
+total = sum(np.load(str(f), allow_pickle=False)['frame_idx'].shape[0] for f in files)
+print(total)
+")
+N_TASKS=$(( (N_FRAMES + CHUNK_SIZE - 1) / CHUNK_SIZE ))
 N_LAST=$(( N_TASKS - 1 ))
 
 echo "=== ATOMs Test SLURM Submission ==="
@@ -49,6 +56,7 @@ echo "WORK_DIR     : $WORK_DIR"
 echo "MODEL_DIR    : $MODEL_DIR"
 echo "CODE_DIR     : $CODE_DIR"
 echo "CHUNK_SIZE   : $CHUNK_SIZE"
+echo "N_FRAMES     : $N_FRAMES"
 echo "N_TASKS      : $N_TASKS (indices 0–$N_LAST)"
 echo ""
 

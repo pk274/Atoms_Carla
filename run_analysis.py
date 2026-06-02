@@ -328,8 +328,26 @@ elif conf.AGENT == "TFV6":
         mdx.fit(features_arr, actions_arr)
         mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
     else:
-        mdx = MDXDetector()
-        mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+        _pkl_path = Path(conf.BASELINE_DATA_DIR) / "mdx_parameters.pkl"
+        _npz_path = Path(conf.BASELINE_DATA_DIR) / "mdx_features.npz"
+        if _pkl_path.exists():
+            mdx = MDXDetector()
+            mdx.load(conf.BASELINE_DATA_DIR / "mdx_parameters")
+        elif _npz_path.exists():
+            print(f"  mdx_parameters.pkl not found — fitting from {_npz_path}")
+            _mdx_data    = np.load(_npz_path)
+            features_arr = _mdx_data["features"].astype(np.float64)
+            actions_arr  = _mdx_data["actions"].astype(np.float64)
+            print(f"  features: {features_arr.shape}  actions: {actions_arr.shape}")
+            mdx = MDXDetector(n_pca_components=50)
+            mdx.fit(features_arr, actions_arr)
+            mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
+            print("  Saved fitted MDX → mdx_parameters.pkl")
+        else:
+            raise FileNotFoundError(
+                "Neither mdx_parameters.pkl nor mdx_features.npz found in "
+                f"{conf.BASELINE_DATA_DIR}. Set RECOMPUTE_MDX_BASELINE=True to recompute."
+            )
 
 
 # ===========================================================================
@@ -704,6 +722,13 @@ else:
         np.load(ATT_DIR / "test_speed_logits.npy") if speed_logits_available else None
     )
     test_labels       = test_data["label"].astype(np.int32)
+
+    if len(test_profiles) != len(test_labels):
+        raise RuntimeError(
+            f"test_profiles.npy has {len(test_profiles)} frames but "
+            f"test_labeled.npz has {len(test_labels)} frames — they are out of sync. "
+            "Set RECOMPUTE_TEST_ATOMS=True to regenerate test_profiles.npy."
+        )
 
     print(f"  Loaded {len(test_profiles)} test profiles, "
           f"{int(test_labels.sum())} perturbed.\n")
