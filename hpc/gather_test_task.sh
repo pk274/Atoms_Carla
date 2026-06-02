@@ -13,7 +13,7 @@
 #SBATCH -e /ptmp/%u/atoms_test/logs/gather_test_%j.err
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=8000MB
+#SBATCH --mem=80000MB
 #SBATCH --time=05:00:00
 # Add your account/partition here if required, e.g.:
 # #SBATCH --account=YOUR_ACCOUNT

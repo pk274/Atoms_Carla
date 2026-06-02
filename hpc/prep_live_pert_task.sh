@@ -15,7 +15,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16000MB
-#SBATCH --time=00:30:00
+#SBATCH --time=01:30:00
 # Add your account/partition here if required, e.g.:
 # #SBATCH --account=YOUR_ACCOUNT
 
