@@ -251,6 +251,79 @@ class DistanceComputer:
 
 
     @staticmethod
+    def compute_gmm_euclidean(
+        means: np.ndarray,
+        mu_target: np.ndarray,
+    ) -> float:
+        """
+        Min L2 distance from mu_target to any cluster centroid.
+
+        Parameters
+        ----------
+        means     : np.ndarray [K, D]
+        mu_target : np.ndarray [D]
+
+        Returns
+        -------
+        float — distance to nearest cluster mean.
+        """
+        dists = np.linalg.norm(means - mu_target[None, :], axis=1)
+        return float(dists.min())
+
+    @staticmethod
+    def compute_gmm_jsd(
+        means: np.ndarray,
+        mu_target: np.ndarray,
+    ) -> float:
+        """
+        Min JSD between mu_target and any cluster mean profile.
+
+        Treats each cluster mean as a reference probability distribution
+        and computes JSD(mu_target || mu_k) for each cluster k.
+
+        Parameters
+        ----------
+        means     : np.ndarray [K, D]
+        mu_target : np.ndarray [D]
+
+        Returns
+        -------
+        float — minimum JSD over all cluster means.
+        """
+        min_jsd = np.inf
+        for k in range(len(means)):
+            jsd = DistanceComputer.compute_jsd(means[k], mu_target)
+            if jsd < min_jsd:
+                min_jsd = jsd
+        return float(min_jsd)
+
+    @staticmethod
+    def compute_gmm_wasserstein(
+        means: np.ndarray,
+        mu_target: np.ndarray,
+        positions: Optional[np.ndarray] = None,
+    ) -> float:
+        """
+        Min Wasserstein-1 distance between mu_target and any cluster mean profile.
+
+        Parameters
+        ----------
+        means     : np.ndarray [K, D]
+        mu_target : np.ndarray [D]
+        positions : np.ndarray [D], optional — passed to compute_wasserstein.
+
+        Returns
+        -------
+        float — minimum W1 over all cluster means.
+        """
+        min_w = np.inf
+        for k in range(len(means)):
+            w = DistanceComputer.compute_wasserstein(means[k], mu_target, positions)
+            if w < min_w:
+                min_w = w
+        return float(min_w)
+
+    @staticmethod
     def compute_wasserstein(
         p: np.ndarray,
         q: np.ndarray,

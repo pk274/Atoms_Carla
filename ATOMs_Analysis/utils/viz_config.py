@@ -114,11 +114,14 @@ SALIENCY_OVERLAY_ALPHA   = 0.5
 
 DISTANCE_TYPE_COLORS = {
     "knn":              "tab:green",
+    "gmm_knn":          "#006400",     # dark green -- GMM variant
     "jsd":              "tab:purple",
+    "gmm_jsd":          "#4B0082",     # indigo -- GMM variant
     "wasserstein":      "tab:brown",
+    "gmm_wasserstein":  "#8B4513",     # saddlebrown -- GMM variant
     "mahalanobis":      "tab:red",
     "gmm_mahalanobis":  "#810000",     # dark red -- GMM variant
-    "mdx":              "#cc7979",     # IndianRed -- another Mahalanobis variant
+    "mdx":              "#cc7979",     # IndianRed -- class-conditional Mahalanobis
     "euclidean":        "tab:blue",
     "gmm_euclidean":    "tab:cyan",
     "peoc":             "tab:olive",   # entropy-based, not a distance
@@ -126,8 +129,11 @@ DISTANCE_TYPE_COLORS = {
 
 DISTANCE_TYPE_YLABELS = {
     "knn":              "k-NN Distance",
+    "gmm_knn":          "k-NN Distance (GMM)",
     "jsd":              "Jensen-Shannon Divergence",
+    "gmm_jsd":          "Jensen-Shannon Divergence (GMM)",
     "wasserstein":      "Wasserstein Distance",
+    "gmm_wasserstein":  "Wasserstein Distance (GMM)",
     "mahalanobis":      "Mahalanobis Distance",
     "gmm_mahalanobis":  "Mahalanobis Distance (GMM)",
     "mdx":              "MDX Distance",

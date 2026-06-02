@@ -132,6 +132,10 @@ else:  # WoR
     model.eval()
     lrp = LRPCameraModel(model_eval=model, uitb=False)
 
+# WoR has discrete steer×throt×brake action logits → PEOC via get_action_logits().
+# TFV6 uses speed logits (get_speed_logits) handled separately in run_analysis.py.
+action_logits_available = (conf.AGENT != "TFV6")
+
 # Initialize ATOMs.
 #
 # use_reduced=True tracks only 7 driving-relevant classes instead of all 23.
@@ -363,7 +367,7 @@ if conf.RECOMPUTE_TEST_ATOMS:
     atoms.reset()
     n_test          = test_data["wide_rgb"].shape[0]
     test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = []
+    test_logits_all = [] if action_logits_available else None
     t0 = time.time()
     for i in range(n_test):
         wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
@@ -422,13 +426,9 @@ if conf.RECOMPUTE_TEST_ATOMS:
                                                     is_brake=atoms._last_is_brake)
 
 
-        with torch.no_grad():
-            narr_l = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float()
-            steer, throt, brake = model.policy(wide, narr_l, cmd=cmd)
-            flat_logits = torch.cat([
-                steer.flatten(), throt.flatten(), brake.unsqueeze(0).flatten(),
-            ]).cpu().numpy()
-        test_logits_all.append(flat_logits)
+        # PEOC: 28-dim joint action logits at the interpolated speed (true π(a|s))
+        if action_logits_available:
+            test_logits_all.append(lrp.get_action_logits(wide, narr, cmd=cmd, spd=spd))
 
         if (i + 1) % 100 == 0:
             fps = (i + 1) / (time.time() - t0)
@@ -436,14 +436,17 @@ if conf.RECOMPUTE_TEST_ATOMS:
 
     atoms.reset()
     np.save(ATT_DIR / "live_pert_profiles.npy", test_profiles)
-    test_logits_all = np.array(test_logits_all, dtype=np.float32)
-    np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
+    if action_logits_available:
+        test_logits_all = np.array(test_logits_all, dtype=np.float32)
+        np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
     print(f"  Done. {n_test} frames processed.\n")
 
 else:
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
     test_profiles = np.load(ATT_DIR / "live_pert_profiles.npy")
-    test_logits_all = np.load(ATT_DIR / "live_pert_speed_logits.npy")
+    test_logits_all = (
+        np.load(ATT_DIR / "live_pert_speed_logits.npy") if action_logits_available else None
+    )
     print(f"  Loaded {len(test_profiles)} test profiles.")
 
 

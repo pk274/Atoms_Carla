@@ -37,8 +37,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output",       required=True, type=Path,
                    help="Output path for the partial profile .npz.")
     p.add_argument("--model-dir",    required=True, type=Path,
-                   help="Directory containing config.json and model*.pth for TFV6.")
+                   help="Directory containing model weights and config.")
+    p.add_argument("--agent",        default="TFV6", choices=["TFV6", "WOR"],
+                   help="Agent architecture: TFV6 or WOR.")
     return p.parse_args()
+
+
+def build_wor_lrp(model_dir: Path, device: torch.device):
+    import yaml
+    from pcla_agents.wor.rails.models import CameraModel
+    from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
+
+    config_path  = model_dir / "config_leaderboard.yaml"
+    weights_path = next(model_dir.glob("main_model*.th"), None)
+    if weights_path is None:
+        raise FileNotFoundError(f"No main_model*.th found in {model_dir}")
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    model = CameraModel(config).to(device)
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=False))
+    model.eval()
+    return LRPCameraModel(model_eval=model, device=device)
 
 
 def build_tfv6_lrp(model_dir: Path, device: torch.device):
@@ -101,38 +122,50 @@ def main() -> None:
     device  = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[chunk] device={device}  frames={chunk_start}:{chunk_end}  ({n_chunk} frames)")
 
-    print("[chunk] Loading model...")
-    lrp = build_tfv6_lrp(args.model_dir, device)
+    print(f"[chunk] Loading model (agent={args.agent})...")
+    if args.agent == "WOR":
+        lrp = build_wor_lrp(args.model_dir, device)
+    else:
+        lrp = build_tfv6_lrp(args.model_dir, device)
 
     from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
-    from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES
+    from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
 
+    class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
     atoms = ATOMsCarla(
         lrp_model     = lrp,
         p_relevance   = 0.25,
         default_cmd   = 2,
         mode_analysis = 1,
         use_reduced   = False,
-        class_map     = TFV6_CLASSES,
+        class_map     = class_map,
     )
     print(f"[chunk] ATOMs: {atoms.num_classes} classes: "
           f"{', '.join(atoms.class_names[:4])}, ...")
 
-    profiles      = []
-    speed_logits  = []   # [N_chunk, 8] — for PEOC scoring (no fitting needed)
+    has_narr     = "narr_rgb"     in data and data["narr_rgb"]     is not None
+    has_seg_narr = "seg_red_narr" in data and data["seg_red_narr"] is not None
+
+    profiles     = []
+    peoc_logits  = []   # [N_chunk, 8] TFV6 speed logits OR [N_chunk, 28] WOR action logits
     t0 = time.time()
 
     for i in range(chunk_start, chunk_end):
         wide     = torch.from_numpy(data["wide_rgb"][i:i+1]).float()
+        narr     = torch.from_numpy(data["narr_rgb"][i:i+1]).float() if has_narr     else None
         seg_wide = data["seg_red_wide"][i]
+        seg_narr = data["seg_red_narr"][i]                           if has_seg_narr else None
         cmd      = int(data["cmd"][i])
         spd      = float(data["speed"][i])
 
-        profile = atoms.process_frame(wide, None, seg_wide, None, cmd=cmd, spd=spd)
+        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
         profiles.append(profile)
 
-        # Speed logits for PEOC (cheap: no LRP backward, model already loaded)
-        speed_logits.append(lrp.get_speed_logits(wide.float(), cmd=cmd, spd=spd))
+        # PEOC logits (no LRP backward — cheap)
+        if args.agent == "WOR":
+            peoc_logits.append(lrp.get_action_logits(wide.float(), narr.float(), cmd, spd))
+        else:
+            peoc_logits.append(lrp.get_speed_logits(wide.float(), cmd=cmd, spd=spd))
 
         local_i = i - chunk_start + 1
         if local_i % 10 == 0:
@@ -143,19 +176,20 @@ def main() -> None:
 
     atoms.reset()
 
-    profiles_arr     = np.stack(profiles,     axis=0).astype(np.float32)  # [N_chunk, C]
-    speed_logits_arr = np.stack(speed_logits, axis=0).astype(np.float32)  # [N_chunk, 8]
-    print(f"[chunk] profiles shape    : {profiles_arr.shape}")
-    print(f"[chunk] speed_logits shape: {speed_logits_arr.shape}")
+    profiles_arr    = np.stack(profiles,    axis=0).astype(np.float32)
+    peoc_logits_arr = np.stack(peoc_logits, axis=0).astype(np.float32)
+    logit_key       = "action_logits" if args.agent == "WOR" else "speed_logits"
+    print(f"[chunk] profiles shape : {profiles_arr.shape}")
+    print(f"[chunk] {logit_key} shape: {peoc_logits_arr.shape}")
 
     np.savez_compressed(
         args.output,
-        profiles     = profiles_arr,
-        speed_logits = speed_logits_arr,
-        chunk_start  = np.array([chunk_start], dtype=np.int32),
-        chunk_end    = np.array([chunk_end],   dtype=np.int32),
-        class_ids    = np.array(atoms.class_ids,   dtype=np.int32),
-        class_names  = np.array(atoms.class_names, dtype=object),
+        profiles    = profiles_arr,
+        chunk_start = np.array([chunk_start], dtype=np.int32),
+        chunk_end   = np.array([chunk_end],   dtype=np.int32),
+        class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
+        class_names = np.array(atoms.class_names, dtype=object),
+        **{logit_key: peoc_logits_arr},
     )
 
     elapsed = time.time() - t0

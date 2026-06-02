@@ -528,6 +528,64 @@ class LRPCameraModel:
         return selector
 
     # ------------------------------------------------------------------
+    # Inference helpers (no LRP, no grad)
+    # ------------------------------------------------------------------
+
+    def get_action_logits(
+        self,
+        wide_rgb: torch.Tensor,
+        narr_rgb: torch.Tensor,
+        cmd: int,
+        spd: float,
+    ) -> "np.ndarray":
+        """
+        Forward pass → 28-dim joint action logits at the interpolated speed bin.
+
+        WoR's true action distribution is a 28-way softmax over 27 joint
+        (steer × throt) actions plus 1 brake action.  The raw act_head output
+        has shape [num_cmds, num_speeds, 13] (9 steer + 3 throt + 1 brake per
+        speed bin); the model's action_logits() function combines them into the
+        28-dim joint by computing steer_j + throt_i for each (j, i) pair.
+
+        At inference the agent linearly interpolates between the two adjacent
+        speed bins for the actual vehicle speed.  This method replicates that
+        interpolation and returns the resulting 28-dim logit vector — the true
+        π(a|s) needed for PEOC (Sedlmeier et al., 2020).
+
+        Parameters
+        ----------
+        wide_rgb : [1, 3, H, W]   float tensor in [0, 255]
+        narr_rgb : [1, 3, H_n, W_n] float tensor in [0, 255]
+        cmd      : navigation command integer (0–5)
+        spd      : current vehicle speed in m/s
+
+        Returns
+        -------
+        np.ndarray [28]  joint action logits (27 steer×throt + 1 brake)
+                         before softmax, ready for ActionEntropyDetector.
+        """
+        import numpy as np
+        wide_t = wide_rgb.float().to(self.device)
+        narr_t = narr_rgb.float().to(self.device)
+
+        with torch.no_grad():
+            # forward() calls action_logits() internally, producing the joint
+            # 28-dim distribution.  act_output: [1, num_cmds, num_speeds, 28]
+            act_output, *_ = self._model_eval(wide_t, narr_t)
+
+            # Select the active command and interpolate to the actual speed.
+            # This mirrors _build_drive_brake_selector's lerp logic exactly.
+            x0, x1, w = self._lerp_bins(
+                spd, self.min_speeds, self.max_speeds, self.num_speeds
+            )
+            joint_logits = (
+                (1.0 - w) * act_output[0, cmd, x0, :]
+                +      w  * act_output[0, cmd, x1, :]
+            )  # [28]
+
+        return joint_logits.cpu().numpy()
+
+    # ------------------------------------------------------------------
     # Convenience method
     # ------------------------------------------------------------------
 

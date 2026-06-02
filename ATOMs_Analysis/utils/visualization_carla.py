@@ -822,7 +822,7 @@ def plot_roc(
             linestyle="--", lw=0.8, label="Chance")
 
     fallback_idx = 0
-    for r in results_list:
+    for r in sorted(results_list, key=lambda x: x["auc"], reverse=True):
         label = f"{r['detector_name']}  (AUC={r['auc']:.3f})"
 
         dt = _distance_type_from_detector_name(r["detector_name"])
@@ -850,7 +850,8 @@ def plot_mahal_distribution(
     in_scores:  np.ndarray,
     out_scores: np.ndarray,
     threshold:  Optional[float] = None,
-    title:      str = "Mahalanobis Score Distribution",
+    title:      str = "Score Distribution",
+    xlabel:     str = "Anomaly score",
     bins:       int = 50,
 ):
     """
@@ -872,7 +873,7 @@ def plot_mahal_distribution(
     if threshold is not None:
         ax.axvline(threshold, color=vc.THRESHOLD_COLOR, lw=1.5, linestyle="--",
                    label=f"Threshold={threshold:.2f}")
-    ax.set_xlabel("Mahalanobis distance")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("Density")
     ax.set_title(title)
     ax.legend(fontsize=vc.FONTSIZE_LEGEND)
@@ -914,10 +915,11 @@ def plot_bic_aic(
 
 
 def plot_knn_sensitivity(
-    k_values: List[int],
-    aucs:     List[float],
-    best_k:   int,
-    title:    str = "k-NN Sensitivity Analysis — AUC vs k",
+    k_values:  List[int],
+    aucs:      List[float],
+    best_k:    int,
+    title:     str = "k-NN Sensitivity Analysis — AUC vs k",
+    color_key: str = "knn",
 ) -> "plt.Figure":
     """
     Bar chart of ROC-AUC as a function of k for the k-NN detector.
@@ -937,8 +939,9 @@ def plot_knn_sensitivity(
     -------
     matplotlib.figure.Figure
     """
+    highlight_color = vc.DISTANCE_TYPE_COLORS.get(color_key, vc.DISTANCE_TYPE_COLORS["knn"])
     colors = [
-        vc.DISTANCE_TYPE_COLORS["knn"] if k == best_k else vc.BASELINE_COLOR
+        highlight_color if k == best_k else vc.BASELINE_COLOR
         for k in k_values
     ]
     labels = [str(k) for k in k_values]
@@ -962,7 +965,7 @@ def plot_knn_sensitivity(
     ax.set_ylim(y_lo, y_hi)
     ax.axhline(
         max(aucs),
-        color=vc.DISTANCE_TYPE_COLORS["knn"], lw=0.8, linestyle="--", alpha=0.5,
+        color=highlight_color, lw=0.8, linestyle="--", alpha=0.5,
         label=f"Best AUC = {max(aucs):.3f}  (k={best_k})",
     )
     ax.set_xlabel("k  (number of neighbours)")
@@ -1401,12 +1404,12 @@ def _distance_type_from_detector_name(name: str) -> Optional[str]:
     n = name.lower()
     gmm = "gmm" in n
     if "knn" in n or "k-nn" in n:
-        return "knn"
+        return "gmm_knn" if gmm else "knn"
     if "jsd" in n or "jensen" in n:
-        return "jsd"
+        return "gmm_jsd" if gmm else "jsd"
     if "wasserstein" in n:
-        return "wasserstein"
-    if "peoc" in n or "entropy" in n or "PEOC" in n:
+        return "gmm_wasserstein" if gmm else "wasserstein"
+    if "peoc" in n or "entropy" in n:
         return "peoc"
     if "mdx" in n:
         return "mdx"
@@ -1428,22 +1431,21 @@ def _get_plot_style(distance_type: str) -> Tuple[str, str]:
     dt = distance_type.lower()
 
     # Most-specific keys first so "gmm_mahalanobis" matches before "mahalanobis".
+    gmm = "gmm" in dt
     if "knn" in dt:
-        key = "knn"
+        key = "gmm_knn" if gmm else "knn"
     elif "jsd" in dt:
-        key = "jsd"
+        key = "gmm_jsd" if gmm else "jsd"
     elif "wasserstein" in dt:
-        key = "wasserstein"
-    elif "peoc" in dt or "entropy" in dt or "PEOC" in dt:
+        key = "gmm_wasserstein" if gmm else "wasserstein"
+    elif "peoc" in dt or "entropy" in dt:
         key = "peoc"
     elif "mdx" in dt:
         key = "mdx"
-    elif "gmm" in dt and "mahalanobis" in dt:
-        key = "gmm_mahalanobis"
-    elif "gmm" in dt:
-        key = "gmm_euclidean"
     elif "mahalanobis" in dt:
-        key = "mahalanobis"
+        key = "gmm_mahalanobis" if gmm else "mahalanobis"
+    elif gmm:
+        key = "gmm_euclidean"
     else:
         key = "euclidean"
 

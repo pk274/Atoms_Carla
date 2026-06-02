@@ -250,36 +250,53 @@ print()
 mdx = None
 if action_logits_available:
     # -----------------------------------------------------------------------
-    # WoR MDX: penultimate-layer features + policy logits
+    # WoR MDX: penultimate-layer features + joint action distribution
     # -----------------------------------------------------------------------
     if conf.RECOMPUTE_MDX_BASELINE:
-        runs_dict = BaselineDataLoader.load_all_runs(
-            Path(conf.BASELINE_DATA_DIR) / "frames"
-        )
-        WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
-        agent = ImageAgent(str(WOR_WEIGHTS_DIR / "config_leaderboard.yaml"))
-        features_list, actions_list = [], []
+        # Fast path: backbone features were pre-computed on HPC by
+        # compute_baseline_chunk.py (--agent WOR) and gathered into mdx_features.npz.
+        # If the file exists, skip the slow per-frame extraction loop.
+        mdx_features_path = Path(conf.BASELINE_DATA_DIR) / "mdx_features.npz"
+        if mdx_features_path.exists():
+            print(f"  Loading pre-computed WoR MDX features from {mdx_features_path}")
+            _mdx_data    = np.load(mdx_features_path)
+            features_arr = _mdx_data["features"].astype(np.float64)  # [N, 576]
+            actions_arr  = _mdx_data["actions"].astype(np.float64)   # [N, 3]
+            print(f"  features: {features_arr.shape}  actions: {actions_arr.shape}")
+        else:
+            # Slow local path: requires ImageAgent (imports carla).
+            print("  mdx_features.npz not found — extracting locally (slow).")
+            print("  Tip: run compute_baseline_chunk.py --agent WOR + gather_baseline.py on HPC.")
+            runs_dict = BaselineDataLoader.load_all_runs(
+                Path(conf.BASELINE_DATA_DIR) / "frames"
+            )
+            WOR_WEIGHTS_DIR = Path("pcla_agents/wor_pretrained/leaderboard_weights")
+            agent = ImageAgent(str(WOR_WEIGHTS_DIR / "config_leaderboard.yaml"))
+            features_list, actions_list = [], []
 
-        for i in range(len(runs_dict["frame_idx"])):
-            if i % 20 == 0:
-                print("Extracting MDX information from frame", i)
-            wide = torch.from_numpy(runs_dict["wide_rgb"][i])
-            narr = torch.from_numpy(runs_dict["narr_rgb"][i])
-            steer_l, throt_l, brake_l = model.policy(wide, narr, runs_dict["cmd"][i])
-            features = model.get_features(wide, narr, runs_dict["speed"][i])
-            features_list.append(features[0].cpu().detach().numpy())
-            steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
-            throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
-            brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
-            action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
-            brake_prob  = float(action_prob[-1])
-            steer       = float(agent.steers @ torch.softmax(steer_logit, dim=0))
-            throt       = float(agent.throts @ torch.softmax(throt_logit, dim=0))
-            actions_list.append([steer, throt, brake_prob])
+            for i in range(len(runs_dict["frame_idx"])):
+                if i % 20 == 0:
+                    print("Extracting MDX information from frame", i)
+                wide = torch.from_numpy(runs_dict["wide_rgb"][i])
+                narr = torch.from_numpy(runs_dict["narr_rgb"][i])
+                features = model.get_features(wide, narr, runs_dict["speed"][i])
+                features_list.append(features[0].cpu().detach().numpy())
+                steer_l, throt_l, brake_l = model.policy(wide, narr, runs_dict["cmd"][i])
+                steer_logit = agent._lerp(steer_l, runs_dict["speed"][i])
+                throt_logit = agent._lerp(throt_l, runs_dict["speed"][i])
+                brake_logit = agent._lerp(brake_l, runs_dict["speed"][i])
+                action_prob = agent.action_prob(steer_logit, throt_logit, brake_logit)
+                brake_prob  = float(action_prob[-1])
+                steer       = float(agent.steers @ torch.softmax(steer_logit, dim=0))
+                throt       = float(agent.throts @ torch.softmax(throt_logit, dim=0))
+                actions_list.append([steer, throt, brake_prob])
+
+            features_arr = np.array(features_list)
+            actions_arr  = np.array(actions_list)
 
         mdx = MDXDetector(n_pca_components=50)
-        print("\nFitting MDX Detector!\n")
-        mdx.fit(np.array(features_list), np.array(actions_list))
+        print("\nFitting WoR MDX Detector!\n")
+        mdx.fit(features_arr, actions_arr)
         mdx.save(conf.BASELINE_DATA_DIR / "mdx_parameters")
     else:
         mdx = MDXDetector()
@@ -670,15 +687,15 @@ if conf.RECOMPUTE_TEST_ATOMS:
         profile = atoms.process_frame(wide, narrow, seg_wide, seg_narr, cmd=cmd)
         test_profiles[i] = profile
 
-        # Action logits for entropy detector (WoR only)
+        # Action logits for PEOC entropy detector (WoR only).
+        # get_action_logits() returns the 28-dim joint (steer×throt + brake)
+        # distribution at the interpolated speed — the true π(a|s) for PEOC.
         if action_logits_available:
-            with torch.no_grad():
-                steer, throt, brake = model.policy(wide, narrow, cmd=cmd)
-                flat_logits = torch.cat([
-                    steer.flatten(),
-                    throt.flatten(),
-                    brake.unsqueeze(0).flatten(),
-                ]).cpu().numpy()
+            flat_logits = lrp.get_action_logits(
+                wide, narrow,
+                cmd=cmd,
+                spd=float(test_data["speed"][i]),
+            )
             test_logits_all.append(flat_logits)
 
         # Speed logits for PEOC (TFV6 only)
@@ -985,6 +1002,14 @@ scores_jsd_single = np.array([
     for i in range(len(test_profiles))
 ])
 
+scores_wass_single = np.array([
+    DistanceComputer.compute_wasserstein(
+        p = baseline_mean,
+        q = test_profiles[i],
+    )
+    for i in range(len(test_profiles))
+])
+
 # --- 9b: GMM Mahalanobis (nearest cluster) ---
 # compute_gmm_distance() takes the full GMM parameters + one target point.
 # Returns a DistanceResult; we extract .distance for the score.
@@ -1003,6 +1028,60 @@ gmm_results = [
 ]
 scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
 nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
+
+# --- 9b.2: GMM Euclidean, JSD, Wasserstein (nearest cluster by each metric) ---
+scores_euclid_gmm = np.array([
+    DistanceComputer.compute_gmm_euclidean(
+        means     = gmm.means_,
+        mu_target = test_profiles[i],
+    )
+    for i in range(len(test_profiles))
+])
+
+scores_jsd_gmm = np.array([
+    DistanceComputer.compute_gmm_jsd(
+        means     = gmm.means_,
+        mu_target = test_profiles[i],
+    )
+    for i in range(len(test_profiles))
+])
+
+scores_wass_gmm = np.array([
+    DistanceComputer.compute_gmm_wasserstein(
+        means     = gmm.means_,
+        mu_target = test_profiles[i],
+    )
+    for i in range(len(test_profiles))
+])
+
+# --- 9b.3: GMM k-NN (kNN within the nearest cluster's data) ---
+# Pre-split baseline samples by cluster; for each test point find the
+# closest centroid by L2, then run kNN within that cluster's data.
+# Falls back to the full baseline when the cluster is smaller than k.
+_cluster_data: dict = {}
+for _ck in range(N_COMPONENTS):
+    _cm = baseline_cluster_labels == _ck
+    if _cm.sum() > 0:
+        _cluster_data[_ck] = baseline_series[_cm]
+
+scores_knn_gmm_by_k: dict = {}
+for _k in KNN_K_VALUES:
+    _gmm_knn_scores = []
+    for i in range(len(test_profiles)):
+        x = test_profiles[i]
+        _centroid_dists = np.linalg.norm(gmm.means_ - x[None, :], axis=1)
+        _nc = int(np.argmin(_centroid_dists))
+        _pool = _cluster_data.get(_nc, baseline_series)
+        if len(_pool) < _k:
+            _pool = baseline_series   # fallback: too few cluster members
+        _gmm_knn_scores.append(DistanceComputer.compute_knn_distance(
+            reference_samples = _pool,
+            target_point      = x,
+            k                 = _k,
+            normalize         = True,
+        ))
+    scores_knn_gmm_by_k[_k] = np.array(_gmm_knn_scores)
+    print(f"  GMM k-NN k={_k}: done")
 
 # --- 9c: Action entropy (WoR only) ---
 scores_entropy = None
@@ -1043,7 +1122,8 @@ if speed_logits_available and test_speed_logits is not None:
     print(f"  PEOC: scored {len(scores_peoc)} frames")
 
 # --- Quick sanity check ---
-_knn_sanity = [(f"k-NN (k={k})", scores_knn_by_k[k]) for k in KNN_K_VALUES]
+_knn_sanity     = [(f"k-NN (k={k})",     scores_knn_by_k[k])     for k in KNN_K_VALUES]
+_knn_gmm_sanity = [(f"k-NN GMM (k={k})", scores_knn_gmm_by_k[k]) for k in KNN_K_VALUES]
 _optional = [
     ("Action entropy",  scores_entropy  if action_logits_available else None),
     ("MDX Detection",   scores_mdx),
@@ -1052,9 +1132,13 @@ _optional = [
 for name, scores in [
     ("Mahalanobis (single)", scores_mahal_single),
     ("Mahalanobis (GMM)",    scores_mahal_gmm),
-    ("Euclidean",            scores_euclid_single),
+    ("Euclidean (single)",   scores_euclid_single),
+    ("Euclidean (GMM)",      scores_euclid_gmm),
     ("Jensen-Shannon",       scores_jsd_single),
-] + [(n, s) for n, s in _optional if s is not None] + _knn_sanity:
+    ("JSD (GMM)",            scores_jsd_gmm),
+    ("Wasserstein (single)", scores_wass_single),
+    ("Wasserstein (GMM)",    scores_wass_gmm),
+] + [(n, s) for n, s in _optional if s is not None] + _knn_sanity + _knn_gmm_sanity:
     clean_mean = scores[test_labels == 0].mean()
     pert_mean  = scores[test_labels == 1].mean()
     sep        = pert_mean - clean_mean   # positive = detector pointing the right way
@@ -1098,6 +1182,30 @@ results_euclidean = evaluator.evaluate(
     detector_name = "ATOMs-Euclidean",
 )
 
+results_euclidean_gmm = evaluator.evaluate(
+    scores        = scores_euclid_gmm,
+    labels        = test_labels,
+    detector_name = f"ATOMs-Euclidean (GMM K={N_COMPONENTS})",
+)
+
+results_jsd_gmm = evaluator.evaluate(
+    scores        = scores_jsd_gmm,
+    labels        = test_labels,
+    detector_name = f"ATOMs-JSD (GMM K={N_COMPONENTS})",
+)
+
+results_wass_single = evaluator.evaluate(
+    scores        = scores_wass_single,
+    labels        = test_labels,
+    detector_name = "ATOMs-Wasserstein",
+)
+
+results_wass_gmm = evaluator.evaluate(
+    scores        = scores_wass_gmm,
+    labels        = test_labels,
+    detector_name = f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})",
+)
+
 # Evaluate all k-NN variants for the sensitivity analysis
 results_knn_by_k: dict = {}
 for k_val, knn_scores in scores_knn_by_k.items():
@@ -1114,6 +1222,21 @@ results_knn["detector_name"] = f"ATOMs-k-NN (k={best_k}, best)"
 scores_knn_best = scores_knn_by_k[best_k]
 print(f"  Best k-NN: k={best_k}  AUC={results_knn['auc']:.4f}")
 
+# Evaluate GMM k-NN variants
+results_knn_gmm_by_k: dict = {}
+for k_val, knn_scores in scores_knn_gmm_by_k.items():
+    results_knn_gmm_by_k[k_val] = evaluator.evaluate(
+        scores        = knn_scores,
+        labels        = test_labels,
+        detector_name = f"ATOMs-k-NN-GMM (k={k_val})",
+    )
+
+best_k_gmm = max(results_knn_gmm_by_k, key=lambda k: results_knn_gmm_by_k[k]["auc"])
+results_knn_gmm = results_knn_gmm_by_k[best_k_gmm]
+results_knn_gmm["detector_name"] = f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)"
+scores_knn_gmm_best = scores_knn_gmm_by_k[best_k_gmm]
+print(f"  Best GMM k-NN: k={best_k_gmm}  AUC={results_knn_gmm['auc']:.4f}")
+
 results_mdx = evaluator.evaluate(
     scores        = scores_mdx,
     labels        = test_labels,
@@ -1128,8 +1251,12 @@ results_peoc = evaluator.evaluate(
 
 all_results = [
     r for r in [
-        results_single, results_gmm, results_entropy,
-        results_euclidean, results_jsd, results_knn, results_mdx, results_peoc,
+        results_single, results_gmm,
+        results_euclidean, results_euclidean_gmm,
+        results_jsd, results_jsd_gmm,
+        results_wass_single, results_wass_gmm,
+        results_knn, results_knn_gmm,
+        results_entropy, results_mdx, results_peoc,
     ] if r is not None
 ]
 evaluator.compare(all_results)
@@ -1183,17 +1310,34 @@ for pert_name, subset in split_data.items():
         scores_jsd_single[eval_mask], eval_labels,
         detector_name=f"JSD-single | {pert_name}",
     )
-
+    r_jsd_gmm = evaluator.evaluate(
+        scores_jsd_gmm[eval_mask], eval_labels,
+        detector_name=f"JSD-GMM | {pert_name}",
+    )
     r_euclidean = evaluator.evaluate(
         scores_euclid_single[eval_mask], eval_labels,
         detector_name=f"Euclidean-single | {pert_name}",
     )
-
+    r_euclidean_gmm = evaluator.evaluate(
+        scores_euclid_gmm[eval_mask], eval_labels,
+        detector_name=f"Euclidean-GMM | {pert_name}",
+    )
+    r_wass = evaluator.evaluate(
+        scores_wass_single[eval_mask], eval_labels,
+        detector_name=f"Wasserstein-single | {pert_name}",
+    )
+    r_wass_gmm = evaluator.evaluate(
+        scores_wass_gmm[eval_mask], eval_labels,
+        detector_name=f"Wasserstein-GMM | {pert_name}",
+    )
     r_knn = evaluator.evaluate(
         scores_knn_best[eval_mask], eval_labels,
         detector_name=f"kNN (k={best_k}) | {pert_name}",
     )
-
+    r_knn_gmm = evaluator.evaluate(
+        scores_knn_gmm_best[eval_mask], eval_labels,
+        detector_name=f"kNN-GMM (k={best_k_gmm}) | {pert_name}",
+    )
     r_mdx = evaluator.evaluate(
         scores_mdx[eval_mask], eval_labels,
         detector_name=f"MDX Detection | {pert_name}",
@@ -1210,7 +1354,14 @@ for pert_name, subset in split_data.items():
     ) if scores_peoc is not None else None
 
     perturb_results[pert_name] = [
-        r for r in [r_single, r_gmm, r_entropy, r_jsd, r_euclidean, r_mdx, r_knn, r_peoc]
+        r for r in [
+            r_single, r_gmm,
+            r_euclidean, r_euclidean_gmm,
+            r_jsd, r_jsd_gmm,
+            r_wass, r_wass_gmm,
+            r_knn, r_knn_gmm,
+            r_entropy, r_mdx, r_peoc,
+        ]
         if r is not None
     ]
     print(f"\n  Perturbation: {pert_name}")
@@ -1229,49 +1380,119 @@ print()
 # ===========================================================================
 print("[Step 14] Saving detection figures...")
 
-# --- 12a: ROC curves — all detectors on full test set ---
-fig_roc = plot_roc(
+# --- 12a: ROC curves — three views on the full test set ---
+
+# All detectors (overview — can be dense with many detectors)
+fig_roc_all = plot_roc(
     results_list = all_results,
-    title        = "ROC — Full test set (all perturbations)",
+    title        = "ROC — All detectors (full test set)",
 )
-save_figure(fig_roc, dirs["roc"] / "roc_all_detectors.png")
+save_figure(fig_roc_all, dirs["roc"] / "roc_all_detectors.png")
 
-# --- 12b: Score distributions for best detector ---
-# Split by clean / perturbed to show separation quality.
-fig_dist_mahal = plot_mahal_distribution(
-    in_scores  = scores_mahal_single[test_labels == 0],
-    out_scores = scores_mahal_single[test_labels == 1],
-    threshold  = results_single["optimal_threshold"],
-    title      = "Mahalanobis score distribution (single Gaussian)",
+# Static (single-Gaussian) detectors only
+_results_static = [
+    r for r in all_results
+    if "gmm" not in r["detector_name"].lower()
+]
+fig_roc_static = plot_roc(
+    results_list = _results_static,
+    title        = "ROC — Static detectors (full test set)",
 )
-save_figure(fig_dist_mahal, dirs["scores"] / "score_dist_mahal_single.png")
+save_figure(fig_roc_static, dirs["roc"] / "roc_static_detectors.png")
 
-fig_dist_gmm = plot_mahal_distribution(
-    in_scores  = scores_mahal_gmm[test_labels == 0],
-    out_scores = scores_mahal_gmm[test_labels == 1],
-    threshold  = results_gmm["optimal_threshold"],
-    title      = f"Mahalanobis score distribution (GMM K={N_COMPONENTS})",
+# GMM detectors paired with their single-Gaussian counterpart
+_gmm_names = {"Mahalanobis", "Euclidean", "JSD", "Wasserstein", "k-NN"}
+_results_gmm_group = [
+    r for r in all_results
+    if any(m.lower() in r["detector_name"].lower() for m in _gmm_names)
+]
+fig_roc_gmm = plot_roc(
+    results_list = _results_gmm_group,
+    title        = f"ROC — Single vs GMM detectors (K={N_COMPONENTS}, full test set)",
 )
-save_figure(fig_dist_gmm, dirs["scores"] / "score_dist_mahal_gmm.png")
+save_figure(fig_roc_gmm, dirs["roc"] / "roc_gmm_vs_static.png")
 
-# --- 12c: One ROC plot per perturbation type, comparing all detectors ---
+# Top-5 detectors by AUC
+_results_top5 = sorted(all_results, key=lambda r: r["auc"], reverse=True)[:5]
+fig_roc_top5 = plot_roc(
+    results_list = _results_top5,
+    title        = "ROC — Top 5 detectors by AUC (full test set)",
+)
+save_figure(fig_roc_top5, dirs["roc"] / "roc_top5.png")
+
+# --- 12b: Score distributions — one panel per metric (single vs GMM) ---
+_score_dist_pairs = [
+    (scores_mahal_single, results_single, scores_mahal_gmm, results_gmm,
+     "Mahalanobis distance", "mahal"),
+    (scores_euclid_single, results_euclidean, scores_euclid_gmm, results_euclidean_gmm,
+     "Euclidean distance", "euclidean"),
+    (scores_jsd_single, results_jsd, scores_jsd_gmm, results_jsd_gmm,
+     "Jensen-Shannon divergence", "jsd"),
+    (scores_wass_single, results_wass_single, scores_wass_gmm, results_wass_gmm,
+     "Wasserstein distance", "wasserstein"),
+]
+for _sc_s, _res_s, _sc_g, _res_g, _xlabel, _stub in _score_dist_pairs:
+    fig_d_s = plot_mahal_distribution(
+        in_scores  = _sc_s[test_labels == 0],
+        out_scores = _sc_s[test_labels == 1],
+        threshold  = _res_s["optimal_threshold"],
+        title      = f"{_res_s['detector_name']} — score distribution",
+        xlabel     = _xlabel,
+    )
+    save_figure(fig_d_s, dirs["scores"] / f"score_dist_{_stub}_single.png")
+
+    fig_d_g = plot_mahal_distribution(
+        in_scores  = _sc_g[test_labels == 0],
+        out_scores = _sc_g[test_labels == 1],
+        threshold  = _res_g["optimal_threshold"],
+        title      = f"{_res_g['detector_name']} — score distribution",
+        xlabel     = _xlabel,
+    )
+    save_figure(fig_d_g, dirs["scores"] / f"score_dist_{_stub}_gmm.png")
+
+# --- 12c: One ROC plot per perturbation type — three views each ---
 for pert_name, res_list in perturb_results.items():
+    safe = pert_name.replace(" ", "_")
+
     fig_roc_p = plot_roc(
         results_list = res_list,
-        title        = f"ROC — {pert_name}",
+        title        = f"ROC — {pert_name} (all detectors)",
     )
-    safe = pert_name.replace(" ", "_")
-    save_figure(fig_roc_p, dirs["roc"] / f"roc_{safe}.png")
+    save_figure(fig_roc_p, dirs["roc"] / f"roc_{safe}_all.png")
 
-# --- 12d.0: k-NN sensitivity — AUC vs k ---
+    _static_p = [r for r in res_list if "gmm" not in r["detector_name"].lower()]
+    fig_roc_p_s = plot_roc(
+        results_list = _static_p,
+        title        = f"ROC — {pert_name} (static detectors)",
+    )
+    save_figure(fig_roc_p_s, dirs["roc"] / f"roc_{safe}_static.png")
+
+    _top5_p = sorted(res_list, key=lambda r: r["auc"], reverse=True)[:5]
+    fig_roc_p_top5 = plot_roc(
+        results_list = _top5_p,
+        title        = f"ROC — {pert_name} (top 5)",
+    )
+    save_figure(fig_roc_p_top5, dirs["roc"] / f"roc_{safe}_top5.png")
+
+# --- 12d.0: k-NN sensitivity — AUC vs k (global and GMM variants) ---
 knn_k_list   = list(results_knn_by_k.keys())
 knn_auc_list = [results_knn_by_k[k]["auc"] for k in knn_k_list]
 fig_knn_sens = plot_knn_sensitivity(knn_k_list, knn_auc_list, best_k)
 save_figure(fig_knn_sens, dirs["roc"] / "knn_k_sensitivity.png")
 
+knn_gmm_auc_list = [results_knn_gmm_by_k[k]["auc"] for k in knn_k_list]
+fig_knn_gmm_sens = plot_knn_sensitivity(
+    knn_k_list, knn_gmm_auc_list, best_k_gmm,
+    title     = "k-NN GMM Sensitivity Analysis — AUC vs k",
+    color_key = "gmm_knn",
+)
+save_figure(fig_knn_gmm_sens, dirs["roc"] / "knn_gmm_k_sensitivity.png")
+
 # Save per-k results as JSON for later reference
 for k_val, res in results_knn_by_k.items():
     evaluator.save_results(res, OUT_DIR / f"results_knn_k{k_val}.json")
+for k_val, res in results_knn_gmm_by_k.items():
+    evaluator.save_results(res, OUT_DIR / f"results_knn_gmm_k{k_val}.json")
 
 # --- 12d: PCA OOD overlay — test samples projected into baseline PCA space ---
 # Clean test points should sit within the baseline cloud; perturbed should scatter away.

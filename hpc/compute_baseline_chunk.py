@@ -32,8 +32,8 @@ def parse_args() -> argparse.Namespace:
                    help="Output path for the partial .npz (series + class metadata).")
     p.add_argument("--model-dir", required=True, type=Path,
                    help="Directory containing config.json and model*.pth for TFV6.")
-    p.add_argument("--agent",     default="TFV6", choices=["TFV6"],
-                   help="Agent architecture. Only TFV6 is currently supported.")
+    p.add_argument("--agent",     default="TFV6", choices=["TFV6", "WOR"],
+                   help="Agent architecture: TFV6 or WOR.")
     return p.parse_args()
 
 
@@ -49,6 +49,29 @@ def load_run_npz(filepath: Path) -> dict:
         "speed":        data["speed"],
         "frame_idx":    data["frame_idx"],
     }
+
+
+def build_wor_lrp(model_dir: Path, device: torch.device):
+    import yaml
+    from pcla_agents.wor.rails.models import CameraModel
+    from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
+
+    config_path  = model_dir / "config_leaderboard.yaml"
+    weights_path = next(model_dir.glob("main_model*.th"), None)
+    if weights_path is None:
+        raise FileNotFoundError(f"No main_model*.th found in {model_dir}")
+    print(f"  Loading WOR config  : {config_path.name}")
+    print(f"  Loading WOR weights : {weights_path.name}")
+
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+
+    model = CameraModel(config).to(device)
+    model.load_state_dict(torch.load(weights_path, map_location=device, weights_only=False))
+    model.eval()
+
+    lrp = LRPCameraModel(model_eval=model, device=device)
+    return lrp
 
 
 def build_tfv6_lrp(model_dir: Path, device: torch.device):
@@ -88,23 +111,27 @@ def main() -> None:
     args = parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[chunk] device={device}  run={args.run_file.name}")
+    print(f"[chunk] device={device}  agent={args.agent}  run={args.run_file.name}")
 
     # --- LRP model ---
     print("[chunk] Loading model...")
-    lrp = build_tfv6_lrp(args.model_dir, device)
+    if args.agent == "WOR":
+        lrp = build_wor_lrp(args.model_dir, device)
+    else:
+        lrp = build_tfv6_lrp(args.model_dir, device)
 
     # --- ATOMs ---
     from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
-    from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES
+    from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
 
+    class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
     atoms = ATOMsCarla(
         lrp_model     = lrp,
         p_relevance   = 0.25,   # FC_RELEVANCE_FILTER
         default_cmd   = 2,      # DEFAULT_CMD (FOLLOW_LANE)
         mode_analysis = 1,      # MODE_ANALYSIS (paper default)
         use_reduced   = False,
-        class_map     = TFV6_CLASSES,
+        class_map     = class_map,
     )
     print(f"[chunk] ATOMs tracking {atoms.num_classes} classes: "
           f"{', '.join(atoms.class_names[:4])}, ...")
@@ -118,14 +145,9 @@ def main() -> None:
     has_seg_narr = data["seg_red_narr"] is not None
 
     # --- Process frames ---
-    # NOTE: process_frame is called without the optional `data` dict argument,
-    # matching the current behaviour of BaselineComputer.compute_and_save.
-    # The per-frame `data` dict (needed to avoid zero command vector in TFV6 LRP)
-    # is an open improvement; updating both this script and BaselineComputer in
-    # tandem will make local and HPC results consistent.
     attention_series    = []
-    backbone_feat_list  = []   # [N, 512] — for MDX fitting
-    mdx_actions_list    = []   # [N, 3]   — speed-derived action proxy [steer, throt, brake]
+    backbone_feat_list  = []   # [N, D] — for MDX fitting (D=512 TFV6, D=576 WOR)
+    mdx_actions_list    = []   # [N, 3] — [steer, throt, brake] proxy
     t0 = time.time()
 
     for i in range(n_frames):
@@ -139,11 +161,30 @@ def main() -> None:
         frame_att = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
         attention_series.append(frame_att)
 
-        # Backbone features for MDX (cheap: no LRP backward, model already loaded)
-        backbone_feat_list.append(lrp.get_backbone_features(wide.float()))
-        brake_proxy    = 1.0 if spd < 0.5 else 0.0
-        throttle_proxy = min(spd / 25.0, 1.0)
-        mdx_actions_list.append([0.0, throttle_proxy, brake_proxy])
+        if args.agent == "WOR":
+            # WOR: 576-dim backbone (512 wide + 64 narr bottleneck)
+            with torch.no_grad():
+                feat = lrp._model_eval.get_features(wide.float().to(device),
+                                                    narr.float().to(device))
+                backbone_feat_list.append(feat.squeeze(0).cpu().numpy())
+            # MDX actions from 28-dim joint π(a|s): true steer/throt/brake distribution
+            joint_logits = lrp.get_action_logits(wide.float(), narr.float(), cmd, spd)
+            probs = np.exp(joint_logits - joint_logits.max())
+            probs /= probs.sum()
+            brake_prob   = float(probs[-1])
+            drive_probs  = probs[:27].reshape(3, 9)          # [throt=3, steer=9]
+            drive_total  = drive_probs.sum() + 1e-9
+            steer_marg   = drive_probs.sum(axis=0) / drive_total  # [9]
+            throt_marg   = drive_probs.sum(axis=1) / drive_total  # [3]
+            steer_val    = float(np.linspace(-1.0, 1.0, 9) @ steer_marg)
+            throt_val    = float(np.linspace(0.0,  1.0, 3) @ throt_marg)
+            mdx_actions_list.append([steer_val, throt_val, brake_prob])
+        else:
+            # TFV6: 512-dim globally-pooled backbone features
+            backbone_feat_list.append(lrp.get_backbone_features(wide.float()))
+            brake_proxy    = 1.0 if spd < 0.5 else 0.0
+            throttle_proxy = min(spd / 25.0, 1.0)
+            mdx_actions_list.append([0.0, throttle_proxy, brake_proxy])
 
         if (i + 1) % 10 == 0:
             elapsed = time.time() - t0

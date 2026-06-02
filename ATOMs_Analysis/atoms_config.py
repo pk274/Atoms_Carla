@@ -52,7 +52,7 @@ class ExperimentConfig:
     ADD_AUTOPILOT_VEHICLES = True
 
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
-    EPSILON = 12.0           # 5 -> No effect   # Wor: 8
+    EPSILON = 24.0           # 5 -> No effect   # Wor: 8    # TF: 12
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"

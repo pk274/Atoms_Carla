@@ -28,15 +28,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output",             required=True, type=Path,
                    help="Output path for test_profiles.npy.")
     p.add_argument("--speed-logits-output", default=None, type=Path,
-                   help="Output path for test_speed_logits.npy. "
-                        "Defaults to <output-dir>/test_speed_logits.npy.")
+                   help="Output path for test_speed_logits.npy (TFV6) or test_logits.npy (WOR). "
+                        "Default: auto-named next to --output.")
+    p.add_argument("--agent", default="TFV6", choices=["TFV6", "WOR"],
+                   help="Agent architecture — controls output filename and logit key.")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    speed_logits_out = args.speed_logits_output or (args.output.parent / "test_speed_logits.npy")
+    # WOR uses action_logits key → test_logits.npy (matches run_analysis.py loader)
+    # TFV6 uses speed_logits key → test_speed_logits.npy
+    logit_key   = "action_logits" if args.agent == "WOR" else "speed_logits"
+    default_out = "test_logits.npy" if args.agent == "WOR" else "test_speed_logits.npy"
+    speed_logits_out = args.speed_logits_output or (args.output.parent / default_out)
 
     partial_files = sorted(args.partials_dir.glob("partial_test_*.npz"))
     if not partial_files:
@@ -53,11 +59,11 @@ def main() -> None:
         p           = np.load(f, allow_pickle=True)
         chunk_start = int(p["chunk_start"][0])
         profiles    = p["profiles"]
-        logits      = p["speed_logits"] if "speed_logits" in p else None
+        logits      = p[logit_key] if logit_key in p else None
         if logits is None:
             has_logits = False
-            print(f"  WARNING: {f.name} missing speed_logits — "
-                  f"test_speed_logits.npy will not be written.")
+            print(f"  WARNING: {f.name} missing {logit_key} — "
+                  f"{default_out} will not be written.")
         parts.append((chunk_start, profiles, logits))
         print(f"  {f.name}: chunk_start={chunk_start}, shape={profiles.shape}")
 
@@ -83,17 +89,19 @@ def main() -> None:
         np.save(speed_logits_out, speed_logits)
         print(f"[gather_test] test_speed_logits.npy saved → {speed_logits_out}")
 
-    att_dir = "data/TFV6/test_data/attention"
+    agent   = args.agent
+    att_dir = f"data/{agent}/test_data/attention"
+    logits_fname = default_out
     print(f"\nNext step — copy into the repo and push (run on Viper):")
     print(f"  cp {args.output} /u/$USER/pcla/{att_dir}/test_profiles.npy")
     if has_logits:
-        print(f"  cp {speed_logits_out} /u/$USER/pcla/{att_dir}/test_speed_logits.npy")
+        print(f"  cp {speed_logits_out} /u/$USER/pcla/{att_dir}/{logits_fname}")
     print(f"  cd /u/$USER/pcla")
     print(f"  git add -f {att_dir}/test_profiles.npy")
     if has_logits:
-        print(f"  git add -f {att_dir}/test_speed_logits.npy")
-    print(f"  git commit -m 'add TFV6 test_profiles.npy"
-          + (" and test_speed_logits.npy" if has_logits else "")
+        print(f"  git add -f {att_dir}/{logits_fname}")
+    print(f"  git commit -m 'add {agent} test_profiles.npy"
+          + (f" and {logits_fname}" if has_logits else "")
           + " from HPC'")
     print(f"  git push")
     print(f"Then locally: git pull, set RECOMPUTE_TEST_ATOMS=False")

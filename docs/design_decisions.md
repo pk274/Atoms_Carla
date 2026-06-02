@@ -342,6 +342,28 @@ support both WoR and TFV6.  The adaptation strategy is:
 
 ---
 
+## WoR PEOC detector — corrected implementation (2026-06-02)
+
+**Bug (fixed):** The old implementation concatenated all 4 speed bins into a 52-element
+vector `[steer_flat(36), throt_flat(12), brake_flat(4)]` and computed entropy of
+`softmax([52])`.  This is not H(π(a|s)) because the 4 speed bins represent the same
+decision at different speeds — only the two bins bracketing the actual vehicle speed
+are relevant, and steer/throt/brake are not 52 mutually exclusive outcomes.
+
+**Correct implementation:** WoR's true action space is 28-dimensional:
+27 joint (steer × throt) actions + 1 brake, built by `action_logits()` in `main_model.py`
+as `steer_j + throt_i` (a factored joint distribution).  At the actual vehicle speed
+the model linearly interpolates between the two adjacent speed bins (x0, x1).
+
+**Fix:** `LRPCameraModel.get_action_logits(wide, narr, cmd, spd)` was added.  It calls
+`model.forward()` (which runs `action_logits()` internally), selects the active command,
+and lerp-interpolates to the actual speed — exactly mirroring `_build_drive_brake_selector`.
+The returned [28] numpy array is H(softmax([28])) under `ActionEntropyDetector`.
+
+Files changed: `lrp_analysis.py` (new method), `run_analysis.py`, `run_online_analysis.py`.
+
+---
+
 ## TFV6 PEOC detector (Sedlmeier et al., 2020)
 
 **PEOC = Policy Entropy Out-of-distribution Classifier.**  H(π) of the 8-bin
