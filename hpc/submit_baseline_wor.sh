@@ -68,7 +68,7 @@ GATHER_JOB_ID=$(sbatch --parsable \
     --dependency=afterok:${ARRAY_JOB_ID} \
     --chdir="$CODE_DIR" \
     --export=ALL,PARTIALS_DIR="$PARTIALS_DIR",CODE_DIR="$CODE_DIR" \
-    "$CODE_DIR/hpc/gather_task.sh")
+    "$CODE_DIR/hpc/gather_task_wor.sh")
 
 echo "Submitted gather job: $GATHER_JOB_ID  (runs after all array tasks succeed)"
 echo ""

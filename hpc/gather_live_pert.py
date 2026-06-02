@@ -84,18 +84,19 @@ def main() -> None:
         np.save(speed_logits_out, speed_logits)
         print(f"[gather_live_pert] live_pert_speed_logits.npy saved → {speed_logits_out}")
 
-    att_dir = "data/TFV6/test_data/attention/live_pert/<perturbation_name>"
+    agent = args.agent
+    att_base = f"data/{agent}/test_data/attention/live_pert"
     print(f"\nNext step — copy into the repo and push (run on Viper):")
     print(f"  PERT=<perturbation_name>")
-    print(f"  ATT=/u/$USER/pcla/data/TFV6/test_data/attention/live_pert/$PERT")
+    print(f"  ATT=/u/$USER/pcla/{att_base}/$PERT")
     print(f"  mkdir -p $ATT")
     print(f"  cp {args.output} $ATT/live_pert_profiles.npy")
     if has_logits:
-        print(f"  cp {speed_logits_out} $ATT/live_pert_speed_logits.npy")
+        print(f"  cp {speed_logits_out} $ATT/{default_out}")
     print(f"  cd /u/$USER/pcla")
-    print(f"  git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_profiles.npy")
+    print(f"  git add -f {att_base}/$PERT/live_pert_profiles.npy")
     if has_logits:
-        print(f"  git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_speed_logits.npy")
+        print(f"  git add -f {att_base}/$PERT/{default_out}")
     print(f"  git commit -m 'add live_pert_profiles for $PERT from HPC'")
     print(f"  git push")
     print(f"Then locally: git pull, set RECOMPUTE_TEST_ATOMS=False in atoms_config.py")

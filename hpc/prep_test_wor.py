@@ -123,11 +123,10 @@ def main() -> None:
                 out_wide[fi] = raw["wide_rgb"][fi]
                 out_narr[fi] = raw["narr_rgb"][fi]
             else:
-                out_wide[fi] = to_chw_uint8(pm.perturb_wide_image(
-                    raw["wide_rgb"][fi],
-                    perturbation = pert_name,
-                    intensity    = intensity,
-                ))
+                # perturb_wide_image expects List[HWC ndarray]; frames are CHW → transpose
+                wide_hwc  = [raw["wide_rgb"][fi].transpose(1, 2, 0)]
+                pert_wide = pm.perturb_wide_image(wide_hwc, perturbation=pert_name, intensity=intensity)
+                out_wide[fi] = to_chw_uint8(pert_wide[0].transpose(2, 0, 1))
                 out_narr[fi] = to_chw_uint8(pm.perturb_narrow_image(
                     raw["narr_rgb"][fi],
                     perturbation = pert_name,

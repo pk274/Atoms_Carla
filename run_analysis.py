@@ -421,7 +421,7 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
-N_COMPONENTS = 15
+#N_COMPONENTS = 15
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 

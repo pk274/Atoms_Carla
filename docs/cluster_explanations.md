@@ -242,7 +242,8 @@ the narrow camera (`narr_rgb`) and the 28-dim joint action logits for PEOC.
 | PEOC logits saved | `speed_logits` [N,8] → `test_speed_logits.npy` | `action_logits` [N,28] → `test_logits.npy` |
 | Segmentation classes | TFV6_CLASSES (10) | CARLA_CLASSES (29) |
 | Prep script | `prep_test.py` (wide only) | `prep_test_wor.py` (wide + narr) |
-| Submit scripts | `submit_baseline.sh`, `submit_test.sh` | `submit_baseline_wor.sh`, `submit_test_wor.sh` |
+| Live-pert prep | `prep_live_pert.py` (wide only) | `prep_live_pert_wor.py` (wide + narr) |
+| Submit scripts | `submit_baseline.sh`, `submit_test.sh`, `submit_live_pert.sh` | `submit_baseline_wor.sh`, `submit_test_wor.sh`, `submit_live_pert_wor.sh` |
 
 ### One-time setup on Viper
 
@@ -348,3 +349,58 @@ git push
 ```
 
 Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
+
+---
+
+### WoR live-perturbation pipeline
+
+Live-perturbation data is recorded in CARLA with `LIVE_PERTURBATION_RECORDING_MODE = True`.
+The frames are already perturbed at collection time. WoR-specific: `prep_live_pert_wor.py`
+preserves both cameras (unlike the TFV6 version which drops `narr_rgb`).
+
+#### 1. Upload live-pert frames
+
+Source: `data/WOR/test_data/live_pert_frames/`  
+Destination on Viper: `/ptmp/paulkull/atoms_wor_live_pert/frames/`
+
+Use the same HTTP tunnel method, pointing Terminal 1 at `data\WOR\test_data\live_pert_frames`.
+
+#### 2. Submit (on Viper)
+
+Replace `pgd` with whichever perturbation name was used during recording.
+
+```bash
+cd /u/paulkull/pcla
+git pull
+bash hpc/submit_live_pert_wor.sh \
+    /ptmp/paulkull/atoms_wor_live_pert/frames \
+    /ptmp/paulkull/atoms_wor_live_pert \
+    /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
+    pgd
+```
+
+Chains three SLURM jobs automatically:
+1. **prep** — concatenates `run_pgd_live_pert_*.npz` files, preserving both cameras → `live_pert_concat.npz`
+2. **array** — 10 parallel ATOMs tasks (20 frames each), also computing 28-dim PEOC action logits
+3. **gather** — concatenates results → `live_pert_profiles.npy` + `live_pert_action_logits.npy`
+
+Monitor: `squeue -u paulkull`
+
+#### 3. Download results
+
+```bash
+PERT=pgd
+ATT=/u/paulkull/pcla/data/WOR/test_data/attention/live_pert/$PERT
+mkdir -p $ATT
+
+cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_profiles.npy       $ATT/live_pert_profiles.npy
+cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_action_logits.npy  $ATT/live_pert_action_logits.npy
+
+cd /u/paulkull/pcla
+git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_profiles.npy
+git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_action_logits.npy
+git commit -m "add WOR live_pert_profiles for $PERT from HPC"
+git push
+```
+
+Then locally: `git pull`, and set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
