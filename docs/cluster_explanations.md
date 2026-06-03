@@ -60,19 +60,19 @@ Ports 8888 / 9999 can be reused each time.
 
 ## Transferring small results files back (git)
 
-For small computed outputs (`baseline.npz`, `test_profiles.npy`, etc.) the easiest
+For small computed outputs (`baseline_1.npz`, `test_profiles_1.npy`, etc.) the easiest
 method is git force-add, since these files are gitignored by default.
 
 **On Viper:**
 
 ```bash
-# Copy result from ptmp to the git repo
-cp /ptmp/paulkull/atoms_baseline/partials/baseline.npz \
-   /u/paulkull/pcla/data/TFV6/baseline_data/baseline.npz
+# Copy result from ptmp to the git repo (example for mode 1)
+cp /ptmp/paulkull/atoms_baseline/partials/baseline_1.npz \
+   /u/paulkull/pcla/data/TFV6/baseline_data/baseline_1.npz
 
 cd /u/paulkull/pcla
-git add -f data/TFV6/baseline_data/baseline.npz
-git commit -m "add TFV6 baseline.npz from HPC"
+git add -f data/TFV6/baseline_data/baseline_1.npz
+git commit -m "add TFV6 baseline_1.npz from HPC"
 git push
 ```
 
@@ -96,40 +96,45 @@ Destination on Viper: `/ptmp/paulkull/atoms_test/frames/`
 
 ### 2. Submit all jobs in one command (on Viper)
 
+Pass the desired `MODE_ANALYSIS` (1 or 2) as the last argument. Run once per mode to produce both:
+
 ```bash
 cd /u/paulkull/pcla
 git pull
 bash hpc/submit_test.sh \
     /ptmp/paulkull/atoms_test/frames \
     /ptmp/paulkull/atoms_test \
-    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34
+    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
+    "" "" 1   # MODE_ANALYSIS=1  (args 4=CODE_DIR, 5=CHUNK_SIZE left as defaults)
+bash hpc/submit_test.sh ... 2   # MODE_ANALYSIS=2
 ```
 
 This chains three SLURM jobs automatically:
 1. **prep** — applies perturbations → `test_labeled.npz`
-2. **array** — 10 parallel ATOMs tasks (20 frames each), each also computing 8-bin speed logits for PEOC
-3. **gather** — concatenates results → `test_profiles.npy` + `test_speed_logits.npy`
+2. **array** — parallel ATOMs tasks (20 frames each), each also computing 8-bin speed logits for PEOC
+3. **gather** — concatenates results → `test_profiles_{MODE}.npy` + `test_speed_logits_{MODE}.npy`
 
 Monitor: `squeue -u paulkull`
 
 ### 3. Download results (on Viper, then git pull locally)
 
 ```bash
-cp /ptmp/paulkull/atoms_test/test_profiles.npy \
-   /u/paulkull/pcla/data/TFV6/test_data/attention/test_profiles.npy
-cp /ptmp/paulkull/atoms_test/test_speed_logits.npy \
-   /u/paulkull/pcla/data/TFV6/test_data/attention/test_speed_logits.npy
+ATT=/u/paulkull/pcla/data/TFV6/test_data/attention
+cp /ptmp/paulkull/atoms_test/test_profiles_1.npy      $ATT/test_profiles_1.npy
+cp /ptmp/paulkull/atoms_test/test_speed_logits_1.npy  $ATT/test_speed_logits_1.npy
 
 cd /u/paulkull/pcla
-git add -f data/TFV6/test_data/attention/test_profiles.npy
-git add -f data/TFV6/test_data/attention/test_speed_logits.npy
-git commit -m "add TFV6 test_profiles.npy and test_speed_logits.npy from HPC"
+git add -f data/TFV6/test_data/attention/test_profiles_1.npy
+git add -f data/TFV6/test_data/attention/test_speed_logits_1.npy
+git commit -m "add TFV6 test_profiles_1.npy and test_speed_logits_1.npy from HPC"
 git push
 ```
 
-Then locally: `git pull`, and set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
+Repeat for `_2` if both modes were computed.
 
-`test_speed_logits.npy` is automatically used by `run_analysis.py` for PEOC scoring — no config flag needed.
+Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`, and set `MODE_ANALYSIS` to whichever mode you want to analyse.
+
+`test_speed_logits_{MODE}.npy` is automatically used by `run_analysis.py` for PEOC scoring — no config flag needed.
 
 ---
 
@@ -144,28 +149,32 @@ Use the same HTTP tunnel method, pointing Terminal 1 at `data\TFV6\baseline_data
 
 ### 2. Submit (on Viper)
 
+Pass `MODE_ANALYSIS` (1 or 2) as the 5th argument. Run once per mode:
+
 ```bash
 bash hpc/submit_baseline.sh \
     /ptmp/paulkull/atoms_baseline/frames \
     /ptmp/paulkull/atoms_baseline/partials \
-    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34
+    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
+    "" 1   # 4th arg=CODE_DIR (default), 5th=MODE_ANALYSIS
+bash hpc/submit_baseline.sh ... "" 2   # mode 2
 ```
 
-Each array task now also extracts 512-dim backbone features alongside ATOMs profiles.  
-The gather step writes both `baseline.npz` and `mdx_features.npz`.
+Each array task extracts ATOMs profiles + 512-dim backbone features.  
+The gather step writes `baseline_{MODE}.npz` (in `partials/`) and `mdx_features.npz`.
 
 ### 3. Download results
 
 ```bash
-cp /ptmp/paulkull/atoms_baseline/partials/baseline.npz \
-   /u/paulkull/pcla/data/TFV6/baseline_data/baseline.npz
-cp /ptmp/paulkull/atoms_baseline/partials/mdx_features.npz \
-   /u/paulkull/pcla/data/TFV6/baseline_data/mdx_features.npz
-
 cd /u/paulkull/pcla
-git add -f data/TFV6/baseline_data/baseline.npz
+cp /ptmp/paulkull/atoms_baseline/partials/baseline_1.npz  data/TFV6/baseline_data/baseline_1.npz
+cp /ptmp/paulkull/atoms_baseline/partials/baseline_2.npz  data/TFV6/baseline_data/baseline_2.npz
+cp /ptmp/paulkull/atoms_baseline/partials/mdx_features.npz data/TFV6/baseline_data/mdx_features.npz
+
+git add -f data/TFV6/baseline_data/baseline_1.npz
+git add -f data/TFV6/baseline_data/baseline_2.npz
 git add -f data/TFV6/baseline_data/mdx_features.npz
-git commit -m "add TFV6 baseline.npz and mdx_features.npz from HPC"
+git commit -m "add TFV6 baseline_1/2.npz and mdx_features.npz from HPC"
 git push
 ```
 
@@ -197,13 +206,14 @@ bash hpc/submit_live_pert.sh \
     /ptmp/paulkull/atoms_live_pert/frames \
     /ptmp/paulkull/atoms_live_pert \
     /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
-    pgd
+    pgd "" "" 1   # args 5=CODE_DIR, 6=CHUNK_SIZE (defaults), 7=MODE_ANALYSIS
+bash hpc/submit_live_pert.sh ... pgd "" "" 2   # mode 2
 ```
 
 This chains three SLURM jobs automatically:
 1. **prep** — concatenates `run_pgd_live_pert_*.npz` files → `live_pert_concat.npz`
-2. **array** — 10 parallel ATOMs tasks (20 frames each), also computing speed logits
-3. **gather** — concatenates results → `live_pert_profiles.npy` + `live_pert_speed_logits.npy`
+2. **array** — parallel ATOMs tasks (20 frames each), also computing speed logits
+3. **gather** — concatenates results → `live_pert_profiles_{MODE}.npy` + `live_pert_speed_logits_{MODE}.npy`
 
 Monitor: `squeue -u paulkull`
 
@@ -214,17 +224,17 @@ PERT=pgd
 ATT=/u/paulkull/pcla/data/TFV6/test_data/attention/live_pert/$PERT
 mkdir -p $ATT
 
-cp /ptmp/paulkull/atoms_live_pert/live_pert_profiles.npy      $ATT/live_pert_profiles.npy
-cp /ptmp/paulkull/atoms_live_pert/live_pert_speed_logits.npy  $ATT/live_pert_speed_logits.npy
+cp /ptmp/paulkull/atoms_live_pert/live_pert_profiles_1.npy      $ATT/live_pert_profiles_1.npy
+cp /ptmp/paulkull/atoms_live_pert/live_pert_speed_logits_1.npy  $ATT/live_pert_speed_logits_1.npy
 
 cd /u/paulkull/pcla
-git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_profiles.npy
-git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_speed_logits.npy
-git commit -m "add live_pert_profiles for $PERT from HPC"
+git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_profiles_1.npy
+git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_speed_logits_1.npy
+git commit -m "add live_pert_profiles_1 for $PERT from HPC"
 git push
 ```
 
-Then locally: `git pull`, and set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
+Repeat with `_2` for mode 2. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` to the desired mode in `atoms_config.py`.
 
 ---
 
@@ -239,7 +249,7 @@ the narrow camera (`narr_rgb`) and the 28-dim joint action logits for PEOC.
 |--------|-------|-----|
 | Model dir | `pcla_agents/transfuserv6_pretrained/visiononly_resnet34` | `pcla_agents/wor_pretrained/leaderboard_weights` |
 | Backbone features | 512-dim (ResNet34 GAP) | 576-dim (512 wide + 64 narr bottleneck) |
-| PEOC logits saved | `speed_logits` [N,8] → `test_speed_logits.npy` | `action_logits` [N,28] → `test_logits.npy` |
+| PEOC logits saved | `speed_logits` [N,8] → `test_speed_logits_{MODE}.npy` | `action_logits` [N,28] → `test_logits_{MODE}.npy` |
 | Segmentation classes | TFV6_CLASSES (10) | CARLA_CLASSES (29) |
 | Prep script | `prep_test.py` (wide only) | `prep_test_wor.py` (wide + narr) |
 | Live-pert prep | `prep_live_pert.py` (wide only) | `prep_live_pert_wor.py` (wide + narr) |
@@ -275,31 +285,35 @@ Use the same HTTP tunnel method, pointing Terminal 1 at `data\WOR\baseline_data\
 
 #### 2. Submit (on Viper)
 
+Pass `MODE_ANALYSIS` (1 or 2) as the 5th argument. Run once per mode:
+
 ```bash
 cd /u/paulkull/pcla
 git pull
 bash hpc/submit_baseline_wor.sh \
     /ptmp/paulkull/atoms_wor_baseline/frames \
     /ptmp/paulkull/atoms_wor_baseline/partials \
-    /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights
+    /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
+    "" 1   # 4th=CODE_DIR (default), 5th=MODE_ANALYSIS
+bash hpc/submit_baseline_wor.sh ... "" 2   # mode 2
 ```
 
 Chains two SLURM jobs automatically:
 1. **array** — one task per run file; computes ATOMs profiles + backbone features + MDX actions
-2. **gather** — concatenates results → `baseline.npz` + `mdx_features.npz`
+2. **gather** — concatenates results → `baseline_{MODE}.npz` (in `partials/`) + `mdx_features.npz`
 
 #### 3. Download results
 
 ```bash
-cp /ptmp/paulkull/atoms_wor_baseline/partials/baseline.npz \
-   /u/paulkull/pcla/data/WOR/baseline_data/baseline.npz
-cp /ptmp/paulkull/atoms_wor_baseline/partials/mdx_features.npz \
-   /u/paulkull/pcla/data/WOR/baseline_data/mdx_features.npz
-
 cd /u/paulkull/pcla
-git add -f data/WOR/baseline_data/baseline.npz
+cp /ptmp/paulkull/atoms_wor_baseline/partials/baseline_1.npz  data/WOR/baseline_data/baseline_1.npz
+cp /ptmp/paulkull/atoms_wor_baseline/partials/baseline_2.npz  data/WOR/baseline_data/baseline_2.npz
+cp /ptmp/paulkull/atoms_wor_baseline/partials/mdx_features.npz data/WOR/baseline_data/mdx_features.npz
+
+git add -f data/WOR/baseline_data/baseline_1.npz
+git add -f data/WOR/baseline_data/baseline_2.npz
 git add -f data/WOR/baseline_data/mdx_features.npz
-git commit -m "add WOR baseline.npz and mdx_features.npz from HPC"
+git commit -m "add WOR baseline_1/2.npz and mdx_features.npz from HPC"
 git push
 ```
 
@@ -323,32 +337,33 @@ git pull
 bash hpc/submit_test_wor.sh \
     /ptmp/paulkull/atoms_wor_test/frames \
     /ptmp/paulkull/atoms_wor_test \
-    /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights
+    /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
+    "" "" 1   # 4th=CODE_DIR, 5th=CHUNK_SIZE (defaults), 6th=MODE_ANALYSIS
+bash hpc/submit_test_wor.sh ... "" "" 2   # mode 2
 ```
 
 Chains three SLURM jobs automatically:
 1. **prep** — applies perturbations to both cameras → `test_labeled.npz`
 2. **array** — 20-frame chunks; computes ATOMs profiles + 28-dim PEOC action logits
-3. **gather** — concatenates → `test_profiles.npy` + `test_logits.npy`
+3. **gather** — concatenates → `test_profiles_{MODE}.npy` + `test_logits_{MODE}.npy`
 
 Monitor: `squeue -u paulkull`
 
 #### 3. Download results
 
 ```bash
-cp /ptmp/paulkull/atoms_wor_test/test_profiles.npy \
-   /u/paulkull/pcla/data/WOR/test_data/attention/test_profiles.npy
-cp /ptmp/paulkull/atoms_wor_test/test_logits.npy \
-   /u/paulkull/pcla/data/WOR/test_data/attention/test_logits.npy
+ATT=/u/paulkull/pcla/data/WOR/test_data/attention
+cp /ptmp/paulkull/atoms_wor_test/test_profiles_1.npy  $ATT/test_profiles_1.npy
+cp /ptmp/paulkull/atoms_wor_test/test_logits_1.npy    $ATT/test_logits_1.npy
 
 cd /u/paulkull/pcla
-git add -f data/WOR/test_data/attention/test_profiles.npy
-git add -f data/WOR/test_data/attention/test_logits.npy
-git commit -m "add WOR test_profiles.npy and test_logits.npy from HPC"
+git add -f data/WOR/test_data/attention/test_profiles_1.npy
+git add -f data/WOR/test_data/attention/test_logits_1.npy
+git commit -m "add WOR test_profiles_1.npy and test_logits_1.npy from HPC"
 git push
 ```
 
-Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
+Repeat for `_2`. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.
 
 ---
 
@@ -376,13 +391,14 @@ bash hpc/submit_live_pert_wor.sh \
     /ptmp/paulkull/atoms_wor_live_pert/frames \
     /ptmp/paulkull/atoms_wor_live_pert \
     /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
-    pgd
+    pgd "" "" 1   # 5th=CODE_DIR, 6th=CHUNK_SIZE (defaults), 7th=MODE_ANALYSIS
+bash hpc/submit_live_pert_wor.sh ... pgd "" "" 2   # mode 2
 ```
 
 Chains three SLURM jobs automatically:
 1. **prep** — concatenates `run_pgd_live_pert_*.npz` files, preserving both cameras → `live_pert_concat.npz`
-2. **array** — 10 parallel ATOMs tasks (20 frames each), also computing 28-dim PEOC action logits
-3. **gather** — concatenates results → `live_pert_profiles.npy` + `live_pert_action_logits.npy`
+2. **array** — parallel ATOMs tasks (20 frames each), also computing 28-dim PEOC action logits
+3. **gather** — concatenates results → `live_pert_profiles_{MODE}.npy` + `live_pert_action_logits_{MODE}.npy`
 
 Monitor: `squeue -u paulkull`
 
@@ -393,14 +409,14 @@ PERT=pgd
 ATT=/u/paulkull/pcla/data/WOR/test_data/attention/live_pert/$PERT
 mkdir -p $ATT
 
-cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_profiles.npy       $ATT/live_pert_profiles.npy
-cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_action_logits.npy  $ATT/live_pert_action_logits.npy
+cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_profiles_1.npy       $ATT/live_pert_profiles_1.npy
+cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_action_logits_1.npy  $ATT/live_pert_action_logits_1.npy
 
 cd /u/paulkull/pcla
-git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_profiles.npy
-git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_action_logits.npy
-git commit -m "add WOR live_pert_profiles for $PERT from HPC"
+git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_profiles_1.npy
+git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_action_logits_1.npy
+git commit -m "add WOR live_pert_profiles_1 for $PERT from HPC"
 git push
 ```
 
-Then locally: `git pull`, and set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`.
+Repeat with `_2` for mode 2. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.

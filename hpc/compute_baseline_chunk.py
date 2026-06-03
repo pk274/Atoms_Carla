@@ -32,8 +32,10 @@ def parse_args() -> argparse.Namespace:
                    help="Output path for the partial .npz (series + class metadata).")
     p.add_argument("--model-dir", required=True, type=Path,
                    help="Directory containing config.json and model*.pth for TFV6.")
-    p.add_argument("--agent",     default="TFV6", choices=["TFV6", "WOR"],
+    p.add_argument("--agent",        default="TFV6", choices=["TFV6", "WOR"],
                    help="Agent architecture: TFV6 or WOR.")
+    p.add_argument("--mode-analysis", default=1, type=int, choices=[1, 2],
+                   help="ATOMs analysis mode (1=paper default, 2=alternative).")
     return p.parse_args()
 
 
@@ -129,7 +131,7 @@ def main() -> None:
         lrp_model     = lrp,
         p_relevance   = 0.25,   # FC_RELEVANCE_FILTER
         default_cmd   = 2,      # DEFAULT_CMD (FOLLOW_LANE)
-        mode_analysis = 1,      # MODE_ANALYSIS (paper default)
+        mode_analysis = args.mode_analysis,
         use_reduced   = False,
         class_map     = class_map,
     )

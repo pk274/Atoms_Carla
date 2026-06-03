@@ -41,11 +41,12 @@ echo "CPUs     : $SLURM_CPUS_PER_TASK"
 date
 
 srun python3 "$CODE_DIR/hpc/compute_live_pert_chunk.py" \
-    --concat-file  "$CONCAT_FILE"  \
-    --chunk-start  "$CHUNK_START"  \
-    --chunk-end    "$CHUNK_END"    \
-    --output       "$OUTPUT"       \
-    --model-dir    "$MODEL_DIR"
+    --concat-file   "$CONCAT_FILE"         \
+    --chunk-start   "$CHUNK_START"         \
+    --chunk-end     "$CHUNK_END"           \
+    --output        "$OUTPUT"              \
+    --model-dir     "$MODEL_DIR"           \
+    --mode-analysis "${MODE_ANALYSIS:-1}"
 
 echo "Task $SLURM_ARRAY_TASK_ID finished with exit code $?"
 date

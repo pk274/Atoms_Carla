@@ -437,7 +437,7 @@ class BaselineComputer:
         self.atoms     = atoms
 
         self._frames_dir  = self.data_dir / "frames"
-        self._output_path = self.data_dir / "baseline.npz"
+        self._output_path = self.data_dir / f"baseline_{conf.MODE_ANALYSIS}.npz"
         self.narr_tester = None
 
     def compute_and_save(

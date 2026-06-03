@@ -127,19 +127,27 @@ ATOMs_Analysis/
 ```
 data/
   baseline_data/
-    frames/run_*.npz       # Raw baseline driving frames
-    baseline.npz           # Computed profiles (mean, cov, series)
-    mdx_parameters/        # Saved MDXDetector parameters
+    frames/run_*.npz         # Raw baseline driving frames
+    baseline_1.npz           # Computed profiles for MODE_ANALYSIS=1
+    baseline_2.npz           # Computed profiles for MODE_ANALYSIS=2
+    mdx_parameters/          # Saved MDXDetector parameters
   test_data/
-    frames/run_*.npz       # Raw clean test frames
-    test_labeled.npz       # Perturbed+labeled test set
+    frames/run_*.npz         # Raw clean test frames
+    test_labeled.npz         # Perturbed+labeled test set
     attention/
-      test_profiles.npy    # Per-frame ATOMs profiles (test set)
-      test_logits.npy      # Per-frame action logits (for entropy detector)
+      test_profiles_1.npy    # Per-frame ATOMs profiles, MODE_ANALYSIS=1
+      test_profiles_2.npy    # Per-frame ATOMs profiles, MODE_ANALYSIS=2
+      test_logits_1.npy      # Per-frame action logits (WOR, mode 1)
+      test_logits_2.npy      # Per-frame action logits (WOR, mode 2)
+      live_pert/<pert>/
+        live_pert_profiles_1.npy
+        live_pert_profiles_2.npy
   results/
-    atoms_analysis/        # All output figures and JSON results
-      trajectory_analysis/ # Displacement/trajectory figures
+    atoms_analysis/          # All output figures and JSON results
+      trajectory_analysis/   # Displacement/trajectory figures
 ```
+
+Profile filenames are always suffixed with the `MODE_ANALYSIS` value (`_1` or `_2`). `run_analysis.py` and `run_online_analysis.py` load the file matching `conf.MODE_ANALYSIS`; `BaselineComputer` saves to the same mode-specific path. To compare modes, set `MODE_ANALYSIS = 1` or `2` in `atoms_config.py` and re-run the analysis without recomputing.
 
 Frame `.npz` files contain: `wide_rgb`, `narr_rgb`, `seg_red_wide`, `seg_red_narr`, `cmd`, `speed`, `run_id`, `frame_idx`. Labeled test `.npz` also contains `label` (0=clean, 1=perturbed) and `perturbation` (string name).
 

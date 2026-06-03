@@ -30,7 +30,8 @@ echo "Output       : $PROFILES_OUT"
 echo "Node         : $(hostname)"
 date
 
-SPEED_LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_speed_logits.npy"
+_mode="${MODE_ANALYSIS:-1}"
+SPEED_LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_speed_logits_${_mode}.npy"
 
 srun python3 "$CODE_DIR/hpc/gather_test.py" \
     --partials-dir        "$PARTIALS_DIR" \
@@ -38,5 +39,5 @@ srun python3 "$CODE_DIR/hpc/gather_test.py" \
     --speed-logits-output "$SPEED_LOGITS_OUT"
 
 echo "Gather finished with exit code $?"
-echo "test_speed_logits.npy is at: $SPEED_LOGITS_OUT"
+echo "test_speed_logits_${_mode}.npy is at: $SPEED_LOGITS_OUT"
 date

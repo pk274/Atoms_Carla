@@ -30,7 +30,8 @@ echo "Output       : $PROFILES_OUT"
 echo "Node         : $(hostname)"
 date
 
-LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_logits.npy"
+_mode="${MODE_ANALYSIS:-1}"
+LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_logits_${_mode}.npy"
 
 srun python3 "$CODE_DIR/hpc/gather_test.py" \
     --partials-dir        "$PARTIALS_DIR" \
@@ -39,5 +40,5 @@ srun python3 "$CODE_DIR/hpc/gather_test.py" \
     --agent               WOR
 
 echo "Gather finished with exit code $?"
-echo "test_logits.npy is at: $LOGITS_OUT"
+echo "test_logits_${_mode}.npy is at: $LOGITS_OUT"
 date

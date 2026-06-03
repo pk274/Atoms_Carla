@@ -25,16 +25,20 @@
 
 set -euo pipefail
 
-FRAMES_DIR="${1:?Error: FRAMES_DIR not set. Usage: $0 <FRAMES_DIR> <PARTIALS_DIR> <MODEL_DIR> [CODE_DIR]}"
-PARTIALS_DIR="${2:?Error: PARTIALS_DIR not set.}"
+FRAMES_DIR="${1:?Error: FRAMES_DIR not set. Usage: $0 <FRAMES_DIR> <PARTIALS_DIR> <MODEL_DIR> [CODE_DIR] [MODE_ANALYSIS]}"
+BASE_PARTIALS_DIR="${2:?Error: PARTIALS_DIR not set.}"
 MODEL_DIR="${3:?Error: MODEL_DIR not set.}"
 CODE_DIR="${4:-$(cd "$(dirname "$0")/.." && pwd)}"
+MODE_ANALYSIS="${5:-1}"
+
+PARTIALS_DIR="$BASE_PARTIALS_DIR/mode_${MODE_ANALYSIS}"
 
 echo "=== ATOMs Baseline SLURM Submission ==="
-echo "FRAMES_DIR   : $FRAMES_DIR"
-echo "PARTIALS_DIR : $PARTIALS_DIR"
-echo "MODEL_DIR    : $MODEL_DIR"
-echo "CODE_DIR     : $CODE_DIR"
+echo "FRAMES_DIR    : $FRAMES_DIR"
+echo "PARTIALS_DIR  : $PARTIALS_DIR"
+echo "MODEL_DIR     : $MODEL_DIR"
+echo "CODE_DIR      : $CODE_DIR"
+echo "MODE_ANALYSIS : $MODE_ANALYSIS"
 echo ""
 
 # Collect all run files
@@ -60,7 +64,7 @@ echo ""
 ARRAY_JOB_ID=$(sbatch --parsable \
     --array=0-${N_LAST} \
     --chdir="$CODE_DIR" \
-    --export=ALL,LIST_FILE="$LIST_FILE",PARTIALS_DIR="$PARTIALS_DIR",MODEL_DIR="$MODEL_DIR",CODE_DIR="$CODE_DIR" \
+    --export=ALL,LIST_FILE="$LIST_FILE",PARTIALS_DIR="$PARTIALS_DIR",MODEL_DIR="$MODEL_DIR",CODE_DIR="$CODE_DIR",MODE_ANALYSIS="$MODE_ANALYSIS" \
     "$CODE_DIR/hpc/array_task.sh")
 
 echo "Submitted array job: $ARRAY_JOB_ID  (${N_FILES} tasks, indices 0–${N_LAST})"
@@ -69,7 +73,7 @@ echo "Submitted array job: $ARRAY_JOB_ID  (${N_FILES} tasks, indices 0–${N_LAS
 GATHER_JOB_ID=$(sbatch --parsable \
     --dependency=afterok:${ARRAY_JOB_ID} \
     --chdir="$CODE_DIR" \
-    --export=ALL,PARTIALS_DIR="$PARTIALS_DIR",CODE_DIR="$CODE_DIR" \
+    --export=ALL,PARTIALS_DIR="$PARTIALS_DIR",CODE_DIR="$CODE_DIR",MODE_ANALYSIS="$MODE_ANALYSIS" \
     "$CODE_DIR/hpc/gather_task.sh")
 
 echo "Submitted gather job: $GATHER_JOB_ID  (runs after all array tasks succeed)"
@@ -79,11 +83,11 @@ echo "  squeue -u \$USER"
 echo "  tail -f /ptmp/\$USER/atoms_baseline/logs/chunk_${ARRAY_JOB_ID}_0.out"
 echo ""
 echo "After gather completes, on Viper:"
-echo "  cp $PARTIALS_DIR/baseline.npz     /u/\$USER/pcla/data/TFV6/baseline_data/baseline.npz"
-echo "  cp $PARTIALS_DIR/mdx_features.npz /u/\$USER/pcla/data/TFV6/baseline_data/mdx_features.npz"
+echo "  cp $BASE_PARTIALS_DIR/baseline_${MODE_ANALYSIS}.npz /u/\$USER/pcla/data/TFV6/baseline_data/baseline_${MODE_ANALYSIS}.npz"
+echo "  cp $BASE_PARTIALS_DIR/mdx_features.npz              /u/\$USER/pcla/data/TFV6/baseline_data/mdx_features.npz"
 echo "  cd /u/\$USER/pcla"
-echo "  git add -f data/TFV6/baseline_data/baseline.npz"
+echo "  git add -f data/TFV6/baseline_data/baseline_${MODE_ANALYSIS}.npz"
 echo "  git add -f data/TFV6/baseline_data/mdx_features.npz"
-echo "  git commit -m 'add TFV6 baseline.npz and mdx_features.npz from HPC'"
+echo "  git commit -m 'add TFV6 baseline_${MODE_ANALYSIS}.npz and mdx_features.npz from HPC'"
 echo "  git push"
 echo "Then locally: git pull, set RECOMPUTE_BASELINE=False and RECOMPUTE_MDX_BASELINE=False"

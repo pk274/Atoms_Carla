@@ -107,6 +107,7 @@ dirs = make_output_dirs(OUT_DIR)
 
 ATT_DIR = Path(conf.TEST_DATA_DIR) / "attention"
 ATT_DIR.mkdir(parents=True, exist_ok=True)
+_mode = conf.MODE_ANALYSIS
 
 print(f"\n{'='*60}")
 print(f"ATOMs Analysis Pipeline")
@@ -215,7 +216,7 @@ print("[Step 2] Computing ATOMs on baseline dataset...")
 
 RECOMPUTE_BASELINE = conf.RECOMPUTE_BASELINE  # <<< set False to load cached baseline.npz
 
-baseline_npz = Path(conf.BASELINE_DATA_DIR) / "baseline.npz"
+baseline_npz = Path(conf.BASELINE_DATA_DIR) / f"baseline_{_mode}.npz"
 
 
 if RECOMPUTE_BASELINE or not baseline_npz.exists():
@@ -721,30 +722,30 @@ if conf.RECOMPUTE_TEST_ATOMS:
     test_labels = test_data["label"].astype(np.int32)
     print(f"  Done. {n_test} frames processed.\n")
 
-    np.save(ATT_DIR / "test_profiles.npy", test_profiles)
+    np.save(ATT_DIR / f"test_profiles_{_mode}.npy", test_profiles)
     if action_logits_available:
-        np.save(ATT_DIR / "test_logits.npy", test_logits_all)
+        np.save(ATT_DIR / f"test_logits_{_mode}.npy", test_logits_all)
     if speed_logits_available:
-        np.save(ATT_DIR / "test_speed_logits.npy", test_speed_logits)
+        np.save(ATT_DIR / f"test_speed_logits_{_mode}.npy", test_speed_logits)
     print("  Test profiles saved.\n")
 
 else:
     # Reload test data and pre-computed profiles
     test_data         = LabeledTestLoader.load()
-    test_profiles     = np.load(ATT_DIR / "test_profiles.npy")
+    test_profiles     = np.load(ATT_DIR / f"test_profiles_{_mode}.npy")
     test_logits_all   = (
-        np.load(ATT_DIR / "test_logits.npy") if action_logits_available else None
+        np.load(ATT_DIR / f"test_logits_{_mode}.npy") if action_logits_available else None
     )
     test_speed_logits = (
-        np.load(ATT_DIR / "test_speed_logits.npy") if speed_logits_available else None
+        np.load(ATT_DIR / f"test_speed_logits_{_mode}.npy") if speed_logits_available else None
     )
     test_labels       = test_data["label"].astype(np.int32)
 
     if len(test_profiles) != len(test_labels):
         raise RuntimeError(
-            f"test_profiles.npy has {len(test_profiles)} frames but "
+            f"test_profiles_{_mode}.npy has {len(test_profiles)} frames but "
             f"test_labeled.npz has {len(test_labels)} frames — they are out of sync. "
-            "Set RECOMPUTE_TEST_ATOMS=True to regenerate test_profiles.npy."
+            f"Set RECOMPUTE_TEST_ATOMS=True to regenerate test_profiles_{_mode}.npy."
         )
 
     print(f"  Loaded {len(test_profiles)} test profiles, "

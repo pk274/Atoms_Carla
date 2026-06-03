@@ -94,6 +94,7 @@ LIVE_PERT_NAME = conf.PERTURBATION   # e.g. "phantom_obstacle"
 
 ATT_DIR = Path(conf.TEST_DATA_DIR) / "attention" / "live_pert" / LIVE_PERT_NAME
 ATT_DIR.mkdir(parents=True, exist_ok=True)
+_mode = conf.MODE_ANALYSIS
 
 print(f"\n{'='*60}")
 print(f"ATOMs Analysis Pipeline")
@@ -134,7 +135,7 @@ else:  # WoR
 
 # WoR has discrete steer×throt×brake action logits → PEOC via get_action_logits().
 # TFV6 uses speed logits (get_speed_logits) handled separately in run_analysis.py.
-action_logits_available = False and (conf.AGENT != "TFV6")
+action_logits_available = (conf.AGENT == "WOR")
 
 # Initialize ATOMs.
 #
@@ -165,7 +166,7 @@ print("[Step 2] Computing ATOMs on baseline dataset...")
 
 RECOMPUTE_BASELINE = conf.RECOMPUTE_BASELINE  # <<< set False to load cached baseline.npz
 
-baseline_npz = Path(conf.BASELINE_DATA_DIR) / "baseline.npz"
+baseline_npz = Path(conf.BASELINE_DATA_DIR) / f"baseline_{_mode}.npz"
 
 if RECOMPUTE_BASELINE or not baseline_npz.exists():
     computer = BaselineComputer(lrp, atoms)
@@ -435,28 +436,31 @@ if conf.RECOMPUTE_TEST_ATOMS:
             print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
 
     atoms.reset()
-    np.save(ATT_DIR / "live_pert_profiles.npy", test_profiles)
+    np.save(ATT_DIR / f"live_pert_profiles_{_mode}.npy", test_profiles)
     if action_logits_available:
         test_logits_all = np.array(test_logits_all, dtype=np.float32)
-        np.save(ATT_DIR / "live_pert_speed_logits.npy", test_logits_all)
+        _logits_fname = f"live_pert_action_logits_{_mode}.npy" if conf.AGENT == "WOR" else f"live_pert_speed_logits_{_mode}.npy"
+        np.save(ATT_DIR / _logits_fname, test_logits_all)
     print(f"  Done. {n_test} frames processed.\n")
 
 else:
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
-    test_profiles = np.load(ATT_DIR / "live_pert_profiles.npy")
+    test_profiles = np.load(ATT_DIR / f"live_pert_profiles_{_mode}.npy")
     n_frames = test_data["wide_rgb"].shape[0]
     if len(test_profiles) != n_frames:
         raise RuntimeError(
-            f"Profile count mismatch: live_pert_profiles.npy has {len(test_profiles)} rows "
+            f"Profile count mismatch: live_pert_profiles_{_mode}.npy has {len(test_profiles)} rows "
             f"but load_live_pert loaded {n_frames} frames from live_pert_frames/.\n"
             "This usually means new recordings were added after the HPC run, or files from "
             "a different experiment are in the same directory.\n"
             "Fix: remove stale/unrelated files from live_pert_frames/, then re-run HPC "
             "or set RECOMPUTE_TEST_ATOMS=True."
         )
-    test_logits_all = (
-        np.load(ATT_DIR / "live_pert_speed_logits.npy") if action_logits_available else None
-    )
+    if action_logits_available:
+        _logits_fname = f"live_pert_action_logits_{_mode}.npy" if conf.AGENT == "WOR" else f"live_pert_speed_logits_{_mode}.npy"
+        test_logits_all = np.load(ATT_DIR / _logits_fname)
+    else:
+        test_logits_all = None
     print(f"  Loaded {len(test_profiles)} test profiles.")
 
 

@@ -28,23 +28,28 @@ echo "Partials dir : $PARTIALS_DIR"
 echo "Node         : $(hostname)"
 date
 
+_mode="${MODE_ANALYSIS:-1}"
+_base="$(dirname "$PARTIALS_DIR")"
+_baseline_out="$_base/baseline_${_mode}.npz"
+_mdx_out="$_base/mdx_features.npz"
+
 srun python3 "$CODE_DIR/hpc/gather_baseline.py" \
     --partials-dir "$PARTIALS_DIR" \
-    --output       "$PARTIALS_DIR/baseline.npz" \
-    --mdx-output   "$PARTIALS_DIR/mdx_features.npz"
+    --output       "$_baseline_out" \
+    --mdx-output   "$_mdx_out"
 
 echo "Gather finished with exit code $?"
 echo ""
-echo "baseline.npz     : $PARTIALS_DIR/baseline.npz"
-echo "mdx_features.npz : $PARTIALS_DIR/mdx_features.npz"
+echo "baseline_${_mode}.npz : $_baseline_out"
+echo "mdx_features.npz      : $_mdx_out"
 echo ""
 echo "Copy both into the repo and push:"
-echo "  cp $PARTIALS_DIR/baseline.npz     /u/\$USER/pcla/data/WOR/baseline_data/baseline.npz"
-echo "  cp $PARTIALS_DIR/mdx_features.npz /u/\$USER/pcla/data/WOR/baseline_data/mdx_features.npz"
+echo "  cp $_baseline_out /u/\$USER/pcla/data/WOR/baseline_data/baseline_${_mode}.npz"
+echo "  cp $_mdx_out      /u/\$USER/pcla/data/WOR/baseline_data/mdx_features.npz"
 echo "  cd /u/\$USER/pcla"
-echo "  git add -f data/WOR/baseline_data/baseline.npz"
+echo "  git add -f data/WOR/baseline_data/baseline_${_mode}.npz"
 echo "  git add -f data/WOR/baseline_data/mdx_features.npz"
-echo "  git commit -m 'add WOR baseline.npz and mdx_features.npz from HPC'"
+echo "  git commit -m 'add WOR baseline_${_mode}.npz and mdx_features.npz from HPC'"
 echo "  git push"
 echo ""
 echo "Then locally: git pull, set RECOMPUTE_BASELINE=False and RECOMPUTE_MDX_BASELINE=False"
