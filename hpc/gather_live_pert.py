@@ -57,7 +57,7 @@ def main() -> None:
         chunk_start = int(p["chunk_start"][0])
         profiles    = p["profiles"]
         logits      = p[logit_key] if logit_key in p else None
-        if logits is None:
+        if logits is None and profiles.shape[0] > 0:
             has_logits = False
             print(f"  WARNING: {f.name} missing {logit_key} — "
                   f"{default_out} will not be written.")

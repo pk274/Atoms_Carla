@@ -26,7 +26,7 @@ class ExperimentConfig:
     INTENSITY = 0.01
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = 1               # None for all cams
+    CAM_INDEX = None               # None for all cams
     MANUAL_SPAWNS = True
 
     RECOMPUTE_BASELINE = False
@@ -56,7 +56,7 @@ class ExperimentConfig:
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
-    PGD_TARGET = "brake"
+    PGD_TARGET = "steer_right"
     PGD_N_STEPS = 10        # PGD iterations; more steps = stronger attack # Wor: 10
 
     DEFAULT_CMD = 2
