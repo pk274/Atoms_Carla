@@ -7,12 +7,12 @@ class ExperimentConfig:
 
     # Active agent — controls which data subfolder is used.
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
-    AGENT = "TFV6"
+    AGENT = "WOR"
 
     TOWN = "Town05"
     WEATHER = "sunny"
     SPEED_MODE = False
-    HIGH_SPEED_MODE = False
+    HIGH_SPEED_MODE = True
 
     BASELINE_RECORDING_MODE = False
     TESTSET_RECORDING_MODE = False
@@ -22,11 +22,11 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "pgd"
-    INTENSITY = 0.1
-    INJECTION_TIME = 7            # 10 for live perturbation
+    PERTURBATION = "phantom_obstacle"
+    INTENSITY = 0.01
+    INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = None               # None for all cams
+    CAM_INDEX = 1               # None for all cams
     MANUAL_SPAWNS = True
 
     RECOMPUTE_BASELINE = False
@@ -40,10 +40,10 @@ class ExperimentConfig:
 
 
     IMAGE_SAMPLE_INTERVAL = 25   # 25
-    TEST_SAMPLE_INTERVAL = 10     # 11
+    TEST_SAMPLE_INTERVAL = 5     # 11
     MAX_BASELINE_SIZE = 100      # 100
     MAX_TEST_SIZE = 200
-    MAX_LIVE_PERT_SIZE = 200
+    MAX_LIVE_PERT_SIZE = 100
     _DATA_ROOT = Path("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/data") / AGENT
     BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data"
     TEST_DATA_DIR = _DATA_ROOT / "test_data"
@@ -52,12 +52,12 @@ class ExperimentConfig:
     ADD_AUTOPILOT_VEHICLES = True
 
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
-    EPSILON = 24.0           # 5 -> No effect   # Wor: 8    # TF: 12
+    EPSILON = 8.0           # 5 -> No effect   # Wor: 8    # TF: 12
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
     PGD_TARGET = "brake"
-    PGD_N_STEPS = 5        # PGD iterations; more steps = stronger attack # Wor: 10
+    PGD_N_STEPS = 10        # PGD iterations; more steps = stronger attack # Wor: 10
 
     DEFAULT_CMD = 2
     MAHAL_RIDGE = 0.01

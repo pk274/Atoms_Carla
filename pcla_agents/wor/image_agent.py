@@ -254,7 +254,9 @@ class ImageAgent(AutonomousAgent):
             self.test_data_collector.add_frame(wide_rgbs_, _narr_rgb, wide_sems_con, narr_sem_crop, cmd_value, spd, is_brake=bool(brake))
         elif conf.LIVE_PERTURBATION_RECORDING_MODE:
             self.test_data_collector.add_frame(wide_rgbs_, _narr_rgb, wide_sems_con,
-                                               narr_sem_crop, cmd_value, spd, is_brake=bool(brake), live_perturbation=True)
+                                               narr_sem_crop, cmd_value, spd, is_brake=bool(brake),
+                                               live_perturbation=True,
+                                               is_perturbed=(timestamp >= conf.INJECTION_TIME))
 
         self.vizs.append(visualize_obs(rgb, 0, (steer, throt, brake), spd, cmd=cmd_value+1))
 

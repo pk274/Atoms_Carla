@@ -548,6 +548,8 @@ def _load_all_runs(
             "is_brake":     d["is_brake"],
             "frame_idx":    d["frame_idx"],
             "run_id":       np.full(n, run_id, dtype=np.int32),
+            "is_perturbed": d["is_perturbed"] if "is_perturbed" in d
+                            else np.zeros(n, dtype=np.int8),
         })
 
     def _concat(key):

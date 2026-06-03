@@ -134,7 +134,7 @@ else:  # WoR
 
 # WoR has discrete steer×throt×brake action logits → PEOC via get_action_logits().
 # TFV6 uses speed logits (get_speed_logits) handled separately in run_analysis.py.
-action_logits_available = (conf.AGENT != "TFV6")
+action_logits_available = False and (conf.AGENT != "TFV6")
 
 # Initialize ATOMs.
 #
@@ -444,6 +444,16 @@ if conf.RECOMPUTE_TEST_ATOMS:
 else:
     test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
     test_profiles = np.load(ATT_DIR / "live_pert_profiles.npy")
+    n_frames = test_data["wide_rgb"].shape[0]
+    if len(test_profiles) != n_frames:
+        raise RuntimeError(
+            f"Profile count mismatch: live_pert_profiles.npy has {len(test_profiles)} rows "
+            f"but load_live_pert loaded {n_frames} frames from live_pert_frames/.\n"
+            "This usually means new recordings were added after the HPC run, or files from "
+            "a different experiment are in the same directory.\n"
+            "Fix: remove stale/unrelated files from live_pert_frames/, then re-run HPC "
+            "or set RECOMPUTE_TEST_ATOMS=True."
+        )
     test_logits_all = (
         np.load(ATT_DIR / "live_pert_speed_logits.npy") if action_logits_available else None
     )

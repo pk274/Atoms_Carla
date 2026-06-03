@@ -92,7 +92,8 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
 
         if conf.LIVE_PERTURBATION_RECORDING_MODE:
             self._live_pert_collector = TestDataCollector(
-                perturbation_name=conf.PERTURBATION
+                sample_every=conf.TEST_SAMPLE_INTERVAL,
+                perturbation_name=conf.PERTURBATION,
             )
             LOG.info(
                 "[LivePerturbation] Recording enabled — "

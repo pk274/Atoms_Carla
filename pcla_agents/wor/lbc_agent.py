@@ -225,7 +225,8 @@ class LBCAgent(AutonomousAgent):
             self.test_data_collector.add_frame(_rgb, None, wide_sems_con, None, cmd_value, spd, is_brake=False)
         elif conf.LIVE_PERTURBATION_RECORDING_MODE:
             self.test_data_collector.add_frame(_rgb, None, wide_sems_con, None, cmd_value, spd,
-                                               is_brake=False, live_perturbation=True)
+                                               is_brake=False, live_perturbation=True,
+                                               is_perturbed=(timestamp >= conf.INJECTION_TIME))
 
         self.vizs.append(visualize_obs(rgb, 0, (steer, throt, brake), spd, cmd=cmd_value+1))
         

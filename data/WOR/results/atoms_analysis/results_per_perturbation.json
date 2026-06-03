@@ -1,94 +1,154 @@
 {
   "brightness_scale": [
     {
-      "Mahalanobis-single | brightness_scale": 0.974375
+      "Mahalanobis-single | brightness_scale": 0.42625
     },
     {
-      "Mahalanobis-GMM | brightness_scale": 0.983125
+      "Mahalanobis-GMM | brightness_scale": 0.44125000000000003
     },
     {
-      "Entropy | brightness_scale": 0.8606250000000001
+      "Euclidean-single | brightness_scale": 0.40875
     },
     {
-      "JSD-single | brightness_scale": 0.776875
+      "Euclidean-GMM | brightness_scale": 0.439375
     },
     {
-      "Euclidean-single | brightness_scale": 0.95625
+      "JSD-single | brightness_scale": 0.44375
+    },
+    {
+      "JSD-GMM | brightness_scale": 0.4425
+    },
+    {
+      "Wasserstein-single | brightness_scale": 0.43625
+    },
+    {
+      "Wasserstein-GMM | brightness_scale": 0.40937500000000004
+    },
+    {
+      "kNN (k=10) | brightness_scale": 0.490625
+    },
+    {
+      "kNN-GMM (k=100) | brightness_scale": 0.5175
+    },
+    {
+      "Entropy | brightness_scale": 0.40937500000000004
     },
     {
       "MDX Detection | brightness_scale": 0.559375
-    },
-    {
-      "kNN (k=10) | brightness_scale": 0.9875
     }
   ],
   "camera_loss": [
     {
-      "Mahalanobis-single | camera_loss": 0.7075
+      "Mahalanobis-single | camera_loss": 0.480625
     },
     {
-      "Mahalanobis-GMM | camera_loss": 0.75125
+      "Mahalanobis-GMM | camera_loss": 0.5025000000000001
     },
     {
-      "Entropy | camera_loss": 1.0
+      "Euclidean-single | camera_loss": 0.458125
     },
     {
-      "JSD-single | camera_loss": 0.616875
+      "Euclidean-GMM | camera_loss": 0.490625
     },
     {
-      "Euclidean-single | camera_loss": 0.621875
+      "JSD-single | camera_loss": 0.5025
+    },
+    {
+      "JSD-GMM | camera_loss": 0.52875
+    },
+    {
+      "Wasserstein-single | camera_loss": 0.5631250000000001
+    },
+    {
+      "Wasserstein-GMM | camera_loss": 0.540625
+    },
+    {
+      "kNN (k=10) | camera_loss": 0.504375
+    },
+    {
+      "kNN-GMM (k=100) | camera_loss": 0.549375
+    },
+    {
+      "Entropy | camera_loss": 0.438125
     },
     {
       "MDX Detection | camera_loss": 0.7
-    },
-    {
-      "kNN (k=10) | camera_loss": 0.963125
     }
   ],
   "gaussian_noise": [
     {
-      "Mahalanobis-single | gaussian_noise": 0.47687500000000005
+      "Mahalanobis-single | gaussian_noise": 0.39125000000000004
     },
     {
-      "Mahalanobis-GMM | gaussian_noise": 0.525625
+      "Mahalanobis-GMM | gaussian_noise": 0.413125
     },
     {
-      "Entropy | gaussian_noise": 0.45499999999999996
+      "Euclidean-single | gaussian_noise": 0.37812500000000004
     },
     {
-      "JSD-single | gaussian_noise": 0.476875
+      "Euclidean-GMM | gaussian_noise": 0.40499999999999997
     },
     {
-      "Euclidean-single | gaussian_noise": 0.43624999999999997
+      "JSD-single | gaussian_noise": 0.43625
+    },
+    {
+      "JSD-GMM | gaussian_noise": 0.44937499999999997
+    },
+    {
+      "Wasserstein-single | gaussian_noise": 0.49
+    },
+    {
+      "Wasserstein-GMM | gaussian_noise": 0.430625
+    },
+    {
+      "kNN (k=10) | gaussian_noise": 0.48874999999999996
+    },
+    {
+      "kNN-GMM (k=100) | gaussian_noise": 0.514375
+    },
+    {
+      "Entropy | gaussian_noise": 0.46499999999999997
     },
     {
       "MDX Detection | gaussian_noise": 0.51375
-    },
-    {
-      "kNN (k=10) | gaussian_noise": 0.7537499999999999
     }
   ],
   "pgd": [
     {
-      "Mahalanobis-single | pgd": 0.475625
+      "Mahalanobis-single | pgd": 0.4825
     },
     {
-      "Mahalanobis-GMM | pgd": 0.5162500000000001
+      "Mahalanobis-GMM | pgd": 0.49187499999999995
     },
     {
-      "Entropy | pgd": 1.0
+      "Euclidean-single | pgd": 0.459375
     },
     {
-      "JSD-single | pgd": 0.48374999999999996
+      "Euclidean-GMM | pgd": 0.4843749999999999
     },
     {
-      "Euclidean-single | pgd": 0.436875
+      "JSD-single | pgd": 0.47750000000000004
+    },
+    {
+      "JSD-GMM | pgd": 0.49124999999999996
+    },
+    {
+      "Wasserstein-single | pgd": 0.514375
+    },
+    {
+      "Wasserstein-GMM | pgd": 0.50625
+    },
+    {
+      "kNN (k=10) | pgd": 0.5349999999999999
+    },
+    {
+      "kNN-GMM (k=100) | pgd": 0.5331250000000001
+    },
+    {
+      "Entropy | pgd": 0.44937499999999997
     },
     {
       "MDX Detection | pgd": 0.91125
-    },
-    {
-      "kNN (k=10) | pgd": 0.7256250000000001
     }
   ]
 }
