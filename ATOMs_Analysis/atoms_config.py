@@ -7,7 +7,7 @@ class ExperimentConfig:
 
     # Active agent — controls which data subfolder is used.
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
-    AGENT = "WOR"
+    AGENT = "TFV6"
 
     TOWN = "Town05"
     WEATHER = "sunny"
@@ -22,7 +22,7 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "phantom_obstacle"
+    PERTURBATION = "pgd"
     INTENSITY = 0.01
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True

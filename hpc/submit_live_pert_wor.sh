@@ -66,16 +66,24 @@ echo ""
 mkdir -p "$WORK_DIR/logs" "$PARTIALS_DIR"
 
 # --- Job 1: concatenate live-pert run files (WoR: preserves narr_rgb) ---
-PREP_JOB_ID=$(sbatch --parsable \
-    --chdir="$CODE_DIR" \
-    --export=ALL,FRAMES_DIR="$FRAMES_DIR",PERTURBATION="$PERTURBATION",CONCAT_FILE="$CONCAT_FILE",CODE_DIR="$CODE_DIR" \
-    "$CODE_DIR/hpc/prep_live_pert_task_wor.sh")
-echo "Submitted prep job  : $PREP_JOB_ID"
+# Skip if concat file already exists — it is mode-independent, so a second mode
+# submission can reuse it without risk of corruption from concurrent writes.
+if [ -f "$CONCAT_FILE" ]; then
+    echo "live_pert_concat.npz already exists — skipping prep job."
+    ARRAY_DEP=""
+else
+    PREP_JOB_ID=$(sbatch --parsable \
+        --chdir="$CODE_DIR" \
+        --export=ALL,FRAMES_DIR="$FRAMES_DIR",PERTURBATION="$PERTURBATION",CONCAT_FILE="$CONCAT_FILE",CODE_DIR="$CODE_DIR" \
+        "$CODE_DIR/hpc/prep_live_pert_task_wor.sh")
+    echo "Submitted prep job  : $PREP_JOB_ID"
+    ARRAY_DEP="--dependency=afterok:${PREP_JOB_ID}"
+fi
 
-# --- Job 2: parallel ATOMs (depends on prep) ---
+# --- Job 2: parallel ATOMs (depends on prep if it was submitted) ---
 ARRAY_JOB_ID=$(sbatch --parsable \
     --array=0-${N_LAST} \
-    --dependency=afterok:${PREP_JOB_ID} \
+    ${ARRAY_DEP} \
     --chdir="$CODE_DIR" \
     --export=ALL,CONCAT_FILE="$CONCAT_FILE",PARTIALS_DIR="$PARTIALS_DIR",MODEL_DIR="$MODEL_DIR",CODE_DIR="$CODE_DIR",CHUNK_SIZE="$CHUNK_SIZE",MODE_ANALYSIS="$MODE_ANALYSIS" \
     "$CODE_DIR/hpc/array_live_pert_task_wor.sh")

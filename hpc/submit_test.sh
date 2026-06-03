@@ -65,16 +65,24 @@ echo ""
 mkdir -p "$WORK_DIR/logs" "$PARTIALS_DIR"
 
 # --- Job 1: apply perturbations ---
-PREP_JOB_ID=$(sbatch --parsable \
-    --chdir="$CODE_DIR" \
-    --export=ALL,FRAMES_DIR="$FRAMES_DIR",LABELED_FILE="$LABELED_FILE",CODE_DIR="$CODE_DIR" \
-    "$CODE_DIR/hpc/prep_test_task.sh")
-echo "Submitted prep job  : $PREP_JOB_ID"
+# Skip if test_labeled.npz already exists — it is mode-independent, so a second
+# mode submission can reuse the file from the first run without risk of corruption.
+if [ -f "$LABELED_FILE" ]; then
+    echo "test_labeled.npz already exists — skipping prep job."
+    ARRAY_DEP=""
+else
+    PREP_JOB_ID=$(sbatch --parsable \
+        --chdir="$CODE_DIR" \
+        --export=ALL,FRAMES_DIR="$FRAMES_DIR",LABELED_FILE="$LABELED_FILE",CODE_DIR="$CODE_DIR" \
+        "$CODE_DIR/hpc/prep_test_task.sh")
+    echo "Submitted prep job  : $PREP_JOB_ID"
+    ARRAY_DEP="--dependency=afterok:${PREP_JOB_ID}"
+fi
 
-# --- Job 2: parallel ATOMs (depends on prep) ---
+# --- Job 2: parallel ATOMs (depends on prep if it was submitted) ---
 ARRAY_JOB_ID=$(sbatch --parsable \
     --array=0-${N_LAST} \
-    --dependency=afterok:${PREP_JOB_ID} \
+    ${ARRAY_DEP} \
     --chdir="$CODE_DIR" \
     --export=ALL,LABELED_FILE="$LABELED_FILE",PARTIALS_DIR="$PARTIALS_DIR",MODEL_DIR="$MODEL_DIR",CODE_DIR="$CODE_DIR",CHUNK_SIZE="$CHUNK_SIZE",MODE_ANALYSIS="$MODE_ANALYSIS" \
     "$CODE_DIR/hpc/array_test_task.sh")

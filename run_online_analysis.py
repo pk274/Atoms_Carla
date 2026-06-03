@@ -86,7 +86,7 @@ from ATOMs_Analysis.detection.detectors import MDXDetector
 # Output directory — all figures and result JSONs go here
 # ---------------------------------------------------------------------------
 
-OUT_DIR = Path(conf.RESULTS_DIR) / "atoms_analysis"  # <<< ADJUST if needed
+OUT_DIR = Path(conf.RESULTS_DIR) / f"atoms_analysis_live_mode_{conf.MODE_ANALYSIS}"  # <<< ADJUST if needed
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Name of the live perturbation being analysed — drives all output paths below.
@@ -568,14 +568,14 @@ else:
     print(f"  Injection frame estimated from INJECTION_TIME={conf.INJECTION_TIME}s "
           f"@ {_CARLA_HZ} Hz: {_injection_frame}  (no is_perturbed key in data)")
 
-plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", live_pert_dir, _injection_frame)
-plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    live_pert_dir, _injection_frame)
-plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          live_pert_dir, _injection_frame)
-plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                live_pert_dir, _injection_frame)
-plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                live_pert_dir, _injection_frame)
+plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", OUT_DIR, _injection_frame)
+plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    OUT_DIR, _injection_frame)
+plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          OUT_DIR, _injection_frame)
+plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                OUT_DIR, _injection_frame)
+plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                OUT_DIR, _injection_frame)
 if scores_entropy is not None:
-    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               live_pert_dir, _injection_frame)
+    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               OUT_DIR, _injection_frame)
 if scores_mdx is not None:
-    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                live_pert_dir, _injection_frame)
+    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                OUT_DIR, _injection_frame)
 
 

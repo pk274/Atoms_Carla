@@ -101,7 +101,7 @@ from ATOMs_Analysis.detection.detectors import MDXDetector
 # Output directory — all figures and result JSONs go here
 # ---------------------------------------------------------------------------
 
-OUT_DIR = Path(conf.RESULTS_DIR) / "atoms_analysis"  # <<< ADJUST if needed
+OUT_DIR = Path(conf.RESULTS_DIR) / f"atoms_analysis_mode_{conf.MODE_ANALYSIS}"  # <<< ADJUST if needed
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 dirs = make_output_dirs(OUT_DIR)
 
