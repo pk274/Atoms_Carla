@@ -108,9 +108,13 @@ case "$PIPELINE" in
         ;;
     test)
         DEST_REL="data/${AG}/test_data/attention"
-        if [ "$AG" = "WOR" ]; then LOGIT="test_logits_${MODE}.npy"
-        else                       LOGIT="test_speed_logits_${MODE}.npy"; fi
-        SRC_NAMES=("test_profiles_${MODE}.npy" "$LOGIT")
+        if [ "$AG" = "WOR" ]; then
+            LOGIT="test_logits_${MODE}.npy"
+            SRC_NAMES=("test_profiles_${MODE}.npy" "$LOGIT")
+        else
+            LOGIT="test_speed_logits_${MODE}.npy"
+            SRC_NAMES=("test_profiles_${MODE}.npy" "$LOGIT" "perturb_samples.png")
+        fi
         ;;
     live_pert)
         DEST_REL="data/${AG}/test_data/attention/live_pert/${PERT}"

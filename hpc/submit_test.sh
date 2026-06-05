@@ -39,8 +39,15 @@ LABELED_FILE="$WORK_DIR/test_labeled.npz"
 PARTIALS_DIR="$WORK_DIR/partials/mode_${MODE_ANALYSIS}"
 PROFILES_OUT="$WORK_DIR/test_profiles_${MODE_ANALYSIS}.npy"
 
-# Count frames dynamically from the clean run_*.npz files in FRAMES_DIR
-N_FRAMES=$(python3 -c "
+# Count frames: read from test_labeled.npz when it already exists (the array job
+# processes that file, not the raw frames), otherwise count from the raw frames.
+if [ -f "$LABELED_FILE" ]; then
+    N_FRAMES=$(python3 -c "
+import numpy as np
+print(np.load('${LABELED_FILE}', allow_pickle=False)['wide_rgb'].shape[0])
+")
+else
+    N_FRAMES=$(python3 -c "
 import numpy as np, pathlib, sys
 files = sorted(pathlib.Path('${FRAMES_DIR}').glob('run_*.npz'))
 if not files:
@@ -48,6 +55,7 @@ if not files:
 total = sum(np.load(str(f), allow_pickle=False)['frame_idx'].shape[0] for f in files)
 print(total)
 ")
+fi
 N_TASKS=$(( (N_FRAMES + CHUNK_SIZE - 1) / CHUNK_SIZE ))
 N_LAST=$(( N_TASKS - 1 ))
 

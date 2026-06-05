@@ -435,7 +435,7 @@ class PerturbationManager:
                     net.eval()
 
                 for step in range(n_steps):
-                    data_adv = {**data, "rgb": rgb_clean.detach() + delta}
+                    data_adv = {**data, "rgb": torch.clamp(rgb_clean.detach() + delta, 0.0, 255.0)}
 
                     total_loss = torch.tensor(0.0, device=rgb_clean.device)
                     for net in nets:

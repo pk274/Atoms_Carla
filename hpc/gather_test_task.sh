@@ -40,4 +40,18 @@ srun python3 "$CODE_DIR/hpc/gather_test.py" \
 
 echo "Gather finished with exit code $?"
 echo "test_speed_logits_${_mode}.npy is at: $SPEED_LOGITS_OUT"
+
+# Visualise perturbation samples — test_labeled.npz lives in the same dir as PROFILES_OUT.
+# The resulting PNG is picked up by collect_results.sh alongside the profiles.
+_LABELED="$(dirname "$PROFILES_OUT")/test_labeled.npz"
+_VIZ_OUT="$(dirname "$PROFILES_OUT")/perturb_samples.png"
+if [ -f "$_LABELED" ]; then
+    srun python3 "$CODE_DIR/hpc/visualize_perturb.py" \
+        --labeled-file "$_LABELED" \
+        --output       "$_VIZ_OUT"
+    echo "Perturbation samples saved: $_VIZ_OUT"
+else
+    echo "WARNING: $_LABELED not found — skipping perturbation visualisation."
+fi
+
 date

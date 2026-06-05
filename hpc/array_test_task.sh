@@ -40,8 +40,10 @@ echo "Node     : $(hostname)"
 echo "CPUs     : $SLURM_CPUS_PER_TASK"
 date
 
-# PGD attack settings for the 'pgd' test frames (TFV6). Override by exporting
-# PGD_TARGET / PGD_EPSILON / PGD_STEPS before submitting.
+# PGD attack settings for 'pgd' test frames (TFV6).
+# PGD_TARGET and PGD_STEPS can be overridden by exporting before submitting.
+# PGD_EPSILON has no effect here — the ε budget is read from test_labeled.npz
+# (written by the prep step); export PGD_EPSILON before the *prep job* to change it.
 srun python3 "$CODE_DIR/hpc/compute_test_chunk.py" \
     --labeled-file  "$LABELED_FILE"        \
     --chunk-start   "$CHUNK_START"         \

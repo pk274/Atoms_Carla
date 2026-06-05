@@ -31,9 +31,12 @@ echo "Node         : $(hostname)"
 date
 
 srun python3 "$CODE_DIR/hpc/prep_test.py" \
-    --frames-dir "$FRAMES_DIR" \
-    --output     "$LABELED_FILE" \
-    --seed       42
+    --frames-dir           "$FRAMES_DIR"                \
+    --output               "$LABELED_FILE"              \
+    --seed                 42                           \
+    --pgd-epsilon          "${PGD_EPSILON:-12.0}"       \
+    --noise-intensity      "${NOISE_INTENSITY:-21.0}"   \
+    --brightness-intensity "${BRIGHTNESS_INTENSITY:-4.0}"
 
 echo "Prep finished with exit code $?"
 date

@@ -197,14 +197,23 @@ def main() -> None:
                 eps = args.pgd_epsilon
             pgd_data = {**_make_minimal_data(spd, device, cmd=cmd),
                         "rgb": wide.to(device)}
-            with torch.enable_grad():
-                adv_rgb = pm.pgd_attack_tfv6(
-                    nets     = [tfv6_model],
-                    data     = pgd_data,
-                    target   = args.pgd_target,
-                    epsilon  = eps,
-                    n_steps  = args.pgd_steps,
-                )
+            # visiononly_resnet34 has carla_leaderboard_mode=True (from its carla_root),
+            # so radar_detection=True and radar_detector is instantiated.  The checkpoint
+            # has no radar weights (strict=False load), so we supply a zero tensor to
+            # keep forward() from crashing; the random-weight radar branch has no effect
+            # on the adversarial gradient since the model was trained vision-only.
+            if hasattr(tfv6_model, "radar_detector"):
+                n_pts = (tfv6_model.config.num_radar_sensors
+                         * tfv6_model.config.num_radar_points_per_sensor)
+                pgd_data["radar"] = torch.zeros(1, n_pts, 5,
+                                                dtype=torch.float32, device=device)
+            adv_rgb = pm.pgd_attack_tfv6(
+                nets     = [tfv6_model],
+                data     = pgd_data,
+                target   = args.pgd_target,
+                epsilon  = eps,
+                n_steps  = args.pgd_steps,
+            )
             wide = adv_rgb.detach().cpu().float()
 
         profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
