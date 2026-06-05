@@ -42,6 +42,16 @@ def parse_args() -> argparse.Namespace:
                    help="Agent architecture: TFV6 or WOR.")
     p.add_argument("--mode-analysis", default=1, type=int, choices=[1, 2],
                    help="ATOMs analysis mode (1=paper default, 2=alternative).")
+    # PGD attack settings — used only for TFV6 frames labelled perturbation=="pgd"
+    # (prep_test.py marks them with clean pixels; the attack is crafted here).
+    p.add_argument("--pgd-target", default="steer_right",
+                   choices=["brake", "max_speed", "steer_left", "steer_right"],
+                   help="TFV6 PGD attack objective.")
+    p.add_argument("--pgd-epsilon", default=12.0, type=float,
+                   help="ℓ∞ ε budget (0–255 scale); fallback when a pgd frame's "
+                        "recorded intensity is missing/zero.")
+    p.add_argument("--pgd-steps", default=10, type=int,
+                   help="Number of PGD iterations.")
     return p.parse_args()
 
 
@@ -94,7 +104,10 @@ def build_tfv6_lrp(model_dir: Path, device: torch.device):
         planning_decoder = model.planning_decoder,
         device           = device,
     )
-    return lrp
+    # Return the raw TFv6 model too: it is needed for the PGD attack, which runs a
+    # full forward/backward through model.forward(data) (pred_future_waypoints /
+    # pred_target_speed_distribution) — the LRP wrapper alone cannot supply that.
+    return lrp, model
 
 
 def main() -> None:
@@ -125,10 +138,11 @@ def main() -> None:
     print(f"[chunk] device={device}  frames={chunk_start}:{chunk_end}  ({n_chunk} frames)")
 
     print(f"[chunk] Loading model (agent={args.agent})...")
+    tfv6_model = None   # raw TFv6 net, needed for the PGD attack (TFV6 only)
     if args.agent == "WOR":
         lrp = build_wor_lrp(args.model_dir, device)
     else:
-        lrp = build_tfv6_lrp(args.model_dir, device)
+        lrp, tfv6_model = build_tfv6_lrp(args.model_dir, device)
 
     from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
     from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
@@ -148,6 +162,20 @@ def main() -> None:
     has_narr     = "narr_rgb"     in data and data["narr_rgb"]     is not None
     has_seg_narr = "seg_red_narr" in data and data["seg_red_narr"] is not None
 
+    # PGD (TFV6 only): prep_test.py records pgd frames with clean pixels; craft the
+    # adversarial image here, where the model is loaded.  WoR pgd pixels (if any)
+    # already live in test_labeled.npz, so they are left untouched.
+    pert_labels = data["perturbation"] if "perturbation" in data else None
+    pgd_enabled = args.agent != "WOR" and tfv6_model is not None and pert_labels is not None
+    if pgd_enabled:
+        from ATOMs_Analysis.perturbation_manager import PerturbationManager
+        from ATOMs_Analysis.saliency.lrp_transfuser import _make_minimal_data
+        pm = PerturbationManager(verbose=False)
+        pm.attack_interval = 1            # craft a fresh δ for every attacked frame
+        n_pgd = int(np.sum(pert_labels[chunk_start:chunk_end] == "pgd"))
+        print(f"[chunk] PGD: {n_pgd} frame(s) in this chunk "
+              f"(target={args.pgd_target}, steps={args.pgd_steps})")
+
     profiles     = []
     peoc_logits  = []   # [N_chunk, 8] TFV6 speed logits OR [N_chunk, 28] WOR action logits
     t0 = time.time()
@@ -159,6 +187,25 @@ def main() -> None:
         seg_narr = data["seg_red_narr"][i]                           if has_seg_narr else None
         cmd      = int(data["cmd"][i])
         spd      = float(data["speed"][i])
+
+        # Craft the PGD attack on this frame's RGB (replaces the clean pixels that
+        # prep_test.py wrote).  Both the ATOMs profile and the PEOC logits below
+        # then see the adversarial image.
+        if pgd_enabled and pert_labels[i] == "pgd":
+            eps = float(data["intensity"][i]) if "intensity" in data else 0.0
+            if eps <= 0.0:
+                eps = args.pgd_epsilon
+            pgd_data = {**_make_minimal_data(spd, device, cmd=cmd),
+                        "rgb": wide.to(device)}
+            with torch.enable_grad():
+                adv_rgb = pm.pgd_attack_tfv6(
+                    nets     = [tfv6_model],
+                    data     = pgd_data,
+                    target   = args.pgd_target,
+                    epsilon  = eps,
+                    n_steps  = args.pgd_steps,
+                )
+            wide = adv_rgb.detach().cpu().float()
 
         profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
         profiles.append(profile)

@@ -354,6 +354,15 @@ class DistanceComputer:
         p = np.asarray(p, dtype=np.float64)
         q = np.asarray(q, dtype=np.float64)
 
+        _TOL = 1e-5
+        if p.min() < -_TOL or q.min() < -_TOL:
+            raise ValueError(
+                f"Weights contain genuinely negative values (min p={p.min():.6g}, min q={q.min():.6g}). "
+                "This is not a float rounding error."
+            )
+        p = np.maximum(p, 0.0)
+        q = np.maximum(q, 0.0)
+
         # Normalize
         p = p / (p.sum() + 1e-12)
         q = q / (q.sum() + 1e-12)

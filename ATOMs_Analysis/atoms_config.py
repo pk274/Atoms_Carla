@@ -18,6 +18,8 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
+    NUM_GMM_CLUSTERS = 3        # None for automatic selection
+
 
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
@@ -65,7 +67,7 @@ class ExperimentConfig:
     GMM_COV_TYPE = "full"
     RANDOM_SEED = 17
 
-    MODE_ANALYSIS = 1
+    MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9
 
     # If True, attention profiles are built from the wide-camera relevance map

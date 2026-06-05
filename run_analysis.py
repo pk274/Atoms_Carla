@@ -422,7 +422,8 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
-#N_COMPONENTS = 15
+if conf.NUM_GMM_CLUSTERS is not None:
+    N_COMPONENTS = conf.NUM_GMM_CLUSTERS
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 
@@ -431,6 +432,7 @@ print()
 # STEP 6 — Fit GMM
 # ===========================================================================
 print(f"[Step 6] Fitting GMM with K={N_COMPONENTS}...")
+
 
 gmm = GMMClustering(
     n_components    = N_COMPONENTS,
@@ -626,9 +628,13 @@ if conf.REAPPLY_PERTURBATIONS or not _labeled_npz.exists():
     # Define the perturbation mix.
     # <<< ADJUST fractions and perturbation types to your experiment
     if conf.AGENT == "TFV6":
-        # PGD requires model.policy() which is WoR-specific and needs route
-        # context unavailable offline.  Replace with an extra gaussian_noise
-        # entry at a higher intensity so all four slots remain populated.
+        # This offline applier cannot craft TFV6 PGD: the attack needs a full
+        # TFv6.forward backward pass, which the WoR-only pgd_attack here does not
+        # provide.  TFV6 PGD is instead produced on the HPC: hpc/prep_test.py
+        # records pgd frames (clean pixels + label) and hpc/compute_test_chunk.py
+        # crafts the adversarial image during the GPU/CPU array pass.  So the
+        # local TFV6 mix here stays 4-way; use the HPC pipeline for a pgd-labelled
+        # TFV6 test set.
         spec = PerturbationSpec([
             PerturbationEntry(fraction=0.25, perturbation=None),
             PerturbationEntry(fraction=0.25, perturbation="gaussian_noise",  intensity=conf.NOISE_INTENSITY),

@@ -60,29 +60,46 @@ Ports 8888 / 9999 can be reused each time.
 
 ## Transferring small results files back (git)
 
-For small computed outputs (`baseline_1.npz`, `test_profiles_1.npy`, etc.) the easiest
-method is git force-add, since these files are gitignored by default.
+Computed outputs (`baseline_1.npz`, `test_profiles_1.npy`, etc.) are gitignored, so they
+must be force-added. **Don't do the `cp` + `git add -f` by hand** — use the helper:
 
-**On Viper:**
+### `hpc/collect_results.sh` (recommended)
+
+One command finds the gather outputs in `/ptmp`, copies them into the right `data/<AGENT>/…`
+folder, and `git add -f`s them. It **does not commit or push** — it prints the exact commit
+command for you to run.
 
 ```bash
-# Copy result from ptmp to the git repo (example for mode 1)
-cp /ptmp/paulkull/atoms_baseline/partials/baseline_1.npz \
-   /u/paulkull/pcla/data/TFV6/baseline_data/baseline_1.npz
+# bash hpc/collect_results.sh <pipeline> <agent> <mode> [pert] [options]
+#   pipeline : baseline | test | live_pert
+#   agent    : tfv6 | wor
+#   mode     : 1 | 2
+#   pert     : required for live_pert (e.g. pgd)
 
-cd /u/paulkull/pcla
-git add -f data/TFV6/baseline_data/baseline_1.npz
-git commit -m "add TFV6 baseline_1.npz from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh test tfv6 1          # stage TFV6 test profiles+logits, mode 1
+bash hpc/collect_results.sh test tfv6 2          # …and mode 2
+git commit -m "add TFV6 test results from HPC"   # (the script prints this line for you)
 git push
 ```
 
-**Locally:**
+It knows every source→destination mapping (incl. the `test_speed_logits` vs `test_logits`
+vs `live_pert_action_logits` naming differences) and locates files even when they are nested
+under `partials/mode_*`. Options: `--work-dir DIR` (override the default `/ptmp/$USER/atoms_[wor_]<pipeline>`),
+`--code-dir DIR` (repo root), `--no-add` (copy only), `--dry-run` (preview). Missing files are
+reported and exit non-zero, so a half-finished gather won't silently stage a partial set.
+
+**Locally afterwards:** `git pull`, then set the matching `RECOMPUTE_*` flag to `False`
+(`RECOMPUTE_BASELINE`/`RECOMPUTE_MDX_BASELINE` for baseline; `RECOMPUTE_TEST_ATOMS` for test/live).
+
+### Manual fallback
 
 ```bash
-git pull
+cp /ptmp/$USER/atoms_baseline/partials/baseline_1.npz /u/$USER/pcla/data/TFV6/baseline_data/baseline_1.npz
+cd /u/$USER/pcla && git add -f data/TFV6/baseline_data/baseline_1.npz && git commit -m "…" && git push
 ```
 
-GitHub has a 100 MB per-file hard limit — only use this for computed outputs
+GitHub has a 100 MB per-file hard limit — only use git for computed outputs
 (small float arrays), never for raw frame files.
 
 ---
@@ -110,31 +127,54 @@ bash hpc/submit_test.sh ... 2   # MODE_ANALYSIS=2
 ```
 
 This chains three SLURM jobs automatically:
-1. **prep** — applies perturbations → `test_labeled.npz`
-2. **array** — parallel ATOMs tasks (20 frames each), each also computing 8-bin speed logits for PEOC
+1. **prep** — applies the image-space perturbations → `test_labeled.npz`. The mix is
+   a 5-way 20 % split: clean / gaussian_noise / brightness_scale / camera_loss / **pgd**.
+   `pgd` frames are *recorded* with clean pixels (prep is model-free); the attack is
+   crafted in the array job.
+2. **array** — parallel ATOMs tasks (20 frames each), each also computing 8-bin speed
+   logits for PEOC. For frames labelled `pgd`, `compute_test_chunk.py` crafts the TFV6
+   adversarial image via `pgd_attack_tfv6` (a minimal-data `TFv6.forward` backward pass,
+   `target=steer_right`, `ε=12`, 10 steps — override with `PGD_TARGET`/`PGD_EPSILON`/
+   `PGD_STEPS`) before running LRP + ATOMs, so both the profile and the PEOC logits see
+   the attacked pixels.
 3. **gather** — concatenates results → `test_profiles_{MODE}.npy` + `test_speed_logits_{MODE}.npy`
 
 Monitor: `squeue -u paulkull`
 
-### 3. Download results (on Viper, then git pull locally)
+### 3. Collect results (on Viper, then git pull locally)
 
 ```bash
-ATT=/u/paulkull/pcla/data/TFV6/test_data/attention
-cp /ptmp/paulkull/atoms_test/test_profiles_1.npy      $ATT/test_profiles_1.npy
-cp /ptmp/paulkull/atoms_test/test_speed_logits_1.npy  $ATT/test_speed_logits_1.npy
-
-cd /u/paulkull/pcla
-git add -f data/TFV6/test_data/attention/test_profiles_1.npy
-git add -f data/TFV6/test_data/attention/test_speed_logits_1.npy
-git commit -m "add TFV6 test_profiles_1.npy and test_speed_logits_1.npy from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh test tfv6 1
+bash hpc/collect_results.sh test tfv6 2     # if both modes were computed
+git commit -m "add TFV6 test results from HPC"
 git push
 ```
-
-Repeat for `_2` if both modes were computed.
 
 Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`, and set `MODE_ANALYSIS` to whichever mode you want to analyse.
 
 `test_speed_logits_{MODE}.npy` is automatically used by `run_analysis.py` for PEOC scoring — no config flag needed.
+
+### Re-running the TFV6 test set with PGD
+
+The 5-way mix (incl. `pgd`) is new. `submit_test.sh` **skips prep if `test_labeled.npz` already
+exists**, so to pick up the PGD frames you must delete the stale labelled set and partials first:
+
+```bash
+rm -f  /ptmp/$USER/atoms_test/test_labeled.npz      # force prep to rebuild with the 5-way PGD mix
+rm -rf /ptmp/$USER/atoms_test/partials              # old profiles are stale (mix changed)
+bash hpc/submit_test.sh \
+    /ptmp/$USER/atoms_test/frames \
+    /ptmp/$USER/atoms_test \
+    /u/$USER/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
+    "" "" 1                                          # then repeat with trailing 2 for mode 2
+# after both gathers finish:
+bash hpc/collect_results.sh test tfv6 1 && bash hpc/collect_results.sh test tfv6 2
+```
+
+Override the attack with `PGD_TARGET` / `PGD_EPSILON` / `PGD_STEPS` (defaults `steer_right` /
+`12` / `10`), e.g. `PGD_EPSILON=8 bash hpc/submit_test.sh …`. The PGD fraction (20 %) shrinks the
+other perturbations from 25 %→20 %, so their AUCs will shift slightly on re-run — expected.
 
 ---
 
@@ -163,18 +203,13 @@ bash hpc/submit_baseline.sh ... "" 2   # mode 2
 Each array task extracts ATOMs profiles + 512-dim backbone features.  
 The gather step writes `baseline_{MODE}.npz` (in `partials/`) and `mdx_features.npz`.
 
-### 3. Download results
+### 3. Collect results
 
 ```bash
-cd /u/paulkull/pcla
-cp /ptmp/paulkull/atoms_baseline/partials/baseline_1.npz  data/TFV6/baseline_data/baseline_1.npz
-cp /ptmp/paulkull/atoms_baseline/partials/baseline_2.npz  data/TFV6/baseline_data/baseline_2.npz
-cp /ptmp/paulkull/atoms_baseline/partials/mdx_features.npz data/TFV6/baseline_data/mdx_features.npz
-
-git add -f data/TFV6/baseline_data/baseline_1.npz
-git add -f data/TFV6/baseline_data/baseline_2.npz
-git add -f data/TFV6/baseline_data/mdx_features.npz
-git commit -m "add TFV6 baseline_1/2.npz and mdx_features.npz from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh baseline tfv6 1
+bash hpc/collect_results.sh baseline tfv6 2     # mdx_features.npz is shared; re-copying is harmless
+git commit -m "add TFV6 baseline results from HPC"
 git push
 ```
 
@@ -217,24 +252,17 @@ This chains three SLURM jobs automatically:
 
 Monitor: `squeue -u paulkull`
 
-### 3. Download results (on Viper, then git pull locally)
+### 3. Collect results (on Viper, then git pull locally)
 
 ```bash
-PERT=pgd
-ATT=/u/paulkull/pcla/data/TFV6/test_data/attention/live_pert/$PERT
-mkdir -p $ATT
-
-cp /ptmp/paulkull/atoms_live_pert/live_pert_profiles_1.npy      $ATT/live_pert_profiles_1.npy
-cp /ptmp/paulkull/atoms_live_pert/live_pert_speed_logits_1.npy  $ATT/live_pert_speed_logits_1.npy
-
-cd /u/paulkull/pcla
-git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_profiles_1.npy
-git add -f data/TFV6/test_data/attention/live_pert/$PERT/live_pert_speed_logits_1.npy
-git commit -m "add live_pert_profiles_1 for $PERT from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh live_pert tfv6 1 pgd
+bash hpc/collect_results.sh live_pert tfv6 2 pgd     # mode 2
+git commit -m "add TFV6 live_pert pgd results from HPC"
 git push
 ```
 
-Repeat with `_2` for mode 2. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` to the desired mode in `atoms_config.py`.
+Replace `pgd` with whichever perturbation was recorded. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` to the desired mode in `atoms_config.py`.
 
 ---
 
@@ -302,18 +330,13 @@ Chains two SLURM jobs automatically:
 1. **array** — one task per run file; computes ATOMs profiles + backbone features + MDX actions
 2. **gather** — concatenates results → `baseline_{MODE}.npz` (in `partials/`) + `mdx_features.npz`
 
-#### 3. Download results
+#### 3. Collect results
 
 ```bash
-cd /u/paulkull/pcla
-cp /ptmp/paulkull/atoms_wor_baseline/partials/baseline_1.npz  data/WOR/baseline_data/baseline_1.npz
-cp /ptmp/paulkull/atoms_wor_baseline/partials/baseline_2.npz  data/WOR/baseline_data/baseline_2.npz
-cp /ptmp/paulkull/atoms_wor_baseline/partials/mdx_features.npz data/WOR/baseline_data/mdx_features.npz
-
-git add -f data/WOR/baseline_data/baseline_1.npz
-git add -f data/WOR/baseline_data/baseline_2.npz
-git add -f data/WOR/baseline_data/mdx_features.npz
-git commit -m "add WOR baseline_1/2.npz and mdx_features.npz from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh baseline wor 1
+bash hpc/collect_results.sh baseline wor 2
+git commit -m "add WOR baseline results from HPC"
 git push
 ```
 
@@ -349,21 +372,17 @@ Chains three SLURM jobs automatically:
 
 Monitor: `squeue -u paulkull`
 
-#### 3. Download results
+#### 3. Collect results
 
 ```bash
-ATT=/u/paulkull/pcla/data/WOR/test_data/attention
-cp /ptmp/paulkull/atoms_wor_test/test_profiles_1.npy  $ATT/test_profiles_1.npy
-cp /ptmp/paulkull/atoms_wor_test/test_logits_1.npy    $ATT/test_logits_1.npy
-
-cd /u/paulkull/pcla
-git add -f data/WOR/test_data/attention/test_profiles_1.npy
-git add -f data/WOR/test_data/attention/test_logits_1.npy
-git commit -m "add WOR test_profiles_1.npy and test_logits_1.npy from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh test wor 1
+bash hpc/collect_results.sh test wor 2
+git commit -m "add WOR test results from HPC"
 git push
 ```
 
-Repeat for `_2`. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.
+Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.
 
 ---
 
@@ -402,21 +421,14 @@ Chains three SLURM jobs automatically:
 
 Monitor: `squeue -u paulkull`
 
-#### 3. Download results
+#### 3. Collect results
 
 ```bash
-PERT=pgd
-ATT=/u/paulkull/pcla/data/WOR/test_data/attention/live_pert/$PERT
-mkdir -p $ATT
-
-cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_profiles_1.npy       $ATT/live_pert_profiles_1.npy
-cp /ptmp/paulkull/atoms_wor_live_pert/live_pert_action_logits_1.npy  $ATT/live_pert_action_logits_1.npy
-
-cd /u/paulkull/pcla
-git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_profiles_1.npy
-git add -f data/WOR/test_data/attention/live_pert/$PERT/live_pert_action_logits_1.npy
-git commit -m "add WOR live_pert_profiles_1 for $PERT from HPC"
+cd /u/$USER/pcla
+bash hpc/collect_results.sh live_pert wor 1 pgd
+bash hpc/collect_results.sh live_pert wor 2 pgd
+git commit -m "add WOR live_pert pgd results from HPC"
 git push
 ```
 
-Repeat with `_2` for mode 2. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.
+Replace `pgd` with whichever perturbation was recorded. Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` and `MODE_ANALYSIS` as desired.

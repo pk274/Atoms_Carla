@@ -40,13 +40,18 @@ echo "Node     : $(hostname)"
 echo "CPUs     : $SLURM_CPUS_PER_TASK"
 date
 
+# PGD attack settings for the 'pgd' test frames (TFV6). Override by exporting
+# PGD_TARGET / PGD_EPSILON / PGD_STEPS before submitting.
 srun python3 "$CODE_DIR/hpc/compute_test_chunk.py" \
     --labeled-file  "$LABELED_FILE"        \
     --chunk-start   "$CHUNK_START"         \
     --chunk-end     "$CHUNK_END"           \
     --output        "$OUTPUT"              \
     --model-dir     "$MODEL_DIR"           \
-    --mode-analysis "${MODE_ANALYSIS:-1}"
+    --mode-analysis "${MODE_ANALYSIS:-1}"  \
+    --pgd-target    "${PGD_TARGET:-steer_right}" \
+    --pgd-epsilon   "${PGD_EPSILON:-12.0}"       \
+    --pgd-steps     "${PGD_STEPS:-10}"
 
 echo "Task $SLURM_ARRAY_TASK_ID finished with exit code $?"
 date

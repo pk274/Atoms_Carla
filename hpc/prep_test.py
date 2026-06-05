@@ -3,7 +3,10 @@
 prep_test.py
 ------------
 Apply perturbations to clean test frames → test_labeled.npz.
-No model required (TFV6 perturbations are image-space only).
+No model required: the image-space perturbations are applied here, and pgd
+frames are only *recorded* (clean pixels + label=1 + perturbation="pgd") — the
+adversarial attack itself is crafted downstream in compute_test_chunk.py, which
+has the TFV6 model loaded.
 
 Called by prep_test_task.sh as a single-node job before the array job.
 
@@ -23,13 +26,19 @@ import numpy as np
 import torch
 
 
-# TFV6 perturbation spec — mirrors run_analysis.py (25 % each, no PGD)
+# TFV6 perturbation spec — 5-way 20 % split (matches the WoR mix).
+#
+# PGD is an adversarial attack that needs a model forward/backward pass, but this
+# prep step is deliberately model-free (CPU node).  So pgd frames are *recorded*
+# here with clean pixels + label=1 + perturbation="pgd"; the actual attack is
+# crafted later in compute_test_chunk.py, which has the TFV6 model on GPU.
 _SPEC = [
     # (perturbation_or_None, intensity_default, fraction)
-    (None,                0.0, 0.25),
-    ("gaussian_noise",   21.0, 0.25),   # overridden by --noise-intensity
-    ("brightness_scale",  4.0, 0.25),   # overridden by --brightness-intensity
-    ("camera_loss",       0.0, 0.25),
+    (None,                0.0, 0.20),
+    ("gaussian_noise",   21.0, 0.20),   # overridden by --noise-intensity
+    ("brightness_scale",  4.0, 0.20),   # overridden by --brightness-intensity
+    ("camera_loss",       0.0, 0.20),
+    ("pgd",              12.0, 0.20),   # intensity = ℓ∞ ε budget (0–255); overridden by --pgd-epsilon
 ]
 
 
@@ -42,6 +51,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed",                 default=42,   type=int)
     p.add_argument("--noise-intensity",      default=21.0, type=float)
     p.add_argument("--brightness-intensity", default=4.0,  type=float)
+    p.add_argument("--pgd-epsilon",          default=12.0, type=float,
+                   help="ℓ∞ ε budget recorded for pgd frames; the attack itself "
+                        "is crafted in compute_test_chunk.py using this value.")
     return p.parse_args()
 
 
@@ -94,8 +106,9 @@ def main() -> None:
     args = parse_args()
 
     spec = list(_SPEC)
-    spec[1] = ("gaussian_noise",   args.noise_intensity,      0.25)
-    spec[2] = ("brightness_scale", args.brightness_intensity, 0.25)
+    spec[1] = ("gaussian_noise",   args.noise_intensity,      0.20)
+    spec[2] = ("brightness_scale", args.brightness_intensity, 0.20)
+    spec[4] = ("pgd",              args.pgd_epsilon,          0.20)
 
     raw = load_all_runs(args.frames_dir)
     n   = raw["wide_rgb"].shape[0]
@@ -115,9 +128,12 @@ def main() -> None:
     for entry_idx, (pert_name, intensity, _) in enumerate(spec):
         frame_idxs = np.where(assignments == entry_idx)[0]
         is_clean   = pert_name is None
+        # PGD pixels are crafted later (needs the model); keep them clean here but
+        # still record the label so the array job knows which frames to attack.
+        is_pgd     = pert_name == "pgd"
 
         for fi in frame_idxs:
-            if is_clean:
+            if is_clean or is_pgd:
                 out_wide[fi] = raw["wide_rgb"][fi]
             else:
                 perturbed    = pm.perturb_tfv6_image(
@@ -133,6 +149,7 @@ def main() -> None:
             intensities[fi] = 0.0    if is_clean else intensity
 
         tag = "clean" if is_clean else f"{pert_name}@{intensity}"
+        tag += " (pixels deferred to array job)" if is_pgd else ""
         print(f"  '{tag}': {len(frame_idxs)} frames")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
