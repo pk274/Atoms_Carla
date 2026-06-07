@@ -291,6 +291,24 @@ def best_per_perturbation(group_runs: list[Run]):
     return acc
 
 
+def mode_comparison_data(groups: dict) -> dict:
+    """For each agent, extract the best AUC per (detector, mode).
+
+    GMM detectors use their best-K AUC; non-GMM detectors are K-invariant.
+    Returns {agent: {detector: {'1': auc, '2': auc}}}
+    """
+    by_agent: dict[str, dict] = defaultdict(lambda: defaultdict(dict))
+    for (agent, mode), gr in groups.items():
+        if mode not in ("1", "2"):
+            continue
+        Ks, dets, mat = matrix_for_group(gr)
+        for det in dets:
+            vals = mat[det]
+            v = max(vals.values()) if det in GMM_DETECTORS else next(iter(vals.values()))
+            by_agent[agent][det][mode] = v
+    return {a: dict(dd) for a, dd in by_agent.items()}
+
+
 # --------------------------------------------------------------------------- #
 # Markdown report
 # --------------------------------------------------------------------------- #
@@ -504,6 +522,101 @@ def build_markdown(groups: dict, live: dict) -> str:
             w(f"- **{p}**: {len(dets)} detector plots ({', '.join(dets)})")
         w("")
 
+    # ---- 8. mode 1 vs mode 2 comparison ------------------------------------
+    comp = mode_comparison_data(groups)
+    any_both = any(
+        any("1" in v and "2" in v for v in dmap.values())
+        for dmap in comp.values()
+    )
+    if any_both:
+        w("## 8. Mode 1 vs Mode 2 comparison")
+        w("")
+        w("_Mode 1 = **node-level** (LRP1 → filter top-K nodes by relevance → LRP2 per "
+          "node; paper default). Mode 2 = **layer-level** (single FC→input map). "
+          "For GMM detectors the best-K AUC is shown; non-GMM detectors are K-invariant._")
+        w("")
+
+        # --- 8a. per-detector comparison table per agent ---
+        w("### 8a. Overall detector comparison (best AUC per mode)")
+        w("")
+        for agent in sorted(comp.keys()):
+            dmap = comp[agent]
+            has_both = any("1" in v and "2" in v for v in dmap.values())
+            if not has_both:
+                continue
+            w(f"**{agent}**")
+            w("")
+            w("| Detector | Mode 1 | Mode 2 | Δ (2−1) | Better |")
+            w("|----------|--------|--------|---------|--------|")
+            mode2_wins = mode1_wins = ties = 0
+            for det in DETECTOR_ORDER:
+                if det not in dmap:
+                    continue
+                v = dmap[det]
+                m1, m2 = v.get("1"), v.get("2")
+                s1 = fmt(m1) if m1 is not None else "—"
+                s2 = fmt(m2) if m2 is not None else "—"
+                if m1 is not None and m2 is not None:
+                    delta = m2 - m1
+                    ds = (f"+{delta:.4f}" if delta >= 0 else f"{delta:.4f}")
+                    if abs(delta) < 0.005:
+                        better = "≈ tie"
+                        ties += 1
+                    elif delta > 0:
+                        better = "**Mode 2**"
+                        mode2_wins += 1
+                    else:
+                        better = "**Mode 1**"
+                        mode1_wins += 1
+                else:
+                    ds = "—"
+                    better = "—"
+                w(f"| {det} | {s1} | {s2} | {ds} | {better} |")
+            total = mode1_wins + mode2_wins + ties
+            w("")
+            if total:
+                w(f"_Mode 2 wins {mode2_wins}/{total} detectors, "
+                  f"Mode 1 wins {mode1_wins}/{total}, {ties} near-tie (|Δ|<0.005)._")
+            w("")
+
+        # --- 8b. per-perturbation mode comparison ---
+        w("### 8b. Per-perturbation mode comparison (best AUC over K)")
+        w("")
+        for agent in sorted(comp.keys()):
+            mode1_gr = next((gr for (a, m), gr in groups.items() if a == agent and m == "1"), None)
+            mode2_gr = next((gr for (a, m), gr in groups.items() if a == agent and m == "2"), None)
+            if mode1_gr is None or mode2_gr is None:
+                continue
+            bp1 = best_per_perturbation(mode1_gr)
+            bp2 = best_per_perturbation(mode2_gr)
+            perts = sorted(set(list(bp1.keys()) + list(bp2.keys())))
+            if not perts:
+                continue
+            w(f"**{agent}**")
+            w("")
+            for p in perts:
+                dets_here = [d for d in DETECTOR_ORDER
+                             if d in bp1.get(p, {}) or d in bp2.get(p, {})]
+                if not dets_here:
+                    continue
+                w(f"_Perturbation: `{p}`_")
+                w("")
+                w("| Detector | Mode 1 | Mode 2 | Δ (2−1) |")
+                w("|----------|--------|--------|---------|")
+                for det in dets_here:
+                    v1 = bp1.get(p, {}).get(det)
+                    v2 = bp2.get(p, {}).get(det)
+                    s1 = fmt(v1[0]) if v1 else "—"
+                    s2 = fmt(v2[0]) if v2 else "—"
+                    if v1 and v2:
+                        d = v2[0] - v1[0]
+                        ds = f"+{d:.4f}" if d >= 0 else f"{d:.4f}"
+                    else:
+                        ds = "—"
+                    w(f"| {det} | {s1} | {s2} | {ds} |")
+                w("")
+            w("")
+
     return "\n".join(L)
 
 
@@ -586,6 +699,60 @@ def plot_k_curves(groups: dict, out: Path):
         plt.close(fig)
 
 
+def plot_mode_comparison(groups: dict, out: Path):
+    """Scatter plot: mode 1 AUC (x-axis) vs mode 2 AUC (y-axis) per detector.
+
+    Points above the diagonal y=x mean mode 2 is better; below means mode 1 wins.
+    One subplot per agent.  Skipped entirely if fewer than two modes exist.
+    """
+    comp = mode_comparison_data(groups)
+    agents = [a for a in sorted(comp.keys())
+              if any("1" in v and "2" in v for v in comp[a].values())]
+    if not agents:
+        return
+
+    fig, axes = plt.subplots(1, len(agents), figsize=(5.5 * len(agents), 4.8), squeeze=False)
+    for ax, agent in zip(axes[0], agents):
+        dmap = comp[agent]
+        xs, ys, labels = [], [], []
+        for det in DETECTOR_ORDER:
+            if det not in dmap:
+                continue
+            v = dmap[det]
+            if "1" not in v or "2" not in v:
+                continue
+            xs.append(v["1"])
+            ys.append(v["2"])
+            labels.append(det)
+        if not xs:
+            ax.set_visible(False)
+            continue
+        xs_arr, ys_arr = np.array(xs), np.array(ys)
+        colors = ["tab:green" if y > x + 0.005 else
+                  ("tab:red" if x > y + 0.005 else "tab:gray")
+                  for x, y in zip(xs_arr, ys_arr)]
+        ax.scatter(xs_arr, ys_arr, c=colors, s=70, zorder=3)
+        for lbl, x, y in zip(labels, xs_arr, ys_arr):
+            ax.annotate(lbl, (x, y), textcoords="offset points",
+                        xytext=(4, 4), fontsize=7)
+        lo = min(xs_arr.min(), ys_arr.min()) - 0.03
+        hi = max(xs_arr.max(), ys_arr.max()) + 0.03
+        ax.plot([lo, hi], [lo, hi], "k--", lw=1, zorder=2, label="parity (y=x)")
+        ax.axhline(0.5, ls=":", c="gray", lw=0.8)
+        ax.axvline(0.5, ls=":", c="gray", lw=0.8)
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("Mode 1 AUC (node-level)", fontsize=10)
+        ax.set_ylabel("Mode 2 AUC (layer-level)", fontsize=10)
+        ax.set_title(f"{agent}: mode 1 vs mode 2\n"
+                     "green=mode2 better  red=mode1 better", fontsize=10, fontweight="bold")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out / "mode_comparison_scatter.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
@@ -618,6 +785,7 @@ def main():
     plot_k_heatmaps(groups, out)
     plot_perturbation_heatmaps(groups, out)
     plot_k_curves(groups, out)
+    plot_mode_comparison(groups, out)
     pngs = sorted(out.glob("*.png"))
     print(f"Wrote {len(pngs)} figures:")
     for p in pngs:

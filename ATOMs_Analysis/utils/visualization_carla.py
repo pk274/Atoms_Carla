@@ -712,7 +712,8 @@ def plot_attention_bars_separate(
     class_names:    List[str],
     top_k:          Optional[int] = 15,
     colors:         Optional[List] = None,
-    error_dict:     Optional[Dict[str, np.ndarray]] = None,
+    min_dict:       Optional[Dict[str, np.ndarray]] = None,
+    max_dict:       Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, "plt.Figure"]:
     """
     Produce one attention bar chart per entry in *attention_dict*.
@@ -724,13 +725,16 @@ def plot_attention_bars_separate(
 
     Parameters
     ----------
-    attention_dict : dict mapping label (str) -> attention vector [C].
+    attention_dict : dict mapping label (str) -> mean attention vector [C].
     class_names    : List[str] [C]
     top_k          : number of top classes to show (by max attention across
                      all conditions); None shows all classes.
     colors         : optional list of bar colours, one per condition (aligned
                      to attention_dict order).  Defaults to CLEAN_TEST_COLOR.
-    error_dict     : optional dict mapping label -> std vector [C] for error bars.
+    min_dict       : optional dict mapping label -> per-class min vector [C].
+                     When provided together with max_dict, asymmetric whiskers
+                     are drawn from min to max over each bar.
+    max_dict       : optional dict mapping label -> per-class max vector [C].
 
     Returns
     -------
@@ -749,17 +753,24 @@ def plot_attention_bars_separate(
 
     figs: Dict[str, "plt.Figure"] = {}
     for i, label in enumerate(labels):
-        att    = attention_dict[label]
-        error  = error_dict[label] if error_dict is not None else None
-        color  = colors[i % len(colors)] if colors is not None else vc.CLEAN_TEST_COLOR
+        att   = attention_dict[label]
+        color = colors[i % len(colors)] if colors is not None else vc.CLEAN_TEST_COLOR
 
-        vals   = att[shared_idx]
-        names  = [class_names[j] for j in shared_idx]
-        errors = error[shared_idx] if error is not None else None
+        vals  = att[shared_idx]
+        names = [class_names[j] for j in shared_idx]
+
+        # Asymmetric min-max whiskers: xerr shape must be [2, N].
+        xerr = None
+        if min_dict is not None and max_dict is not None and label in min_dict and label in max_dict:
+            lo   = np.clip(vals - min_dict[label][shared_idx], 0, None)
+            hi   = np.clip(max_dict[label][shared_idx] - vals, 0, None)
+            xerr = np.vstack([lo, hi])
 
         fig, ax = plt.subplots(figsize=vc.figsize_attention_bar(len(shared_idx)))
         y_pos   = np.arange(len(shared_idx))
-        ax.barh(y_pos, vals, xerr=errors, color=color, alpha=0.85, capsize=3)
+        ax.barh(y_pos, vals, color=color, alpha=0.85,
+                xerr=xerr,
+                error_kw=dict(ecolor="dimgray", elinewidth=1.2, capsize=4, capthick=1.2))
         ax.set_yticks(y_pos)
         ax.set_yticklabels(names, fontsize=vc.FONTSIZE_TICK)
         ax.set_xlabel("Normalized attention")

@@ -18,7 +18,10 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 3        # None for automatic selection
+    NUM_GMM_CLUSTERS = 11        # None for automatic selection
+
+    MODE_ANALYSIS = 2
+    FC_RELEVANCE_FILTER = 0.9       # 0.9
 
 
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
@@ -58,7 +61,8 @@ class ExperimentConfig:
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
-    PGD_TARGET = "steer_right"
+    PGD_TARGET  = "steer_right"
+    PGD_EPSILON = 12.0      # ε budget (pixel units); must match hpc/prep_test.py PGD_EPSILON default
     PGD_N_STEPS = 10        # PGD iterations; more steps = stronger attack # Wor: 10
 
     DEFAULT_CMD = 2
@@ -66,9 +70,6 @@ class ExperimentConfig:
     GMM_MAX_K = 10
     GMM_COV_TYPE = "full"
     RANDOM_SEED = 17
-
-    MODE_ANALYSIS = 2
-    FC_RELEVANCE_FILTER = 0.9       # 0.9
 
     # If True, attention profiles are built from the wide-camera relevance map
     # only.  The narrow-camera contribution is ignored in _give_element_selectivity.

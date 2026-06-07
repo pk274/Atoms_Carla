@@ -48,7 +48,8 @@ def main() -> None:
 
     mdx_out = args.mdx_output or (args.output.parent / "mdx_features.npz")
 
-    partial_files = sorted(args.partials_dir.glob("partial_*.npz"))
+    partial_files = sorted(args.partials_dir.glob("partial_*.npz"),
+                          key=lambda f: int(f.stem.split("_")[-1]))
     if not partial_files:
         raise FileNotFoundError(
             f"No partial_*.npz files found in {args.partials_dir}\n"

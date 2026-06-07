@@ -478,12 +478,16 @@ save_figure(fig_bar, dirs["attention"] / "baseline_attention_bar.png")
 # Distinct profiles confirm the clusters represent genuinely different
 # driving situations. Similar profiles suggest K may be too large.
 cluster_attention = {}
+cluster_min       = {}
+cluster_max       = {}
 for k in range(N_COMPONENTS):
     mask = baseline_cluster_labels == k
     if mask.sum() == 0:
         continue
-    cluster_mean = baseline_series[mask].mean(axis=0)   # [C]
-    cluster_attention[f"Cluster {k}  (n={mask.sum()})"] = cluster_mean
+    label = f"Cluster {k}  (n={mask.sum()})"
+    cluster_attention[label] = baseline_series[mask].mean(axis=0)   # [C]
+    cluster_min[label]       = baseline_series[mask].min(axis=0)    # [C]
+    cluster_max[label]       = baseline_series[mask].max(axis=0)    # [C]
 
 fig_cluster_bar = plot_attention_comparison(
     attention_dict = cluster_attention,
@@ -502,6 +506,8 @@ figs_per_cluster = plot_attention_bars_separate(
     class_names    = atoms.class_names,
     top_k          = 10,
     colors         = cluster_colors,
+    min_dict       = cluster_min,
+    max_dict       = cluster_max,
 )
 for label, fig in figs_per_cluster.items():
     # label is e.g. "Cluster 0  (n=412)" — sanitise for filename
@@ -628,18 +634,18 @@ if conf.REAPPLY_PERTURBATIONS or not _labeled_npz.exists():
     # Define the perturbation mix.
     # <<< ADJUST fractions and perturbation types to your experiment
     if conf.AGENT == "TFV6":
-        # This offline applier cannot craft TFV6 PGD: the attack needs a full
-        # TFv6.forward backward pass, which the WoR-only pgd_attack here does not
-        # provide.  TFV6 PGD is instead produced on the HPC: hpc/prep_test.py
-        # records pgd frames (clean pixels + label) and hpc/compute_test_chunk.py
-        # crafts the adversarial image during the GPU/CPU array pass.  So the
-        # local TFV6 mix here stays 4-way; use the HPC pipeline for a pgd-labelled
-        # TFV6 test set.
+        # TFV6 PGD is deferred: locally PerturbationApplier records pgd frames with
+        # clean pixels + label=1, and hpc/compute_test_chunk.py crafts the actual
+        # adversarial image on the GPU worker.  The frame assignment is deterministic
+        # (seed=42), so this 5-way spec produces the same shuffle as hpc/prep_test.py.
+        # After downloading HPC profiles: set REAPPLY_PERTURBATIONS=True once to
+        # regenerate test_labeled.npz with this 5-way spec, then set it back to False.
         spec = PerturbationSpec([
-            PerturbationEntry(fraction=0.25, perturbation=None),
-            PerturbationEntry(fraction=0.25, perturbation="gaussian_noise",  intensity=conf.NOISE_INTENSITY),
-            PerturbationEntry(fraction=0.25, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
-            PerturbationEntry(fraction=0.25, perturbation="camera_loss",     intensity=0),
+            PerturbationEntry(fraction=0.20, perturbation=None),
+            PerturbationEntry(fraction=0.20, perturbation="gaussian_noise",   intensity=conf.NOISE_INTENSITY),
+            PerturbationEntry(fraction=0.20, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
+            PerturbationEntry(fraction=0.20, perturbation="camera_loss",      intensity=0),
+            PerturbationEntry(fraction=0.20, perturbation="pgd",              intensity=conf.PGD_EPSILON, fgsm_target=conf.PGD_TARGET),
         ])
     else:
         spec = PerturbationSpec([

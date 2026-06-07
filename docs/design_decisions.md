@@ -388,3 +388,32 @@ feature extraction.
 
 Also fixed: `_make_minimal_data` created all tensors on CPU regardless of the
 `device` argument.  All tensor constructors now pass `device=device`.
+
+---
+
+## HPC gather: lexicographic sort bug (found 2026-06-07)
+
+**Problem**: `gather_baseline.py` used `sorted(partials_dir.glob("partial_*.npz"))` to
+reassemble partial results from SLURM array tasks.  Python's default sort is
+lexicographic on the full path string, so for 39 tasks (indices 0–38) the assembly
+order was `0, 1, 10, 11, …, 19, 2, 20, …, 9` — not the intended numeric order
+`0, 1, 2, …, 38`.  SLURM task K processed run file K from the sorted list, so
+`partial_10.npz` contained profiles from run 10, but was placed in position 2 of the
+gathered series.  This caused a large-scale frame-to-profile mismatch: 37 of 39 run
+files had mismatched series entries.  The symptom was "spurious Biker attention in
+Town07 frames that have zero biker pixels" — those series positions actually held Town10
+profiles (where bikers are present).
+
+**Impact**:
+- OOD detection AUC results remain valid: GMM/Mahalanobis/kNN fitting is
+  order-independent, and all profiles are real attention vectors.
+- Representative frame images and run-level PCA coloring are broken in the scrambled
+  baseline (the wrong RGB frame is shown for each cluster representative).
+
+**Fix**: `gather_baseline.py` line 51 now uses a numeric sort key:
+```python
+partial_files = sorted(args.partials_dir.glob("partial_*.npz"),
+                       key=lambda f: int(f.stem.split("_")[-1]))
+```
+The existing `baseline_1.npz` must be regenerated on the HPC with the fixed gather
+script before the representative-frame visualization can be trusted.

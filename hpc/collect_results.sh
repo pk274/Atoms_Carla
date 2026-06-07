@@ -186,7 +186,15 @@ if [ "$N_OK" -gt 0 ] && [ "$DRY_RUN" = 0 ]; then
     fi
     case "$PIPELINE" in
         baseline)  echo "Reminder: locally set RECOMPUTE_BASELINE=False and RECOMPUTE_MDX_BASELINE=False." ;;
-        test|live_pert) echo "Reminder: locally set RECOMPUTE_TEST_ATOMS=False (and REAPPLY_PERTURBATIONS=False)." ;;
+        test|live_pert)
+            echo "Reminder: set RECOMPUTE_TEST_ATOMS=False."
+            if [ "$AG" = "TFV6" ] && [ "$PIPELINE" = "test" ]; then
+                echo "  TFV6 PGD: set REAPPLY_PERTURBATIONS=True once to regenerate test_labeled.npz"
+                echo "  with the 5-way spec (PGD deferred), then set REAPPLY_PERTURBATIONS=False."
+            else
+                echo "  Also set REAPPLY_PERTURBATIONS=False to reuse the existing test_labeled.npz."
+            fi
+            ;;
     esac
 fi
 

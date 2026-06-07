@@ -291,17 +291,19 @@ class PerturbationApplier:
 
             is_fgsm = (not is_clean) and entry.perturbation == "fgsm"
             is_pgd  = (not is_clean) and entry.perturbation == "pgd"
+            # TFV6 (no narrow camera): PGD is crafted on the HPC.  Locally we just
+            # record the label and keep clean pixels so the frame assignment matches
+            # the HPC prep_test.py output (same seed + same spec → same shuffle).
+            is_pgd_deferred = is_pgd and not has_narr
 
-            if (is_fgsm or is_pgd) and self._model is None:
+            if (is_fgsm or (is_pgd and not is_pgd_deferred)) and self._model is None:
                 raise ValueError(
                     "Adversarial attack perturbation requires a model. "
                     "Pass model= to PerturbationApplier()."
                 )
-            if (is_fgsm or is_pgd) and not has_narr:
+            if is_fgsm and not has_narr:
                 raise ValueError(
-                    f"Perturbation '{entry.perturbation}' requires a narrow camera "
-                    "(WoR dual-camera model).  TFV6 single-stream data is not supported "
-                    "for adversarial attacks."
+                    "fgsm requires a narrow camera (WoR dual-camera model)."
                 )
 
             for fi in frame_idxs:
@@ -324,7 +326,7 @@ class PerturbationApplier:
                         apply_to_narrow= True,
                     )
 
-                elif is_pgd:
+                elif is_pgd and not is_pgd_deferred:
                     wide, narr = self._pm.pgd_attack(
                         model          = self._model,
                         wide_rgbs_     = wide,
@@ -335,8 +337,9 @@ class PerturbationApplier:
                         apply_to_wide  = True,
                         apply_to_narrow= True,
                     )
+                # is_pgd_deferred: keep clean pixels; HPC crafts the adversarial image
 
-                elif not is_clean:
+                elif not is_clean and not is_pgd_deferred:
                     if has_narr:
                         wide = self._pm.perturb_wide_image(
                             wide, perturbation=entry.perturbation, intensity=entry.intensity
