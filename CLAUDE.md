@@ -36,7 +36,7 @@ Backpropagates relevance from the network output to the input pixels. Two implem
 
 ### ATOMs (Attention-Oriented Metrics)
 Introduced by Beylier et al. (NeurIPS 2024 workshop). Converts raw LRP heatmaps into structured, object-level attention vectors by intersecting relevance maps with semantic segmentation masks. Two levels:
-- **Hierarchical-attention** `h(o)`: fraction of total relevance falling on object `o`.
+- **Hierarchical-attention** `h(o)`: the mean relevance over object `o`'s pixels that carry nonzero relevance (R̄ in Beylier et al.), then re-normalized across objects — not a raw fraction of total relevance.
 - **Combinatorial-attention** `c(T)`: fraction of frames where a neuron attends jointly to a subset of objects `T` (using threshold α = 0.25).
 
 For TFV6, CARLA's grouped semantic segmentation (10 classes, `save_grouped_semantic=True`) is used via `TFV6_CLASSES` in `atoms_carla.py`. Implemented in `ATOMs_Analysis/saliency/atoms_carla.py`.
@@ -47,7 +47,7 @@ For TFV6, CARLA's grouped semantic segmentation (10 classes, `save_grouped_seman
 - When `PLOT_COMPARATIVE_REL=False`, brake/drive slots mirror the default map.
 
 ### OOD Detection Strategy
-1. Collect clean baseline driving frames; compute one ATOMs profile (23-dim attention vector) per frame.
+1. Collect clean baseline driving frames; compute one ATOMs profile per frame. Dimensionality is agent-dependent: 29 for WOR (full `CARLA_CLASSES`, tags 0–28) and 10 for TFV6 (grouped `TFV6_CLASSES`). (Earlier docs said "23-dim"; that was a stale CARLA tag count.)
 2. Fit a statistical model (Gaussian or GMM) on the baseline profile cloud.
 3. At test time, score each frame's profile by its distance from the baseline distribution.
 4. High distance → OOD flag. Evaluated against ground-truth perturbation labels via ROC / AUC.
@@ -62,20 +62,21 @@ The main entry point. Runs end-to-end and produces all figures and JSON results 
 |------|-------------|
 | 1 | Load `CameraModel` weights; initialize `LRPCameraModel` and `ATOMsCarla` |
 | 2 | Compute ATOMs profiles on baseline frames → `baseline.npz` (mean, covariance, per-frame series) |
-| 2.5 | Fit `MDXDetector` on baseline (feature-space Mahalanobis baseline from Zhang et al. 2024) |
+| 2.5 | Fit `MDXDetector` (MDX-v1) on baseline — 512-d backbone features + speed-derived action proxy. For TFV6: reads pre-computed `mdx_features.npz` if available; otherwise extracts locally. Controlled by `RECOMPUTE_MDX_BASELINE`. |
+| 2.5-v2 | Fit `MDXDetector` (MDX-v2) on baseline — 256-d F_c (`speed_query`) features + waypoint steer proxy + quantile binning. Runs locally only (full planning-decoder forward per frame). Controlled by `RECOMPUTE_MDX_V2_BASELINE`. Saves `mdx_v2_parameters.pkl`. |
 | 3 | Fit single-Gaussian `MahalanobisDetector` on baseline profiles; set threshold at 99th percentile |
 | 4 | BIC/AIC sweep over K=1..MAX_K to select GMM component count |
 | 5 | Fit `GMMClustering` with selected K; assign baseline frames to clusters |
 | 6 | Visualize baseline: attention bar chart, per-cluster attention comparison, PCA coloured by run and cluster |
 | 7 | Apply perturbation mix to test set → `test_labeled.npz` with ground-truth labels |
 | 8 | Compute ATOMs profiles + action logits on labeled test set → `test_profiles.npy` |
-| 8.5 | Trajectory analysis: match clean↔perturbed pairs by (run_id, frame_idx); compute displacement stats and PCA trajectories per perturbation type |
-| 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX, Action Entropy |
+| 8.5 | Trajectory analysis: match clean↔perturbed pairs by (run_id, frame_idx); compute displacement stats and PCA trajectories per perturbation type. **DISABLED — this block is currently commented out in `run_analysis.py`; any `trajectory_analysis/` figures on disk are stale.** |
+| 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX-v1, MDX-v2, Action Entropy |
 | 10 | Evaluate each detector: ROC curve, AUC, Youden-J optimal threshold |
 | 11 | Per-perturbation breakdown: evaluate each detector separately on each perturbation type |
 | 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/` |
 
-Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`.
+Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`.
 
 ---
 
@@ -92,7 +93,8 @@ ATOMs_Analysis/
 ├── detection/
 │   ├── baseline_dataset.py    # BaselineDataCollector, BaselineComputer, BaselineDataLoader
 │   ├── dataset.py             # LabeledTestLoader, PerturbationApplier, PerturbationSpec
-│   ├── detectors.py           # MahalanobisDetector, ActionEntropyDetector, MDXDetector,
+│   ├── detectors.py           # MahalanobisDetector, ActionEntropyDetector,
+│   │                          #   MDXDetector (bin_strategy="equal-width"|"quantile"),
 │   │                          #   EuclideanDetector, KNNDetector, JensenShannonDetector,
 │   │                          #   DetectorEvaluator (ROC / AUC / Youden)
 │   └── clustering.py          # GMMClustering — BIC/AIC sweep + GMM fit + per-cluster scoring
@@ -106,7 +108,7 @@ ATOMs_Analysis/
 
 ### Key design notes
 - `atoms_config.py` is the single source of truth for all paths and hyperparameters. Edit it rather than hardcoding values in scripts.
-- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd, spd, data)` is the per-frame API; call `atoms.reset()` between datasets. Pass the real `data` dict (from the frame npz) for TFV6 — the fallback `_make_minimal_data` uses a zero command vector which distorts LRP attributions.
+- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd, spd, data)` is the per-frame API; call `atoms.reset()` between datasets. For TFV6, `process_frame` is called without `data=`; `_make_minimal_data` rebuilds the conditioning dict from `cmd`/`spd`. The command one-hot is built from `cmd` (round-trips exactly with the agent's stored `cmd = argmax(command)`), but `target_point` and `acceleration` are zero — route conditioning is therefore absent, which can shift attributions relative to the live agent.
 - `DistanceComputer` is stateless (static methods); detectors (`MahalanobisDetector`, etc.) are stateful (fit/save/load).
 - Visualization functions return `matplotlib.Figure` objects; use `save_figure(fig, path)` to write them.
 - `viz_config.py` defines `apply_default_style()` — call it at the top of any new plotting script to keep figures consistent across the thesis.
@@ -122,17 +124,116 @@ ATOMs_Analysis/
 
 ---
 
+## Raw Data Creation Pipeline (TFV6)
+
+All TFV6 driving footage originates from the **LEAD CARLA leaderboard dataset**, pre-downloaded to `D:\Carla_tfv6_data\`. The pipeline from raw footage to analysis-ready `.npz` files has three stages.
+
+### Stage 1 — Select and unzip routes (`unzip_routes.ps1`)
+
+Raw footage is stored as per-route `.zip` files in:
+```
+D:\Carla_tfv6_data\data\carla_leaderboard2\zip\noScenarios\
+```
+
+Available routes by town (1431 zips total):
+
+| Town | Zips | Used for |
+|------|------|---------|
+| Town03 | 34 | baseline |
+| Town04 | 217 | baseline |
+| Town05 | 114 | **test / val (held out)** |
+| Town06 | 320 | baseline |
+| Town07 | 165 | baseline |
+| Town10 | 27 | baseline |
+| Town15 | 554 | baseline |
+
+**Town05 is the designated test/validation town and must be excluded from baseline extraction.**
+
+`unzip_routes.ps1` groups zips by town, picks the N largest (by file size) routes per town, and extracts them to:
+```
+D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios\<route_name>\
+```
+
+Each extracted route has three subdirectories:
+- `rgb/NNNN.jpg` — concatenated 6-camera JPEG (384×1152 px)
+- `semantics/NNNN.png` — grouped semantic segmentation (class IDs in channel 0)
+- `metas/NNNN.pkl` — XZ-compressed pickle with: `next_commands` (list of RoadOption ints), `speed` (float64 m/s), `brake` (bool), `town` (str)
+
+**Common invocations:**
+```powershell
+# Preview: 10 routes per non-Town05 town
+.\unzip_routes.ps1 -ExcludeTowns "Town05" -DryRun
+
+# Extract baseline routes (10 per town, Town05 withheld)
+.\unzip_routes.ps1 -ExcludeTowns "Town05"
+
+# Extract Town05 test/val routes (N per run)
+.\unzip_routes.ps1 -ExcludeTowns "Town03,Town04,Town06,Town07,Town10,Town15" -RoutesPerTown 13
+
+# Extract more Town05 routes for the val set (e.g. 26 total, top-13 already used for test)
+.\unzip_routes.ps1 -ExcludeTowns "Town03,Town04,Town06,Town07,Town10,Town15" -RoutesPerTown 26
+```
+
+### Stage 2 — Migrate to npz format (`migrate_lead_to_baseline.py`)
+
+Converts the extracted LEAD routes into the npz format consumed by the analysis pipeline. Reads from the `noScenarios/` directory, applies even-spaced frame sampling across all routes of each active town, and writes one `.npz` per route.
+
+**Output schema** (each npz): `wide_rgb [N,3,H,W] uint8`, `seg_red_wide [N,H,W] uint8`, `cmd [N] int32`, `speed [N] float32`, `is_brake [N] int8`, `frame_idx [N] int32`. No narrow camera (TFV6 is wide-only).
+
+**Command mapping:** CARLA `RoadOption` integers (1-based: LEFT=1, RIGHT=2, STRAIGHT=3, LANEFOLLOW=4, ...) → 0-based indices (0–5).
+
+```bash
+# Baseline: sample from all non-Town05 towns → data/TFV6/baseline_data/frames/
+python migrate_lead_to_baseline.py \
+    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --mode baseline \
+    --n_frames 3000 \
+    --exclude_towns Town05
+
+# Test set: sample from Town05 only → data/TFV6/test_data/frames/
+python migrate_lead_to_baseline.py \
+    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --mode testset \
+    --testset_towns Town05 \
+    --testset_n_frames 500
+
+# Validation set: sample from Town05 routes NOT yet in test_data/frames/
+# → data/TFV6/val_data/frames/  (auto-excludes test routes by reading test_data/frames/ npz stems)
+python migrate_lead_to_baseline.py \
+    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --mode valset \
+    --testset_towns Town05 \
+    --testset_n_frames 500
+```
+
+The `valset` mode auto-excludes routes already present in `test_data/frames/` by reading the existing npz stems — no manual exclusion list needed.
+
+### Stage 3 — HPC profile computation
+
+Once npz frame files exist in `baseline_data/frames/` or `test_data/frames/`, the HPC pipeline takes over (see `docs/cluster_explanations.md`). This stage is identical for baseline, test, and val data — only the source frames directory and output paths differ.
+
+---
+
 ## Data Layout
 
 ```
 data/
   baseline_data/
-    frames/run_*.npz         # Raw baseline driving frames
+    frames/run_*.npz         # Raw baseline driving frames (migrated from LEAD, non-Town05 towns)
     baseline_1.npz           # Computed profiles for MODE_ANALYSIS=1
     baseline_2.npz           # Computed profiles for MODE_ANALYSIS=2
-    mdx_parameters/          # Saved MDXDetector parameters
+    mdx_parameters/          # Saved MDXDetector (v1) parameters — 512-d backbone + equal-width bins
+    mdx_v2_parameters/       # Saved MDXDetector (v2) parameters — 256-d F_c + quantile bins
+  val_data/                  # Validation set — Town05 routes NOT used in test_data (planned)
+    frames/run_*.npz         # Raw clean validation frames
+    val_labeled.npz          # Perturbed+labeled val set (same 5-way 20% mix as test)
+    attention/
+      val_profiles_1.npy
+      val_profiles_2.npy
+      val_speed_logits_1.npy
+      val_speed_logits_2.npy
   test_data/
-    frames/run_*.npz         # Raw clean test frames
+    frames/run_*.npz         # Raw clean test frames (migrated from LEAD, Town05 only)
     test_labeled.npz         # Perturbed+labeled test set
     attention/
       test_profiles_1.npy    # Per-frame ATOMs profiles, MODE_ANALYSIS=1
@@ -162,6 +263,12 @@ Entry point: `pcla_agents/transfuserv6/lead/inference/sensor_agent_data_collecti
 - **Speed output**: `target_speed_decoder` (Linear 256→256 → ReLU → Linear 256→8) → 8-bin two-hot speed distribution → decoded scalar in m/s
 - **Speed bins**: [0.0, 4.0, 8.0, 10.0, 13.89, 16.0, 17.78, 20.0] m/s
 - **LRP model**: `LRPTFv6Model` in `lrp_transfuser.py`. Construct with `LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder)`
+- **Feature extraction methods** (on `LRPTFv6Model`):
+  - `get_backbone_features(wide_rgb)` → `np.ndarray[512]` — ResNet34 GAP output; used by MDX-v1.
+  - `get_fc_features(wide_rgb, cmd, spd)` → `np.ndarray[256]` — F_c (`speed_query`); used by MDX-v2 test scoring.
+  - `get_planning_action_and_features(wide_rgb, cmd, spd)` → `(np.ndarray[256], steer, throttle, brake)` — single forward pass returning F_c feature + action proxy; used by MDX-v2 baseline fit.
+  - `get_speed_logits(wide_rgb, cmd, spd)` → `np.ndarray[8]` — raw speed bin logits; used by PEOC.
+- **`TFv6FullModelForLRP.forward`** now accepts `_return_wps=True` to also return predicted future waypoints `[B, N_wp, 2]` alongside `speed_query`; all existing callers use the default `False`.
 
 ## World on Rails (WoR) Agent — secondary
 

@@ -70,6 +70,8 @@ from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader, Baseli
 from ATOMs_Analysis.detection.dataset import (
     LabeledTestLoader, PerturbationApplier, PerturbationSpec, PerturbationEntry,
 )
+VAL_DATA_DIR = Path(conf.VAL_DATA_DIR)
+VAL_ATT_DIR  = VAL_DATA_DIR / "attention"
 from ATOMs_Analysis.detection.detectors import (
     MahalanobisDetector, ActionEntropyDetector, DetectorEvaluator,
 )
@@ -248,7 +250,8 @@ print()
 #         single-stream backbone without requiring a live model forward pass
 #         through the full planning decoder.
 # ===========================================================================
-mdx = None
+mdx    = None
+mdx_v2 = None
 if action_logits_available:
     # -----------------------------------------------------------------------
     # WoR MDX: penultimate-layer features + joint action distribution
@@ -366,6 +369,50 @@ elif conf.AGENT == "TFV6":
                 "Neither mdx_parameters.pkl nor mdx_features.npz found in "
                 f"{conf.BASELINE_DATA_DIR}. Set RECOMPUTE_MDX_BASELINE=True to recompute."
             )
+
+    # -----------------------------------------------------------------------
+    # TFV6 MDX-v2: F_c (256-d speed_query) features + waypoint steer proxy
+    #              + quantile binning.  Additive alongside MDX-v1.
+    # -----------------------------------------------------------------------
+    mdx_v2      = None
+    _mdx_v2_pkl = Path(conf.BASELINE_DATA_DIR) / "mdx_v2_parameters.pkl"
+
+    if conf.RECOMPUTE_MDX_V2_BASELINE:
+        _feat_tag = "F_c 256-d" if conf.MDX2_USE_FC_FEATURES else "backbone 512-d"
+        _bin_tag  = "quantile"  if conf.MDX2_USE_QUANTILE_BINNING else "equal-width"
+        print(f"\n[Step 2.5-v2] Fitting TFV6 MDX-v2 ({_feat_tag} + {_bin_tag} bins)...")
+        _v2_runs = BaselineDataLoader.load_all_runs(
+            Path(conf.BASELINE_DATA_DIR) / "frames"
+        )
+        _feats_v2, _acts_v2 = [], []
+        _n_v2 = len(_v2_runs["frame_idx"])
+        for i in range(_n_v2):
+            if i % 200 == 0:
+                print(f"  MDX-v2 feature+action extraction frame {i}/{_n_v2}")
+            wide_t = torch.from_numpy(_v2_runs["wide_rgb"][i]).unsqueeze(0)
+            if conf.MDX2_USE_FC_FEATURES:
+                feat, st, th, br = lrp.get_planning_action_and_features(
+                    wide_t, cmd=int(_v2_runs["cmd"][i]), spd=float(_v2_runs["speed"][i])
+                )
+            else:
+                feat = lrp.get_backbone_features(wide_t)
+                _spd = float(_v2_runs["speed"][i])
+                st, th, br = 0.0, min(_spd / 25.0, 1.0), (1.0 if _spd < 0.5 else 0.0)
+            _feats_v2.append(feat)
+            _acts_v2.append([st, th, br])
+        _feats_v2_arr = np.array(_feats_v2)
+        _acts_v2_arr  = np.array(_acts_v2)
+        print(f"  MDX-v2 steer std: {_acts_v2_arr[:,0].std():.4f}  "
+              f"(old MDX-v1 steer was always 0.0)")
+        _bin_strat = "quantile" if conf.MDX2_USE_QUANTILE_BINNING else "equal-width"
+        mdx_v2 = MDXDetector(n_pca_components=50, bin_strategy=_bin_strat)
+        print("\nFitting TFV6 MDX-v2 Detector!\n")
+        mdx_v2.fit(_feats_v2_arr, _acts_v2_arr)
+        mdx_v2.save(conf.BASELINE_DATA_DIR / "mdx_v2_parameters")
+    elif _mdx_v2_pkl.exists():
+        print("  Loading pre-fitted MDX-v2 from mdx_v2_parameters.pkl")
+        mdx_v2 = MDXDetector()
+        mdx_v2.load(conf.BASELINE_DATA_DIR / "mdx_v2_parameters")
 
 
 # ===========================================================================
@@ -679,6 +726,21 @@ print()
 if conf.RECOMPUTE_TEST_ATOMS:
     print("[Step 9] Computing ATOMs on test set...")
 
+    # Guard (docs/code_review.md §4.2): for TFV6, PGD is crafted on the HPC and
+    # the local test_labeled.npz stores CLEAN pixels for pgd frames (label=1).
+    # Recomputing ATOMs locally therefore produces NON-adversarial profiles for
+    # those frames — the HPC-computed profiles must be merged instead.
+    if conf.AGENT == "TFV6" and "pgd" in set(np.asarray(test_data["perturbation"]).tolist()):
+        import warnings as _warnings
+        _n_pgd = int((np.asarray(test_data["perturbation"]) == "pgd").sum())
+        _warnings.warn(
+            f"Recomputing ATOMs locally for {_n_pgd} TFV6 'pgd' frames that contain "
+            f"CLEAN pixels (PGD is deferred to HPC). These profiles will NOT be "
+            f"adversarial — merge HPC-computed test_profiles instead before trusting "
+            f"any PGD result. See docs/code_review.md §4.2.",
+            stacklevel=2,
+        )
+
     atoms.reset()   # clear any accumulated state from baseline computation
 
     n_test                 = test_data["wide_rgb"].shape[0]
@@ -734,7 +796,16 @@ if conf.RECOMPUTE_TEST_ATOMS:
     test_labels = test_data["label"].astype(np.int32)
     print(f"  Done. {n_test} frames processed.\n")
 
+    VAL_ATT_DIR.mkdir(parents=True, exist_ok=True)
     np.save(ATT_DIR / f"test_profiles_{_mode}.npy", test_profiles)
+    # Alignment guard (docs/code_review.md §3.3): persist the (run_id, frame_idx)
+    # key for each profile row so the load path can verify profiles and labels
+    # refer to the SAME frames (not merely the same count).
+    _profile_keys = np.stack([
+        np.asarray(test_data["run_id"],    dtype=np.int64),
+        np.asarray(test_data["frame_idx"], dtype=np.int64),
+    ], axis=1)
+    np.save(ATT_DIR / f"test_profiles_{_mode}.keys.npy", _profile_keys)
     if action_logits_available:
         np.save(ATT_DIR / f"test_logits_{_mode}.npy", test_logits_all)
     if speed_logits_available:
@@ -760,8 +831,69 @@ else:
             f"Set RECOMPUTE_TEST_ATOMS=True to regenerate test_profiles_{_mode}.npy."
         )
 
+    # Alignment guard (docs/code_review.md §3.3): a same-length but reordered or
+    # otherwise different test set would pair profiles with the WRONG labels
+    # silently.  Verify the per-row (run_id, frame_idx) key matches when available.
+    _keys_path = ATT_DIR / f"test_profiles_{_mode}.keys.npy"
+    if _keys_path.exists():
+        _saved_keys = np.load(_keys_path)
+        _cur_keys = np.stack([
+            np.asarray(test_data["run_id"],    dtype=np.int64),
+            np.asarray(test_data["frame_idx"], dtype=np.int64),
+        ], axis=1)
+        if not np.array_equal(_saved_keys, _cur_keys):
+            raise RuntimeError(
+                f"test_profiles_{_mode}.npy (run_id, frame_idx) keys do not match "
+                f"test_labeled.npz — profiles and labels are MISALIGNED even though "
+                f"counts agree. Regenerate with RECOMPUTE_TEST_ATOMS=True (and re-merge "
+                f"HPC profiles if applicable). See docs/code_review.md §3.3."
+            )
+    else:
+        import warnings as _warnings
+        _warnings.warn(
+            f"No alignment key file ({_keys_path.name}) found next to the cached "
+            f"profiles (e.g. HPC-produced data predating this guard) — falling back to "
+            f"a length-only check; profile/label frame alignment cannot be verified. "
+            f"See docs/code_review.md §3.3.",
+            stacklevel=2,
+        )
+
     print(f"  Loaded {len(test_profiles)} test profiles, "
           f"{int(test_labels.sum())} perturbed.\n")
+
+
+# ===========================================================================
+# STEP 9.5 — Load validation profiles (for clean k-NN / GMM-kNN k selection)
+# ===========================================================================
+# Val profiles are computed by the same HPC pipeline as the test profiles,
+# but from routes that do NOT appear in the test set.  k-NN k is then
+# selected on the val AUC instead of the test AUC, eliminating the leakage
+# that previously existed.  If the val files are absent, the pipeline falls
+# back to selecting k on the test set with a warning.
+# ---------------------------------------------------------------------------
+_val_profiles_path   = VAL_ATT_DIR / f"val_profiles_{_mode}.npy"
+_val_labeled_path    = VAL_DATA_DIR / "val_labeled.npz"
+
+if _val_profiles_path.exists() and _val_labeled_path.exists():
+    val_data     = LabeledTestLoader.load_val()
+    val_profiles = np.load(_val_profiles_path)
+    val_labels   = val_data["label"].astype(np.int32)
+    _has_val     = True
+    print(f"[Step 9.5] Val set loaded: {len(val_profiles)} profiles, "
+          f"{int(val_labels.sum())} perturbed. k-NN k will be selected on val AUC.\n")
+else:
+    val_profiles = None
+    val_labels   = None
+    _has_val     = False
+    import warnings as _warn_val
+    _warn_val.warn(
+        f"Val profiles not found ({_val_profiles_path}).  "
+        f"k-NN k will be selected on test AUC — this is data leakage.  "
+        f"Run the val HPC pipeline and git pull to fix this.",
+        stacklevel=2,
+    )
+    print(f"[Step 9.5] No val set found — k selected on test (leakage). "
+          f"Run the val HPC pipeline to fix.\n")
 
 
 # ===========================================================================
@@ -1096,6 +1228,40 @@ for _k in KNN_K_VALUES:
     scores_knn_gmm_by_k[_k] = np.array(_gmm_knn_scores)
     print(f"  GMM k-NN k={_k}: done")
 
+# --- Val k-NN scores (used only for k selection; not for final evaluation) ---
+if _has_val:
+    scores_knn_val_by_k: dict = {}
+    for _k in KNN_K_VALUES:
+        scores_knn_val_by_k[_k] = np.array([
+            DistanceComputer.compute_knn_distance(
+                reference_samples = baseline_series,
+                target_point      = val_profiles[i],
+                k                 = _k,
+                normalize         = True,
+            )
+            for i in range(len(val_profiles))
+        ])
+        print(f"  Val k-NN k={_k}: done")
+
+    scores_knn_gmm_val_by_k: dict = {}
+    for _k in KNN_K_VALUES:
+        _gmm_knn_val_scores = []
+        for i in range(len(val_profiles)):
+            x = val_profiles[i]
+            _centroid_dists = np.linalg.norm(gmm.means_ - x[None, :], axis=1)
+            _nc = int(np.argmin(_centroid_dists))
+            _pool = _cluster_data.get(_nc, baseline_series)
+            if len(_pool) < _k:
+                _pool = baseline_series
+            _gmm_knn_val_scores.append(DistanceComputer.compute_knn_distance(
+                reference_samples = _pool,
+                target_point      = x,
+                k                 = _k,
+                normalize         = True,
+            ))
+        scores_knn_gmm_val_by_k[_k] = np.array(_gmm_knn_val_scores)
+        print(f"  Val GMM k-NN k={_k}: done")
+
 # --- 9c: Action entropy (WoR only) ---
 scores_entropy = None
 if action_logits_available and test_logits_all is not None:
@@ -1126,6 +1292,29 @@ if mdx is not None:
     scores_mdx = np.array(scores_list)
     print(f"  MDX: scored {len(scores_mdx)} frames")
 
+# ----- 9d-v2: MDX-v2 (ablation-controlled features + binning) ----
+scores_mdx_v2 = None
+_mdx_v2_name = (
+    f"MDX-v2 ({'F_c' if conf.MDX2_USE_FC_FEATURES else 'backbone'} + "
+    f"{'quantile' if conf.MDX2_USE_QUANTILE_BINNING else 'equal-width'} bins)"
+)
+if mdx_v2 is not None:
+    _scores_v2 = []
+    _n_mdx_v2_test = len(test_data["frame_idx"])
+    for i in range(_n_mdx_v2_test):
+        if i % 100 == 0:
+            print(f"  MDX-v2 scoring frame {i}/{_n_mdx_v2_test}")
+        wide_t = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+        if conf.MDX2_USE_FC_FEATURES:
+            feat_vec = lrp.get_fc_features(
+                wide_t, cmd=int(test_data["cmd"][i]), spd=float(test_data["speed"][i])
+            )
+        else:
+            feat_vec = lrp.get_backbone_features(wide_t)
+        _scores_v2.append(mdx_v2.score(feat_vec))
+    scores_mdx_v2 = np.array(_scores_v2)
+    print(f"  MDX-v2: scored {len(scores_mdx_v2)} frames")
+
 # ----- 9e: PEOC — Policy Entropy OOD Classifier (Sedlmeier et al., 2020) ----
 # H(π) of the 8-bin speed distribution. No fitting required.
 scores_peoc = None
@@ -1138,9 +1327,10 @@ if speed_logits_available and test_speed_logits is not None:
 _knn_sanity     = [(f"k-NN (k={k})",     scores_knn_by_k[k])     for k in KNN_K_VALUES]
 _knn_gmm_sanity = [(f"k-NN GMM (k={k})", scores_knn_gmm_by_k[k]) for k in KNN_K_VALUES]
 _optional = [
-    ("Action entropy",  scores_entropy  if action_logits_available else None),
-    ("MDX Detection",   scores_mdx),
-    ("PEOC",            scores_peoc),
+    ("Action entropy",       scores_entropy  if action_logits_available else None),
+    ("MDX Detection",        scores_mdx),
+    (_mdx_v2_name,           scores_mdx_v2),
+    ("PEOC",                 scores_peoc),
 ]
 for name, scores in [
     ("Mahalanobis (single)", scores_mahal_single),
@@ -1219,7 +1409,8 @@ results_wass_gmm = evaluator.evaluate(
     detector_name = f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})",
 )
 
-# Evaluate all k-NN variants for the sensitivity analysis
+# Evaluate all k-NN variants on the TEST set — used for the sensitivity plot
+# and for per-perturbation breakdown, but NOT for selecting k.
 results_knn_by_k: dict = {}
 for k_val, knn_scores in scores_knn_by_k.items():
     results_knn_by_k[k_val] = evaluator.evaluate(
@@ -1228,14 +1419,29 @@ for k_val, knn_scores in scores_knn_by_k.items():
         detector_name = f"ATOMs-k-NN (k={k_val})",
     )
 
-# Select best k by AUC — only this variant competes in the combined ROC plot
-best_k = max(results_knn_by_k, key=lambda k: results_knn_by_k[k]["auc"])
+# Select best k: use VAL AUC when available (clean); fall back to test AUC (leakage).
+if _has_val:
+    results_knn_val_by_k: dict = {}
+    for k_val, knn_scores_val in scores_knn_val_by_k.items():
+        results_knn_val_by_k[k_val] = evaluator.evaluate(
+            scores        = knn_scores_val,
+            labels        = val_labels,
+            detector_name = f"ATOMs-k-NN val (k={k_val})",
+        )
+    best_k = max(results_knn_val_by_k, key=lambda k: results_knn_val_by_k[k]["auc"])
+    _val_auc_at_best_k = results_knn_val_by_k[best_k]["auc"]
+    print(f"  Best k-NN: k={best_k}  Val AUC={_val_auc_at_best_k:.4f}  "
+          f"Test AUC={results_knn_by_k[best_k]['auc']:.4f}  (k selected on val — clean)")
+else:
+    best_k = max(results_knn_by_k, key=lambda k: results_knn_by_k[k]["auc"])
+    print(f"  Best k-NN: k={best_k}  Test AUC={results_knn_by_k[best_k]['auc']:.4f}  "
+          f"(WARNING: k selected on test — leakage)")
+
 results_knn = results_knn_by_k[best_k]
 results_knn["detector_name"] = f"ATOMs-k-NN (k={best_k}, best)"
 scores_knn_best = scores_knn_by_k[best_k]
-print(f"  Best k-NN: k={best_k}  AUC={results_knn['auc']:.4f}")
 
-# Evaluate GMM k-NN variants
+# Evaluate GMM k-NN variants on the TEST set
 results_knn_gmm_by_k: dict = {}
 for k_val, knn_scores in scores_knn_gmm_by_k.items():
     results_knn_gmm_by_k[k_val] = evaluator.evaluate(
@@ -1244,17 +1450,40 @@ for k_val, knn_scores in scores_knn_gmm_by_k.items():
         detector_name = f"ATOMs-k-NN-GMM (k={k_val})",
     )
 
-best_k_gmm = max(results_knn_gmm_by_k, key=lambda k: results_knn_gmm_by_k[k]["auc"])
+# Select best GMM k-NN k on val AUC when available
+if _has_val:
+    results_knn_gmm_val_by_k: dict = {}
+    for k_val, knn_scores_val in scores_knn_gmm_val_by_k.items():
+        results_knn_gmm_val_by_k[k_val] = evaluator.evaluate(
+            scores        = knn_scores_val,
+            labels        = val_labels,
+            detector_name = f"ATOMs-k-NN-GMM val (k={k_val})",
+        )
+    best_k_gmm = max(results_knn_gmm_val_by_k, key=lambda k: results_knn_gmm_val_by_k[k]["auc"])
+    print(f"  Best GMM k-NN: k={best_k_gmm}  "
+          f"Val AUC={results_knn_gmm_val_by_k[best_k_gmm]['auc']:.4f}  "
+          f"Test AUC={results_knn_gmm_by_k[best_k_gmm]['auc']:.4f}  (k selected on val — clean)")
+else:
+    best_k_gmm = max(results_knn_gmm_by_k, key=lambda k: results_knn_gmm_by_k[k]["auc"])
+    print(f"  Best GMM k-NN: k={best_k_gmm}  "
+          f"Test AUC={results_knn_gmm_by_k[best_k_gmm]['auc']:.4f}  "
+          f"(WARNING: k selected on test — leakage)")
+
 results_knn_gmm = results_knn_gmm_by_k[best_k_gmm]
 results_knn_gmm["detector_name"] = f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)"
 scores_knn_gmm_best = scores_knn_gmm_by_k[best_k_gmm]
-print(f"  Best GMM k-NN: k={best_k_gmm}  AUC={results_knn_gmm['auc']:.4f}")
 
 results_mdx = evaluator.evaluate(
     scores        = scores_mdx,
     labels        = test_labels,
     detector_name = "MDX Detection",
 ) if scores_mdx is not None else None
+
+results_mdx_v2 = evaluator.evaluate(
+    scores        = scores_mdx_v2,
+    labels        = test_labels,
+    detector_name = _mdx_v2_name,
+) if scores_mdx_v2 is not None else None
 
 results_peoc = evaluator.evaluate(
     scores        = scores_peoc,
@@ -1269,7 +1498,7 @@ all_results = [
         results_jsd, results_jsd_gmm,
         results_wass_single, results_wass_gmm,
         results_knn, results_knn_gmm,
-        results_entropy, results_mdx, results_peoc,
+        results_entropy, results_mdx, results_mdx_v2, results_peoc,
     ] if r is not None
 ]
 evaluator.compare(all_results)
@@ -1355,6 +1584,10 @@ for pert_name, subset in split_data.items():
         scores_mdx[eval_mask], eval_labels,
         detector_name=f"MDX Detection | {pert_name}",
     ) if scores_mdx is not None else None
+    r_mdx_v2 = evaluator.evaluate(
+        scores_mdx_v2[eval_mask], eval_labels,
+        detector_name=f"{_mdx_v2_name} | {pert_name}",
+    ) if scores_mdx_v2 is not None else None
 
     r_entropy = evaluator.evaluate(
         scores_entropy[eval_mask], eval_labels,
@@ -1373,7 +1606,7 @@ for pert_name, subset in split_data.items():
             r_jsd, r_jsd_gmm,
             r_wass, r_wass_gmm,
             r_knn, r_knn_gmm,
-            r_entropy, r_mdx, r_peoc,
+            r_entropy, r_mdx, r_mdx_v2, r_peoc,
         ]
         if r is not None
     ]
@@ -1488,12 +1721,20 @@ for pert_name, res_list in perturb_results.items():
     save_figure(fig_roc_p_top5, dirs["roc"] / f"roc_{safe}_top5.png")
 
 # --- 12d.0: k-NN sensitivity — AUC vs k (global and GMM variants) ---
-knn_k_list   = list(results_knn_by_k.keys())
-knn_auc_list = [results_knn_by_k[k]["auc"] for k in knn_k_list]
+# Show val AUC when available (the curve used to select k); fall back to test AUC.
+knn_k_list = list(results_knn_by_k.keys())
+if _has_val:
+    knn_auc_list     = [results_knn_val_by_k[k]["auc"]     for k in knn_k_list]
+    knn_gmm_auc_list = [results_knn_gmm_val_by_k[k]["auc"] for k in knn_k_list]
+    _sens_title_suffix = " (Val AUC — used for k selection)"
+else:
+    knn_auc_list     = [results_knn_by_k[k]["auc"]     for k in knn_k_list]
+    knn_gmm_auc_list = [results_knn_gmm_by_k[k]["auc"] for k in knn_k_list]
+    _sens_title_suffix = " (Test AUC — no val set)"
+
 fig_knn_sens = plot_knn_sensitivity(knn_k_list, knn_auc_list, best_k)
 save_figure(fig_knn_sens, dirs["roc"] / "knn_k_sensitivity.png")
 
-knn_gmm_auc_list = [results_knn_gmm_by_k[k]["auc"] for k in knn_k_list]
 fig_knn_gmm_sens = plot_knn_sensitivity(
     knn_k_list, knn_gmm_auc_list, best_k_gmm,
     title     = "k-NN GMM Sensitivity Analysis — AUC vs k",

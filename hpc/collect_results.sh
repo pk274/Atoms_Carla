@@ -75,8 +75,8 @@ done
 # --------------------------------------------------------------------------- #
 # Validate + normalise
 # --------------------------------------------------------------------------- #
-case "$PIPELINE" in baseline|test|live_pert) ;; *)
-    echo "ERROR: pipeline must be baseline|test|live_pert (got '$PIPELINE')." >&2; exit 1 ;; esac
+case "$PIPELINE" in baseline|test|val|live_pert) ;; *)
+    echo "ERROR: pipeline must be baseline|test|val|live_pert (got '$PIPELINE')." >&2; exit 1 ;; esac
 case "$AGENT" in tfv6|TFV6) AGENT_LC=tfv6; AG=TFV6 ;; wor|WOR) AGENT_LC=wor; AG=WOR ;; *)
     echo "ERROR: agent must be tfv6|wor (got '$AGENT')." >&2; exit 1 ;; esac
 case "$MODE" in 1|2) ;; *)
@@ -86,8 +86,9 @@ if [ "$PIPELINE" = "live_pert" ] && [ -z "$PERT" ]; then
 fi
 
 # Default work dir: /ptmp/$USER/atoms_[wor_]<pipeline>
+# "val" maps to atoms_val (no wor_ prefix even for WoR, as val is TFV6-only for now).
 if [ -z "$WORK_DIR" ]; then
-    WOR_PREFIX=""; [ "$AGENT_LC" = "wor" ] && WOR_PREFIX="wor_"
+    WOR_PREFIX=""; [ "$AGENT_LC" = "wor" ] && [ "$PIPELINE" != "val" ] && WOR_PREFIX="wor_"
     WORK_DIR="/ptmp/${USER}/atoms_${WOR_PREFIX}${PIPELINE}"
 fi
 
@@ -115,6 +116,10 @@ case "$PIPELINE" in
             LOGIT="test_speed_logits_${MODE}.npy"
             SRC_NAMES=("test_profiles_${MODE}.npy" "$LOGIT" "perturb_samples.png")
         fi
+        ;;
+    val)
+        DEST_REL="data/${AG}/val_data/attention"
+        SRC_NAMES=("val_profiles_${MODE}.npy" "val_speed_logits_${MODE}.npy")
         ;;
     live_pert)
         DEST_REL="data/${AG}/test_data/attention/live_pert/${PERT}"
@@ -186,6 +191,9 @@ if [ "$N_OK" -gt 0 ] && [ "$DRY_RUN" = 0 ]; then
     fi
     case "$PIPELINE" in
         baseline)  echo "Reminder: locally set RECOMPUTE_BASELINE=False and RECOMPUTE_MDX_BASELINE=False." ;;
+        val)
+            echo "Reminder: run run_analysis.py — it auto-loads val_profiles_N.npy and selects k on val AUC."
+            ;;
         test|live_pert)
             echo "Reminder: set RECOMPUTE_TEST_ATOMS=False."
             if [ "$AG" = "TFV6" ] && [ "$PIPELINE" = "test" ]; then

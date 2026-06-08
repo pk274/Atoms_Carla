@@ -307,15 +307,24 @@ class PerturbationManager:
                         wide_in, narr_in, cmd_value
                     )
 
-                    # Targeted loss — identical semantics to fgsm_attack
+                    # The update step below is gradient ASCENT
+                    # (delta += step * grad.sign()), so each objective must be a
+                    # REWARD that is *maximised* when the attack target is reached.
+                    # (Fixed 2026-06-08, see docs/code_review.md §2.2: 'brake' and
+                    #  'max_steer' previously had the wrong sign — ascent minimised
+                    #  them, pushing toward 'no brake' / 'straight'.)
                     if target == "steer_right":
+                        # WEAK PROXY: the raw steer-logit sum is shift-invariant under
+                        # softmax, so this does not cleanly steer right/left. Pending
+                        # rework to the decoded steering value
+                        # E[steer] = steers · softmax(steer_logits). See review §2.2.
                         loss = -steer_logits
                     elif target == "steer_left":
-                        loss = steer_logits
+                        loss = steer_logits          # WEAK PROXY (see steer_right note)
                     elif target == "brake":
-                        loss = -brake_logits
+                        loss = brake_logits          # maximise brake activation
                     elif target == "max_steer":
-                        loss = -steer_logits.abs()
+                        loss = steer_logits.abs()    # maximise steering magnitude
                     else:
                         raise ValueError(
                             f"Unknown PGD target '{target}'. "
@@ -441,6 +450,12 @@ class PerturbationManager:
                     for net in nets:
                         pred = net.forward(data_adv)
 
+                        # The update step below is gradient ASCENT
+                        # (delta += step * grad.sign()), so each objective must be a
+                        # REWARD that is *maximised* when the attack target is reached.
+                        # (Fixed 2026-06-08, see docs/code_review.md §2.2: the previous
+                        #  code ASCENDED cross_entropy toward the target bin, which
+                        #  pushes the prediction AWAY from the target.)
                         if target in ("brake", "max_speed"):
                             logits = pred.pred_target_speed_distribution   # [B, 8]
                             tgt_bin = 0 if target == "brake" else 7
@@ -448,13 +463,14 @@ class PerturbationManager:
                                 (logits.shape[0],), tgt_bin,
                                 dtype=torch.long, device=logits.device,
                             )
-                            loss = torch.nn.functional.cross_entropy(logits, tgt_tensor)
+                            # Maximise P(target bin): reward = -cross_entropy.
+                            loss = -torch.nn.functional.cross_entropy(logits, tgt_tensor)
                         elif target == "steer_left":
-                            # Minimise mean waypoint x → steer left
-                            loss = pred.pred_future_waypoints[..., 0].mean()
-                        elif target == "steer_right":
-                            # Maximise mean waypoint x → steer right
+                            # Push mean waypoint x down → steer left (ascent on -x).
                             loss = -pred.pred_future_waypoints[..., 0].mean()
+                        elif target == "steer_right":
+                            # Push mean waypoint x up → steer right (ascent on +x).
+                            loss = pred.pred_future_waypoints[..., 0].mean()
                         else:
                             raise ValueError(
                                 f"Unknown PGD TFV6 target '{target}'. "

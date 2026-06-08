@@ -31,7 +31,11 @@ echo "Node         : $(hostname)"
 date
 
 _mode="${MODE_ANALYSIS:-1}"
-SPEED_LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_speed_logits_${_mode}.npy"
+# Allow the submit script to override the logits filename (e.g. val_speed_logits_N.npy for val jobs).
+# Falls back to the standard test name when not set.
+if [ -z "${SPEED_LOGITS_OUT:-}" ]; then
+    SPEED_LOGITS_OUT="$(dirname "$PROFILES_OUT")/test_speed_logits_${_mode}.npy"
+fi
 
 srun python3 "$CODE_DIR/hpc/gather_test.py" \
     --partials-dir        "$PARTIALS_DIR" \
@@ -41,9 +45,9 @@ srun python3 "$CODE_DIR/hpc/gather_test.py" \
 echo "Gather finished with exit code $?"
 echo "test_speed_logits_${_mode}.npy is at: $SPEED_LOGITS_OUT"
 
-# Visualise perturbation samples — test_labeled.npz lives in the same dir as PROFILES_OUT.
-# The resulting PNG is picked up by collect_results.sh alongside the profiles.
-_LABELED="$(dirname "$PROFILES_OUT")/test_labeled.npz"
+# Visualise perturbation samples.  Prefer the explicit LABELED_FILE env var (set by both
+# submit_test.sh and submit_val.sh); fall back to the legacy name-derived path.
+_LABELED="${LABELED_FILE:-$(dirname "$PROFILES_OUT")/test_labeled.npz}"
 _VIZ_OUT="$(dirname "$PROFILES_OUT")/perturb_samples.png"
 if [ -f "$_LABELED" ]; then
     srun python3 "$CODE_DIR/hpc/visualize_perturb.py" \

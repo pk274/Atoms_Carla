@@ -24,7 +24,7 @@ Attribution modes (same interface as LRPCameraModel / LRPLBCModel):
 LRP rules (zennit + custom AttnLRP):
     Convolution (first): WSquare
     Convolution (rest):  AlphaBeta(α=1, β=0)
-    AttentionLinear:     Epsilon(ε=1e-6)    ← K/Q/V/proj in all attention blocks
+    AttentionLinear:     Epsilon(ε=1e-2)    ← K/Q/V/proj in all attention blocks
     Linear (FFN):        AlphaBeta(α=1, β=0)
     BatchNorm / LayerNorm / activations: Pass
 
@@ -418,6 +418,8 @@ class TFv6FullModelForLRP(nn.Module):
         self.transformer_decoder      = pd.transformer_decoder
         self.query                    = pd.query             # nn.Parameter [1, Q, 256]
         self.target_speed_decoder     = pd.target_speed_decoder
+        # Waypoint decoder — present only when predict_temporal_spatial_waypoints is True
+        self.wp_decoder = pd.wp_decoder if hasattr(pd, 'wp_decoder') else None
 
         # Compute speed query index (mirrors PlanningDecoder.forward)
         idx = 0
@@ -426,6 +428,9 @@ class TFv6FullModelForLRP(nn.Module):
         if cfg.predict_temporal_spatial_waypoints:
             idx += cfg.num_way_points_prediction
         self._speed_query_idx = idx
+        # First waypoint query index: queries[:, _wp_start : _speed_query_idx]
+        _route_offset  = cfg.num_route_points_prediction if cfg.predict_spatial_path else 0
+        self._wp_start = _route_offset
 
     # ------------------------------------------------------------------
     # Backbone helper (mirrors TFv6ImageBackboneForLRP)
@@ -495,14 +500,25 @@ class TFv6FullModelForLRP(nn.Module):
     # Forward
     # ------------------------------------------------------------------
 
-    def forward(self, rgb: torch.Tensor, data: dict) -> torch.Tensor:
+    def forward(
+        self,
+        rgb:         torch.Tensor,
+        data:        dict,
+        _return_wps: bool = False,
+    ) -> torch.Tensor:
         """
         Args:
-            rgb  : [B, 3, H, W] float, requires_grad=True
-            data : status dict with at least the keys the config expects
-                   (speed, command, target_point, …)
+            rgb         : [B, 3, H, W] float, requires_grad=True
+            data        : status dict with at least the keys the config expects
+                          (speed, command, target_point, …)
+            _return_wps : if True and wp_decoder is available, also return the
+                          predicted future waypoints [B, N_wp, 2].  Used only by
+                          get_planning_action_and_features for MDX-v2; all other
+                          callers leave this at False.
         Returns:
             speed_query : [B, 256] — the F_c node space
+            (optionally, when _return_wps=True and wp_decoder is present)
+            (speed_query, waypoints) where waypoints is [B, N_wp, 2]
         """
         bev_features, _ = self._run_backbone(rgb)
 
@@ -520,7 +536,14 @@ class TFv6FullModelForLRP(nn.Module):
             context_tokens,
         )
 
-        return queries[:, self._speed_query_idx]   # [B, 256]
+        speed_query = queries[:, self._speed_query_idx]   # [B, 256]
+
+        if _return_wps and self.wp_decoder is not None:
+            wp_queries = queries[:, self._wp_start : self._speed_query_idx]
+            waypoints  = torch.cumsum(self.wp_decoder(wp_queries), dim=1)  # [B, N_wp, 2]
+            return speed_query, waypoints
+
+        return speed_query
 
 
 # ---------------------------------------------------------------------------
@@ -920,6 +943,83 @@ class LRPTFv6Model:
             pooled = F.adaptive_avg_pool2d(image_features, (1, 1))
             feat   = pooled.flatten(1).clamp(min=0).squeeze(0)  # [512]
         return feat.cpu().numpy()
+
+    # MDX-v2 speed bins — used to decode expected target speed from distribution.
+    _SPEED_BINS_PROXY = [0., 4., 8., 10., 13.89, 16., 17.78, 20.]  # m/s
+
+    def get_planning_action_and_features(
+        self,
+        wide_rgb: torch.Tensor,
+        cmd:      int   = 4,
+        spd:      float = 0.0,
+    ) -> "tuple":
+        """
+        Single forward pass → 256-d F_c feature + (steer_proxy, throttle_proxy, brake_proxy).
+
+        Used in the MDX-v2 baseline fit loop. Combines feature extraction and
+        action proxy derivation so each frame requires only one forward pass.
+
+        steer_proxy  : mean lateral (x) offset of predicted future waypoints.
+                       Non-degenerate even on straight roads.  Same signal as
+                       the PGD steer target.
+        throttle/brake: decoded expected target speed → min(v/20, 1) / v<0.5.
+                        Reflects the policy's intent rather than ego speed.
+
+        Parameters
+        ----------
+        wide_rgb : [1, 3, H, W] float tensor (raw uint8 range [0, 255])
+        cmd      : navigation command integer (0–5)
+        spd      : current speed in m/s
+
+        Returns
+        -------
+        (feature: np.ndarray[256], steer: float, throttle: float, brake: float)
+        """
+        import numpy as np
+        wide_t = wide_rgb.float().to(self.device)
+        data   = _make_minimal_data(float(spd), self.device, cmd=int(cmd))
+        with torch.no_grad():
+            result = self.full_model(wide_t, data, _return_wps=True)
+        if isinstance(result, tuple):
+            speed_query, waypoints = result
+            steer = float(waypoints[..., 0].mean())
+        else:
+            speed_query = result
+            steer = 0.0   # wp_decoder unavailable — fall back to constant
+        feature      = speed_query.squeeze(0).cpu().numpy()   # [256]
+        speed_logits = self.full_model.target_speed_decoder(speed_query)
+        bins  = torch.tensor(self._SPEED_BINS_PROXY, device=self.device, dtype=torch.float32)
+        tgt_v = float((torch.softmax(speed_logits.squeeze(0), dim=-1) * bins).sum())
+        return feature, steer, min(tgt_v / 20.0, 1.0), (1.0 if tgt_v < 0.5 else 0.0)
+
+    def get_fc_features(
+        self,
+        wide_rgb: torch.Tensor,
+        cmd:      int   = 4,
+        spd:      float = 0.0,
+    ) -> "np.ndarray":
+        """
+        Extract 256-d speed_query (F_c) features for MDX-v2 test scoring.
+
+        Runs backbone + planning decoder; returns the F_c node vector just
+        before target_speed_decoder — the true penultimate layer for TFV6.
+
+        Parameters
+        ----------
+        wide_rgb : [1, 3, H, W] float tensor (raw uint8 range [0, 255])
+        cmd      : navigation command integer (0–5)
+        spd      : current speed in m/s
+
+        Returns
+        -------
+        np.ndarray [256]  speed_query (F_c) feature vector
+        """
+        import numpy as np
+        wide_t = wide_rgb.float().to(self.device)
+        data   = _make_minimal_data(float(spd), self.device, cmd=int(cmd))
+        with torch.no_grad():
+            speed_query = self.full_model(wide_t, data)   # [B, 256]
+        return speed_query.squeeze(0).cpu().numpy()
 
     # ------------------------------------------------------------------
     # Selectors

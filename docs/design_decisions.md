@@ -6,6 +6,48 @@ whenever a significant design choice is revisited.
 
 ---
 
+## Val/Test split for hyperparameter selection (planned, 2026-06)
+
+**Problem:** `run_analysis.py` currently selects k for k-NN (and GMM k-NN) by maximising AUC
+on the test set (lines ~1336, ~1351). This is a form of data leakage — the test labels are
+used to choose hyperparameters, then the same labels are used to report performance.
+
+**Decision:** Introduce a **validation set** drawn from the same held-out town (Town05) using
+different routes than the test set. Hyperparameter selection (k in k-NN, k in GMM-kNN) is
+done exclusively on the val set. Final AUC/ROC numbers reported in the thesis use only the
+test set. GMM cluster count K stays selected by BIC on the baseline, which is already clean.
+
+**Data split strategy:**
+- Both sets use Town05 routes (the only held-out town in the LEAD dataset).
+- The 13 routes currently in `test_data/frames/` are the test set and are NOT re-used for val.
+- 13 additional Town05 routes (not previously extracted) become the val set.
+- Both sets use the same 5-way 20% perturbation mix (clean / gaussian_noise / brightness_scale
+  / camera_loss / pgd) and the same HPC pipeline.
+
+**Concrete creation steps (see `CLAUDE.md` — Raw Data Creation Pipeline for tool invocations):**
+1. Extract 13 more Town05 routes via `unzip_routes.ps1 -RoutesPerTown 26` (top-26 by size; the
+   top-13 are already extracted and used for test; routes 14–26 are new).
+2. Run `migrate_lead_to_baseline.py --mode valset` with `--exclude_routes` pointing at the
+   existing test frames, writing to `val_data/frames/`.  *(The `valset` mode and `--exclude_routes`
+   flag need to be added to `migrate_lead_to_baseline.py`.)*
+3. Apply perturbations to val frames (locally via `PerturbationApplier` or via HPC `prep_test.py`),
+   producing `val_labeled.npz`.
+4. Run HPC ATOMs profile computation on the val set (`submit_val.sh`), producing
+   `val_profiles_{MODE}.npy` and `val_speed_logits_{MODE}.npy`.
+5. In `run_analysis.py`: load val profiles after Step 9; compute k-NN scores on val; pick
+   `best_k` by val AUC; use that k to index into already-computed test scores for reporting.
+
+**Code changes (all implemented 2026-06-08):**
+- `migrate_lead_to_baseline.py` — added `valset` mode; `exclude_routes` param to `build_sampling_plan`; `migrate_valset()` auto-excludes test routes by reading `test_data/frames/` npz stems.
+- `atoms_config.py` — added `VAL_DATA_DIR = _DATA_ROOT / "val_data"`.
+- `dataset.py` — `PerturbationApplier.__init__` accepts optional `data_dir`; `LabeledTestLoader.load_val()` added.
+- `hpc/gather_test_task.sh` — `SPEED_LOGITS_OUT` and `LABELED_FILE` now overridable via env vars (backward-compatible).
+- `hpc/submit_val.sh` — new script; reuses existing task scripts with val-specific paths.
+- `hpc/collect_results.sh` — added `val` pipeline case → `data/<AG>/val_data/attention/`.
+- `run_analysis.py` — Step 9.5 loads val profiles; k-NN/GMM-kNN k selected on val AUC; sensitivity plot shows val AUC; falls back to test AUC with a warning when val is absent.
+
+---
+
 ## Agent support
 
 | Agent key | Model | Status |
@@ -417,3 +459,137 @@ partial_files = sorted(args.partials_dir.glob("partial_*.npz"),
 ```
 The existing `baseline_1.npz` must be regenerated on the HPC with the fixed gather
 script before the representative-frame visualization can be trusted.
+
+---
+
+## Code-review fixes — 2026-06-08
+
+Applied after the thorough code review documented in `docs/code_review.md`. Only
+the "easy / unambiguous" fixes were applied; the validation-set redesign (§2.1),
+MDX binning (§2.4) and the WoR steer objective rework remain open for discussion.
+
+### PGD attack sign correction (review §2.2)
+`ATOMs_Analysis/perturbation_manager.py`. Both `pgd_attack` (WoR) and
+`pgd_attack_tfv6` (TFV6) take gradient-**ascent** steps, but the per-target losses
+were written as quantities to *minimise* toward the target, so the attack drove the
+agent *away* from its stated objective. Each objective is now a **reward maximised
+under ascent**:
+- TFV6: `brake`/`max_speed` → `reward = -CE(speed_logits, target_bin)`;
+  `steer_left` → `-mean(wp_x)`; `steer_right` → `+mean(wp_x)`.
+- WoR: `brake` → `+brake_logits`; `max_steer` → `+|steer_logits|`.
+- WoR `steer_left/right` still use the raw steer-logit sum, which is shift-invariant
+  under softmax and therefore a weak proxy; flagged in-code for a later rework to the
+  decoded steering value `steers·softmax(steer_logits)`.
+
+**Consequence:** any previously generated PGD test/profile data was produced with the
+inverted attack and must be regenerated (TFV6 PGD profiles are recomputed on the HPC).
+
+Verified by replicating the corrected PGD loop on toy linear models: every target now
+moves its metric the right way (e.g. TFV6 `brake` raises P(bin 0) 0→1; `steer_right`
+increases mean waypoint-x while `steer_left` decreases it).
+
+### Mahalanobis double-sqrt (review §3.1)
+`ATOMs_Analysis/detection/detectors.py`, `MahalanobisDetector.score`. It applied a
+second `sqrt` to a value that `DistanceComputer.compute_mahalanobis` already returns
+as a distance, yielding `sqrt(distance)` and a scale inconsistent with the GMM path
+(which returns the distance). Now returns the distance directly. (The main ROC/AUC
+path already used `DistanceComputer` directly and was unaffected; this only corrected
+the class and the threshold saved in `mahal_detector.npz`.) Verified numerically
+against `compute_mahalanobis` and a hand-computed distance.
+
+### Deferred-PGD guard (review §4.2)
+For TFV6, PGD frames are stored with **clean pixels** but `label=1` (the adversarial
+image is crafted on the HPC). Added a `warnings.warn` in
+`PerturbationApplier.apply` (`detection/dataset.py`) and in `run_analysis.py` Step 9
+so that recomputing ATOMs locally for these frames no longer silently produces
+non-adversarial "PGD" profiles.
+
+### Profile↔label alignment guard (review §3.3)
+`run_analysis.py` Step 9 now persists a companion `test_profiles_{mode}.keys.npy`
+holding each profile row's `(run_id, frame_idx)`, and verifies it against
+`test_labeled.npz` on load (replacing the length-only check). A reordered or
+different-but-same-length test set now raises instead of silently pairing profiles
+with the wrong labels. Falls back to a warning when no key file is present
+(e.g. HPC-produced data predating this guard).
+
+### Documentation sync
+`CLAUDE.md`: corrected the attention-profile dimensionality (29 for WOR / 10 for
+TFV6, not "23-dim"); reworded the hierarchical-attention definition to the
+nonzero-pixel mean (R̄); marked the Step-8.5 trajectory analysis as disabled; and
+replaced the stale "zero command vector" note with the current `_make_minimal_data`
+behaviour. `lrp_transfuser.py` docstring: corrected the AttentionLinear ε from 1e-6
+to 1e-2 to match the composite.
+
+*Not applied (need discussion): validation split for k/K selection (§2.1), WoR
+steer-objective rework, and dead-code removal.*
+
+---
+
+## MDX-v2: F_c features + waypoint steer proxy + quantile binning (2026-06-08)
+
+**Motivation.** The original TFV6 MDX detector (MDX-v1) had two degeneracies, flagged
+in review §2.4:
+
+1. **Degenerate steer proxy.** `run_analysis.py` hardcoded `steer=0.0` for all TFV6
+   baseline frames. With equal-width binning, `np.linspace(0,0,4)=[0,0,0,0]`, so all
+   frames land in steer-bin 0. Only `throttle × brake = 2×2 = 4` of the intended 12
+   action classes were ever populated, making the class-conditional Gaussian structure
+   largely vacuous.
+
+2. **Suboptimal feature layer.** MDX-v1 used the 512-d globally-pooled ResNet backbone
+   output (`get_backbone_features`), which precedes the TransformerDecoder and lacks
+   cross-modal fusion and planning-level representations. The ATOMs paper defines F_c
+   as "the final world model on which the agent chooses its action" — for TFV6 that is
+   the 256-d `speed_query` token output by `PlanningDecoder.transformer_decoder` just
+   before `target_speed_decoder`.
+
+**MDX-v2 is additive — MDX-v1 is left untouched** (same code path, same saved parameters).
+
+### Feature: 256-d speed_query (F_c)
+
+MDX-v2 builds its class-conditional Gaussians over 256-d `speed_query` vectors
+extracted by `LRPTFv6Model.get_fc_features`. This is the same node used as the LRP
+attribution seed and is the natural TFV6 equivalent of F_c in the ATOMs paper.
+PCA (50 components) is applied before fitting, matching MDX-v1's compression approach.
+
+`TFv6FullModelForLRP.forward` is extended with `_return_wps: bool = False`. When
+`True`, the method also returns the predicted future waypoints so that baseline fitting
+can retrieve both the speed_query and the planned trajectory in a single forward pass.
+All existing callers pass no argument and are unaffected.
+
+### Steer proxy: mean lateral waypoint offset
+
+Instead of the constant `0.0`, MDX-v2 uses the mean lateral (x) offset of the model's
+predicted future waypoints (`pred.pred_future_waypoints[..., 0].mean()`). This is
+non-degenerate even on straight roads and captures the geometry of the planned path.
+Waypoints are decoded by `wp_decoder` inside `TFv6FullModelForLRP` when `_return_wps=True`.
+
+The combined baseline-fit helper `get_planning_action_and_features(wide_rgb, cmd, spd)`
+returns `(feature[256], steer, throttle, brake)` in one forward pass; the test-scoring
+helper `get_fc_features(wide_rgb, cmd, spd)` returns only the 256-d feature.
+
+### Binning: quantile edges
+
+MDX-v1 used equal-width bin edges, which collapse when a dimension is near-constant.
+MDX-v2 uses `bin_strategy="quantile"` in `MDXDetector`: edges are placed at the
+empirical quantiles of each action dimension over the baseline set so every bin has
+roughly equal population. `_build_bin_edges` handles the constant-dimension case via
+`np.unique` collapse with a ±1e-6 fallback interval so binning never fails.
+
+### `bin_strategy` parameter in `MDXDetector`
+
+`MDXDetector.__init__` accepts `bin_strategy: str = "equal-width"` (default). The
+default preserves exact backward compatibility with MDX-v1. Passing `"quantile"`
+activates the new scheme. `discretise_action` is unchanged — `np.digitize + np.clip`
+work with any edge layout.
+
+### Configuration
+
+`atoms_config.py` exposes `RECOMPUTE_MDX_V2_BASELINE` (default `True`; set `False`
+after first run). Fit result saved to `baseline_data/mdx_v2_parameters/` alongside
+the existing `mdx_parameters/`. Controlled by `RECOMPUTE_MDX_V2_BASELINE` flag only;
+all other `RECOMPUTE_*` flags are independent.
+
+Files changed: `lrp_transfuser.py` (`_return_wps` flag, two new extraction methods),
+`detectors.py` (`bin_strategy` param + quantile `_build_bin_edges`), `atoms_config.py`
+(new flag), `run_analysis.py` (fit + score + evaluate blocks for TFV6 only).

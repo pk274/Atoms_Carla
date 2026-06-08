@@ -200,8 +200,11 @@ class MahalanobisDetector(BaseDetector):
 
     def score(self, x: np.ndarray) -> float:
         self._check_fitted()
-        dist2 = DistanceComputer.compute_mahalanobis(self.mean, self.cov, x, self.ridge)
-        return float(np.sqrt(max(dist2, 0.0)))
+        # compute_mahalanobis already returns the Mahalanobis DISTANCE (it takes
+        # the sqrt internally).  (Fixed 2026-06-08, docs/code_review.md §3.1: this
+        # previously applied a second sqrt — returning sqrt(distance) — which put
+        # the single-Gaussian scores on a different scale from the GMM path.)
+        return float(DistanceComputer.compute_mahalanobis(self.mean, self.cov, x, self.ridge))
 
     # ------------------------------------------------------------------
     # Threshold helpers
@@ -840,13 +843,14 @@ class MDXDetector(BaseDetector):
 
     def __init__(
         self,
-        n_pca_components: int  = 50,
-        n_steer_bins:     int  = 3,
-        n_throt_bins:     int  = 2,
-        n_brake_bins:     int  = 2,
-        ridge:            float = 1e-6,
-        alpha:            float = 0.05,
+        n_pca_components:  int   = 50,
+        n_steer_bins:      int   = 3,
+        n_throt_bins:      int   = 2,
+        n_brake_bins:      int   = 2,
+        ridge:             float = 1e-6,
+        alpha:             float = 0.05,
         calibration_split: float = 0.2,
+        bin_strategy:      str   = "equal-width",
     ):
         super().__init__()
         self.n_pca_components = n_pca_components
@@ -859,7 +863,8 @@ class MDXDetector(BaseDetector):
         self.calibration_split        = calibration_split
         self._conformal_threshold: Optional[float] = None
 
-        self.n_classes: int = n_steer_bins * n_throt_bins * n_brake_bins
+        self.n_classes:    int = n_steer_bins * n_throt_bins * n_brake_bins
+        self.bin_strategy: str = bin_strategy
 
         self._pca:        Optional[object]              = None   # sklearn PCA
         self._class_means: Optional[Dict[int, np.ndarray]] = None
@@ -880,14 +885,29 @@ class MDXDetector(BaseDetector):
         throts: np.ndarray,
         brakes: np.ndarray,
     ) -> None:
-        """Derive equal-width bin edges from the range of training actions."""
-        self._steer_edges = np.linspace(steers.min(), steers.max(), self.n_steer_bins + 1)
-        self._throt_edges = np.linspace(throts.min(), throts.max(), self.n_throt_bins + 1)
-        self._brake_edges = np.linspace(brakes.min(), brakes.max(), self.n_brake_bins + 1)
-        # Make the outer edges inclusive
-        self._steer_edges[0]  -= 1e-6;  self._steer_edges[-1]  += 1e-6
-        self._throt_edges[0]  -= 1e-6;  self._throt_edges[-1]  += 1e-6
-        self._brake_edges[0]  -= 1e-6;  self._brake_edges[-1]  += 1e-6
+        """Derive bin edges from the range of training actions.
+
+        With bin_strategy="equal-width" (default, preserves original behaviour):
+            edges are evenly spaced between min and max.
+        With bin_strategy="quantile":
+            edges are placed at quantiles of the empirical distribution, so each
+            bin contains approximately the same number of training samples.
+            Constant dimensions (e.g. steer always 0) collapse to a single bin.
+        """
+        def _edges(v: np.ndarray, nb: int) -> np.ndarray:
+            v = np.asarray(v, float)
+            if self.bin_strategy == "quantile":
+                e = np.unique(np.quantile(v, np.linspace(0.0, 1.0, nb + 1)))
+                if e.size < 2:              # constant dimension — single bin
+                    e = np.array([v.min() - 1e-6, v.max() + 1e-6])
+            else:                           # "equal-width" — legacy default
+                e = np.linspace(v.min(), v.max(), nb + 1)
+            e[0] -= 1e-6; e[-1] += 1e-6
+            return e
+
+        self._steer_edges = _edges(steers, self.n_steer_bins)
+        self._throt_edges = _edges(throts, self.n_throt_bins)
+        self._brake_edges = _edges(brakes, self.n_brake_bins)
 
     def discretise_action(
         self,

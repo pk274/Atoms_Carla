@@ -18,7 +18,7 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 11        # None for automatic selection
+    NUM_GMM_CLUSTERS = 13        # None for automatic selection
 
     MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9
@@ -37,7 +37,12 @@ class ExperimentConfig:
     RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = False
     REAPPLY_PERTURBATIONS = False
-    RECOMPUTE_MDX_BASELINE = False
+    RECOMPUTE_MDX_BASELINE    = False
+    RECOMPUTE_MDX_V2_BASELINE = True    # set False after first successful run
+
+    # MDX-v2 ablation flags — toggle independently to isolate which change helps
+    MDX2_USE_FC_FEATURES      = True    # True: 256-d speed_query; False: 512-d backbone (like v1)
+    MDX2_USE_QUANTILE_BINNING = False    # True: quantile bin edges; False: equal-width (like v1)
 
     PLOT_SEG_AND_REL = True
     PLOT_COMPARATIVE_REL = True
@@ -51,8 +56,9 @@ class ExperimentConfig:
     MAX_LIVE_PERT_SIZE = 100
     _DATA_ROOT = Path("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/data") / AGENT
     BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data"
-    TEST_DATA_DIR = _DATA_ROOT / "test_data"
-    RESULTS_DIR = _DATA_ROOT / "results"
+    TEST_DATA_DIR     = _DATA_ROOT / "test_data"
+    VAL_DATA_DIR      = _DATA_ROOT / "val_data"
+    RESULTS_DIR       = _DATA_ROOT / "results"
 
     ADD_AUTOPILOT_VEHICLES = True
 

@@ -40,6 +40,7 @@ config.test_data_dir/
 from __future__ import annotations
 
 import random
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -228,11 +229,11 @@ class PerturbationApplier:
                             pm.perturb_narrow_image(tensor, perturbation, intensity) -> tensor
     """
 
-    def __init__(self, perturbation_manager, model=None):
-        self._data_dir  = conf.TEST_DATA_DIR
-        self._pm        = perturbation_manager
+    def __init__(self, perturbation_manager, model=None, data_dir=None):
+        self._data_dir = Path(data_dir) if data_dir is not None else conf.TEST_DATA_DIR
+        self._pm       = perturbation_manager
         self._model    = model
-        self._out_path  = self._data_dir / "test_labeled.npz"
+        self._out_path = self._data_dir / "test_labeled.npz"
 
     def apply(
         self,
@@ -295,6 +296,20 @@ class PerturbationApplier:
             # record the label and keep clean pixels so the frame assignment matches
             # the HPC prep_test.py output (same seed + same spec → same shuffle).
             is_pgd_deferred = is_pgd and not has_narr
+
+            if is_pgd_deferred:
+                # Guard (docs/code_review.md §4.2): these frames are LABELLED
+                # perturbed (label=1) but keep CLEAN pixels — the adversarial image
+                # is crafted on the HPC.  If ATOMs profiles are recomputed locally
+                # for these frames (RECOMPUTE_TEST_ATOMS=True) WITHOUT merging the
+                # HPC-computed profiles, the PGD result is invalid (clean pixels).
+                warnings.warn(
+                    f"[PerturbationApplier] PGD is DEFERRED to HPC for this agent: "
+                    f"{len(np.where(assignments == entry_idx)[0])} frames are labelled "
+                    f"perturbed but contain CLEAN pixels. Merge HPC-crafted profiles "
+                    f"before evaluating; do NOT trust locally-recomputed PGD profiles.",
+                    stacklevel=2,
+                )
 
             if (is_fgsm or (is_pgd and not is_pgd_deferred)) and self._model is None:
                 raise ValueError(
@@ -435,6 +450,11 @@ class LabeledTestLoader:
     @staticmethod
     def load(name: str = "test_labeled") -> Dict[str, np.ndarray]:
         path = conf.TEST_DATA_DIR / f"{name}.npz"
+        return LabeledTestLoader.load_path(path)
+
+    @staticmethod
+    def load_val(name: str = "val_labeled") -> Dict[str, np.ndarray]:
+        path = conf.VAL_DATA_DIR / f"{name}.npz"
         return LabeledTestLoader.load_path(path)
 
     @staticmethod

@@ -193,6 +193,7 @@ def build_sampling_plan(
     n_frames: int,
     exclude_towns: List[str],
     include_towns: Optional[List[str]] = None,
+    exclude_routes: Optional[set] = None,
 ) -> Dict[str, List[Tuple[Path, List[int]]]]:
     """
     Group routes by town, filter, then pick evenly-spaced frames so that each
@@ -200,9 +201,11 @@ def build_sampling_plan(
 
     Parameters
     ----------
-    exclude_towns : towns to drop (applied first).
-    include_towns : if given, keep ONLY these towns (applied after exclude).
-                    Pass ["Town05"] to build a Town05-only test-set plan.
+    exclude_towns  : towns to drop (applied first).
+    include_towns  : if given, keep ONLY these towns (applied after exclude).
+                     Pass ["Town05"] to build a Town05-only test-set plan.
+    exclude_routes : set of route directory *names* to skip within retained towns.
+                     Used by migrate_valset() to omit routes already in the test set.
 
     Returns: town → [(route_dir, [frame_indices]), ...]
     """
@@ -238,6 +241,16 @@ def build_sampling_plan(
         for t in drop:
             LOG.info("Dropping town %s (not in include list)", t)
             town_to_routes.pop(t)
+
+    # Route-level exclusion — remove routes whose directory name is in the exclusion set.
+    # Used to prevent val set routes from overlapping with the test set.
+    if exclude_routes:
+        for t in list(town_to_routes):
+            before = len(town_to_routes[t])
+            town_to_routes[t] = [r for r in town_to_routes[t] if r.name not in exclude_routes]
+            dropped = before - len(town_to_routes[t])
+            if dropped:
+                LOG.info("  %s: excluded %d route(s) already in test set", t, dropped)
 
     active_towns = sorted(town_to_routes)
     if not active_towns:
@@ -390,6 +403,61 @@ def migrate_testset(
 
 
 # ---------------------------------------------------------------------------
+# Validation-set conversion
+# ---------------------------------------------------------------------------
+
+def migrate_valset(
+    lead_dir: Path,
+    n_frames: int = 500,
+    include_towns: Optional[List[str]] = None,
+) -> None:
+    """
+    Convert LEAD routes to val-set npz files.
+
+    Automatically excludes routes that are already present in
+    conf.TEST_DATA_DIR / "frames", so the val set never overlaps with the
+    test set.  Both sets must use the same town (default: Town05).
+
+    Output goes to conf.VAL_DATA_DIR / "frames".
+    """
+    if include_towns is None:
+        include_towns = ["Town05"]
+
+    # Identify routes already migrated for the test set so they are not
+    # reused for the val set.  The npz stem follows: run_<town>_<route_dir_name>
+    # e.g. "run_Town05_Town05_Rep0_Town05_ll_6_...".
+    test_frames_dir = Path(conf.TEST_DATA_DIR) / "frames"
+    exclude_routes: set = set()
+    if test_frames_dir.exists():
+        for p in test_frames_dir.glob("run_*.npz"):
+            stem = p.stem   # "run_Town05_Town05_Rep0_..."
+            for town in include_towns:
+                prefix = f"run_{town}_"
+                if stem.startswith(prefix):
+                    exclude_routes.add(stem[len(prefix):])   # route_dir.name
+                    break
+        LOG.info(
+            "Excluding %d route(s) already in test_data/frames/: %s",
+            len(exclude_routes), sorted(exclude_routes),
+        )
+
+    routes = discover_routes(lead_dir)
+    if not routes:
+        raise FileNotFoundError(f"No valid routes found under {lead_dir}")
+
+    plan = build_sampling_plan(
+        routes,
+        n_frames,
+        exclude_towns=[],
+        include_towns=include_towns,
+        exclude_routes=exclude_routes,
+    )
+    out_dir = Path(conf.VAL_DATA_DIR) / "frames"
+    total = _write_plan(plan, out_dir)
+    LOG.info("Done — %d val frames written to %s", total, out_dir)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -401,6 +469,7 @@ if __name__ == "__main__":
             "Modes:\n"
             "  baseline  — sample from all towns except Town05 → conf.BASELINE_DATA_DIR/frames/\n"
             "  testset   — sample from Town05 only             → conf.TEST_DATA_DIR/frames/\n"
+            "  valset    — sample from Town05, auto-excluding test routes → conf.VAL_DATA_DIR/frames/\n"
             "  both      — run baseline then testset\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -410,7 +479,7 @@ if __name__ == "__main__":
         help="Path to unzipped noScenarios directory (or any root containing routes)",
     )
     parser.add_argument(
-        "--mode", choices=["baseline", "testset", "both"], default="baseline",
+        "--mode", choices=["baseline", "testset", "valset", "both"], default="baseline",
         help="What to generate (default: baseline)",
     )
     parser.add_argument(
@@ -423,11 +492,11 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--testset_n_frames", type=int, default=500,
-        help="Target frame count for test set (default: 500)",
+        help="Target frame count for test/val set (default: 500)",
     )
     parser.add_argument(
         "--testset_towns", nargs="*", default=["Town05"],
-        help="Towns to include in test set (default: Town05)",
+        help="Towns to include in test/val set (default: Town05)",
     )
     args = parser.parse_args()
 
@@ -435,3 +504,5 @@ if __name__ == "__main__":
         migrate(args.lead_dir, args.n_frames, args.exclude_towns)
     if args.mode in ("testset", "both"):
         migrate_testset(args.lead_dir, args.testset_n_frames, args.testset_towns)
+    if args.mode == "valset":
+        migrate_valset(args.lead_dir, args.testset_n_frames, args.testset_towns)
