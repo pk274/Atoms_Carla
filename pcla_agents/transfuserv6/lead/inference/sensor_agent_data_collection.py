@@ -48,7 +48,13 @@ if str(_transfuserv6_dir) not in sys.path:
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 from ATOMs_Analysis.detection.baseline_dataset import BaselineDataCollector
 
+from lead.common.constants import SEMANTIC_SEGMENTATION_CONVERTER
 from lead.inference.sensor_agent import SensorAgent
+
+# Lookup table: raw CARLA class ID (0-28) → grouped TFV6 class ID (0-9).
+# Mirrors the transform applied by the LEAD expert pipeline (save_grouped_semantic=True)
+# so that live-collected segmentation maps are compatible with LEAD-dataset baselines.
+_SEG_CONVERTER = np.uint8(list(SEMANTIC_SEGMENTATION_CONVERTER.values()))
 
 LOG = logging.getLogger(__name__)
 
@@ -142,7 +148,8 @@ class DataCollectionSensorAgent(SensorAgent):
                 LOG.warning(f"[DataCollection] '{key}' missing — skipping frame")
                 return input_data
             _, sem_bgra = input_data[key]          # (timestamp, [H, W, 4] BGRA)
-            seg_slices.append(sem_bgra[:, :, 2].astype(np.uint8))  # red = class ID
+            raw_ids = sem_bgra[:, :, 2].astype(np.uint8)  # red channel = raw CARLA class ID
+            seg_slices.append(_SEG_CONVERTER[raw_ids])    # convert to grouped TFV6 class IDs
 
         seg_wide = np.concatenate(seg_slices, axis=1)  # [H, num_cameras*W]
 

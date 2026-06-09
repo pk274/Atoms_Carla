@@ -112,6 +112,7 @@ class Run:
     snapshot: bool = True   # True = deliberate "<K> clusters/" folder; False = scratch
     per_pert: dict = field(default_factory=dict)   # pert -> {canon detector: auc}
     knn_sweep: dict = field(default_factory=dict)  # {"plain": {k: auc}, "gmm": {k: auc}}
+    val_auc_gmm_avg: float | None = None           # mean GMM AUROC on val set; None if unavailable
 
 
 def _gmm_k_from_keys(summary: dict) -> int | None:
@@ -122,10 +123,15 @@ def _gmm_k_from_keys(summary: dict) -> int | None:
     return None
 
 
-def load_summary(path: Path) -> tuple[dict, dict, dict]:
+def load_summary(path: Path) -> tuple[dict, dict, dict, float | None]:
     raw = json.loads(path.read_text())
     auc, youden, knn_best = {}, {}, {}
+    val_avg = raw.get("__val_auc_gmm_avg__")   # float or None
     for key, val in raw.items():
+        if key.startswith("__"):
+            continue   # skip internal metadata keys
+        if not isinstance(val, dict):
+            continue
         c = canon_detector(key)
         auc[c] = val["auc"]
         youden[c] = val.get("youden_j")
@@ -133,7 +139,7 @@ def load_summary(path: Path) -> tuple[dict, dict, dict]:
             bk = extract_best_k(key)
             if bk is not None:
                 knn_best[c] = bk
-    return auc, youden, knn_best
+    return auc, youden, knn_best, val_avg
 
 
 def load_per_pert(path: Path) -> dict:
@@ -185,7 +191,7 @@ def discover_runs(data_root: Path) -> list[Run]:
         mm = re.search(r"mode_(\d)", str(summ))
         mode = mm.group(1) if mm else "?"
         run_dir = summ.parent
-        auc, youden, knn_best = load_summary(summ)
+        auc, youden, knn_best, val_avg = load_summary(summ)
         K = _gmm_k_from_keys(json.loads(summ.read_text())) or 0
         named = "clusters" in str(run_dir).lower()
         cands.append(Run(
@@ -193,6 +199,7 @@ def discover_runs(data_root: Path) -> list[Run]:
             auc=auc, youden=youden, knn_best_k=knn_best, snapshot=named,
             per_pert=load_per_pert(run_dir / "results_per_perturbation.json"),
             knn_sweep=load_knn_sweep(run_dir),
+            val_auc_gmm_avg=val_avg,
         ))
 
     # infer mode for bare folders by matching the K-invariant fingerprint
@@ -405,10 +412,11 @@ def build_markdown(groups: dict, live: dict) -> str:
             w(f"| {agent} | {mode} | {det} | {K} | {fmt(v)} | {fmt(twin_v)}{darrow} |")
     w("")
     # aggregate: which K maximizes mean GMM AUC per (agent, mode)
-    w("_Aggregate — K that maximizes the **mean** AUC over all five GMM detectors:_")
+    w("_Aggregate — K that maximizes the **mean** AUC over all five GMM detectors "
+      "(test-set selection — use val-set table below for reporting):_")
     w("")
-    w("| Agent | Mode | best mean-K | mean GMM AUC at best K |")
-    w("|-------|------|-------------|------------------------|")
+    w("| Agent | Mode | best mean-K (test) | mean GMM AUC at best K |")
+    w("|-------|------|--------------------|------------------------|")
     for (agent, mode), gr in groups.items():
         Ks, dets, mat = matrix_for_group(gr)
         gdets = [d for d in dets if d in GMM_DETECTORS]
@@ -421,6 +429,44 @@ def build_markdown(groups: dict, live: dict) -> str:
             bk = max(per_k, key=per_k.get)
             w(f"| {agent} | {mode} | {bk} | {fmt(per_k[bk])} |")
     w("")
+
+    # val-set K selection — the scientifically correct criterion
+    _VAL_TOP_N = 5
+    _any_val = any(r.val_auc_gmm_avg is not None for gr in groups.values() for r in gr)
+    if _any_val:
+        w("**Val-set K selection** _(scientifically correct — K chosen on held-out val, "
+          f"test results reported for that K). Top {_VAL_TOP_N} by val avg GMM AUC shown "
+          "to help balance detection quality against cluster count:_")
+        w("")
+        w("| Agent | Mode | Rank | K | val avg GMM AUC | test avg GMM AUC | Δ (test−val) |")
+        w("|-------|------|------|---|-----------------|------------------|--------------|")
+        _val_recs: list[str] = []
+        for (agent, mode), gr in groups.items():
+            Ks, dets, mat = matrix_for_group(gr)
+            gdets = [d for d in dets if d in GMM_DETECTORS]
+            val_per_k = {r.K: r.val_auc_gmm_avg for r in gr if r.val_auc_gmm_avg is not None}
+            if not val_per_k:
+                continue
+            ranked = sorted(val_per_k.items(), key=lambda kv: kv[1], reverse=True)
+            for rank, (K, val_avg_at_k) in enumerate(ranked[:_VAL_TOP_N], start=1):
+                test_vals = [mat[d][K] for d in gdets if K in mat[d]]
+                test_avg = float(np.mean(test_vals)) if test_vals else None
+                delta = (test_avg - val_avg_at_k) if test_avg is not None else None
+                ds = (f"+{delta:.4f}" if delta >= 0 else f"{delta:.4f}") if delta is not None else "—"
+                rank_label = f"**#{rank}**" if rank == 1 else f"#{rank}"
+                k_label = f"**{K}**" if rank == 1 else str(K)
+                w(f"| {agent} | {mode} | {rank_label} | {k_label} | {fmt(val_avg_at_k)} | {fmt(test_avg)} | {ds} |")
+            best_k = ranked[0][0]
+            best_val = ranked[0][1]
+            best_test_vals = [mat[d][best_k] for d in gdets if best_k in mat[d]]
+            best_test = fmt(float(np.mean(best_test_vals)) if best_test_vals else None)
+            _val_recs.append(f"{agent} mode {mode}: K={best_k} (val avg={best_val:.4f}, test avg={best_test})")
+        w("")
+        w("> **Recommendation for reporting.** Use the **#1 K** unless a lower-ranked K "
+          "offers a meaningful reduction in cluster count at negligible val-AUC cost. "
+          "Do *not* use the test-set best K — that constitutes hyperparameter leakage.  "
+          + "  ".join(f"**{r}**" for r in _val_recs))
+        w("")
 
     # ---- 4. distance robustness --------------------------------------------
     w("## 4. Which distance is most robust?")

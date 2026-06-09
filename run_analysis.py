@@ -48,6 +48,10 @@ import yaml
 
 from collections import defaultdict
 
+import argparse as _argparse
+_ap = _argparse.ArgumentParser(add_help=False)
+_ap.add_argument("--gmm-k", type=int, default=None)
+_cli, _ = _ap.parse_known_args()
 
 
 # ---------------------------------------------------------------------------
@@ -471,6 +475,8 @@ save_figure(fig_bic, dirs["clustering"] / "gmm_model_selection.png")
 N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
 if conf.NUM_GMM_CLUSTERS is not None:
     N_COMPONENTS = conf.NUM_GMM_CLUSTERS
+if _cli.gmm_k is not None:
+    N_COMPONENTS = _cli.gmm_k   # --gmm-k CLI arg takes priority over config
 print(f"  Selected K = {N_COMPONENTS}")
 print()
 
@@ -1199,6 +1205,43 @@ scores_wass_gmm = np.array([
     for i in range(len(test_profiles))
 ])
 
+# --- 9b.4: GMM val scores for K selection (Mahalanobis/Euclidean/JSD/Wasserstein) ---
+# k-NN val scores are computed below alongside test k-NN; Wasserstein added last.
+if _has_val:
+    scores_mahal_gmm_val = np.array([
+        DistanceComputer.compute_gmm_distance(
+            means          = gmm.means_,
+            covariances    = gmm.covariances_,
+            weights        = gmm.weights_,
+            mu_target      = val_profiles[i],
+            mode           = "nearest",
+            regularization = conf.MAHAL_RIDGE,
+        ).distance
+        for i in range(len(val_profiles))
+    ])
+    scores_euclid_gmm_val = np.array([
+        DistanceComputer.compute_gmm_euclidean(
+            means     = gmm.means_,
+            mu_target = val_profiles[i],
+        )
+        for i in range(len(val_profiles))
+    ])
+    scores_jsd_gmm_val = np.array([
+        DistanceComputer.compute_gmm_jsd(
+            means     = gmm.means_,
+            mu_target = val_profiles[i],
+        )
+        for i in range(len(val_profiles))
+    ])
+    scores_wass_gmm_val = np.array([
+        DistanceComputer.compute_gmm_wasserstein(
+            means     = gmm.means_,
+            mu_target = val_profiles[i],
+        )
+        for i in range(len(val_profiles))
+    ])
+    print("  Val GMM (non-kNN) scores: done")
+
 # --- 9b.3: GMM k-NN (kNN within the nearest cluster's data) ---
 # Pre-split baseline samples by cluster; for each test point find the
 # closest centroid by L2, then run kNN within that cluster's data.
@@ -1293,27 +1336,27 @@ if mdx is not None:
     print(f"  MDX: scored {len(scores_mdx)} frames")
 
 # ----- 9d-v2: MDX-v2 (ablation-controlled features + binning) ----
-scores_mdx_v2 = None
-_mdx_v2_name = (
-    f"MDX-v2 ({'F_c' if conf.MDX2_USE_FC_FEATURES else 'backbone'} + "
-    f"{'quantile' if conf.MDX2_USE_QUANTILE_BINNING else 'equal-width'} bins)"
-)
-if mdx_v2 is not None:
-    _scores_v2 = []
-    _n_mdx_v2_test = len(test_data["frame_idx"])
-    for i in range(_n_mdx_v2_test):
-        if i % 100 == 0:
-            print(f"  MDX-v2 scoring frame {i}/{_n_mdx_v2_test}")
-        wide_t = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
-        if conf.MDX2_USE_FC_FEATURES:
-            feat_vec = lrp.get_fc_features(
-                wide_t, cmd=int(test_data["cmd"][i]), spd=float(test_data["speed"][i])
-            )
-        else:
-            feat_vec = lrp.get_backbone_features(wide_t)
-        _scores_v2.append(mdx_v2.score(feat_vec))
-    scores_mdx_v2 = np.array(_scores_v2)
-    print(f"  MDX-v2: scored {len(scores_mdx_v2)} frames")
+#scores_mdx_v2 = None
+#_mdx_v2_name = (
+#    f"MDX-v2 ({'F_c' if conf.MDX2_USE_FC_FEATURES else 'backbone'} + "
+#    f"{'quantile' if conf.MDX2_USE_QUANTILE_BINNING else 'equal-width'} bins)"
+#)
+#if mdx_v2 is not None:
+#    _scores_v2 = []
+#    _n_mdx_v2_test = len(test_data["frame_idx"])
+#    for i in range(_n_mdx_v2_test):
+#        if i % 100 == 0:
+#            print(f"  MDX-v2 scoring frame {i}/{_n_mdx_v2_test}")
+#        wide_t = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+#        if conf.MDX2_USE_FC_FEATURES:
+#            feat_vec = lrp.get_fc_features(
+#                wide_t, cmd=int(test_data["cmd"][i]), spd=float(test_data["speed"][i])
+#            )
+#        else:
+#            feat_vec = lrp.get_backbone_features(wide_t)
+#        _scores_v2.append(mdx_v2.score(feat_vec))
+#    scores_mdx_v2 = np.array(_scores_v2)
+#    print(f"  MDX-v2: scored {len(scores_mdx_v2)} frames")
 
 # ----- 9e: PEOC — Policy Entropy OOD Classifier (Sedlmeier et al., 2020) ----
 # H(π) of the 8-bin speed distribution. No fitting required.
@@ -1329,7 +1372,7 @@ _knn_gmm_sanity = [(f"k-NN GMM (k={k})", scores_knn_gmm_by_k[k]) for k in KNN_K_
 _optional = [
     ("Action entropy",       scores_entropy  if action_logits_available else None),
     ("MDX Detection",        scores_mdx),
-    (_mdx_v2_name,           scores_mdx_v2),
+    #(_mdx_v2_name,           scores_mdx_v2),
     ("PEOC",                 scores_peoc),
 ]
 for name, scores in [
@@ -1473,17 +1516,32 @@ results_knn_gmm = results_knn_gmm_by_k[best_k_gmm]
 results_knn_gmm["detector_name"] = f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)"
 scores_knn_gmm_best = scores_knn_gmm_by_k[best_k_gmm]
 
+# --- Val GMM AUROC for K selection (all 5 GMM detector variants) ---
+_val_auc_gmm_avg = None
+if _has_val:
+    _gmm_val_pairs = [
+        (f"ATOMs-Mahalanobis (GMM K={N_COMPONENTS})", scores_mahal_gmm_val),
+        (f"ATOMs-Euclidean (GMM K={N_COMPONENTS})", scores_euclid_gmm_val),
+        (f"ATOMs-JSD (GMM K={N_COMPONENTS})", scores_jsd_gmm_val),
+        (f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})", scores_wass_gmm_val),
+        (f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)", scores_knn_gmm_val_by_k[best_k_gmm]),
+    ]
+    _gmm_val_aucs = {name: evaluator.evaluate(s, val_labels, name)["auc"]
+                     for name, s in _gmm_val_pairs}
+    _val_auc_gmm_avg = float(np.mean(list(_gmm_val_aucs.values())))
+    print(f"  Val GMM avg AUC (K={N_COMPONENTS}): {_val_auc_gmm_avg:.4f}")
+
 results_mdx = evaluator.evaluate(
     scores        = scores_mdx,
     labels        = test_labels,
     detector_name = "MDX Detection",
 ) if scores_mdx is not None else None
 
-results_mdx_v2 = evaluator.evaluate(
-    scores        = scores_mdx_v2,
-    labels        = test_labels,
-    detector_name = _mdx_v2_name,
-) if scores_mdx_v2 is not None else None
+#results_mdx_v2 = evaluator.evaluate(
+#    scores        = scores_mdx_v2,
+#    labels        = test_labels,
+#    detector_name = _mdx_v2_name,
+#) if scores_mdx_v2 is not None else None
 
 results_peoc = evaluator.evaluate(
     scores        = scores_peoc,
@@ -1498,7 +1556,10 @@ all_results = [
         results_jsd, results_jsd_gmm,
         results_wass_single, results_wass_gmm,
         results_knn, results_knn_gmm,
-        results_entropy, results_mdx, results_mdx_v2, results_peoc,
+        results_entropy,
+        results_mdx,
+        #results_mdx_v2,
+        results_peoc,
     ] if r is not None
 ]
 evaluator.compare(all_results)
@@ -1510,6 +1571,8 @@ for res in all_results:
 
 # Also save a combined summary
 summary = {r["detector_name"]: {"auc": r["auc"], "youden_j": r["youden_j"]} for r in all_results}
+if _val_auc_gmm_avg is not None:
+    summary["__val_auc_gmm_avg__"] = _val_auc_gmm_avg
 with open(OUT_DIR / "summary.json", "w") as f:
     json.dump(summary, f, indent=2)
 print()
@@ -1584,10 +1647,10 @@ for pert_name, subset in split_data.items():
         scores_mdx[eval_mask], eval_labels,
         detector_name=f"MDX Detection | {pert_name}",
     ) if scores_mdx is not None else None
-    r_mdx_v2 = evaluator.evaluate(
-        scores_mdx_v2[eval_mask], eval_labels,
-        detector_name=f"{_mdx_v2_name} | {pert_name}",
-    ) if scores_mdx_v2 is not None else None
+    #r_mdx_v2 = evaluator.evaluate(
+    #    scores_mdx_v2[eval_mask], eval_labels,
+    #    detector_name=f"{_mdx_v2_name} | {pert_name}",
+    #) if scores_mdx_v2 is not None else None
 
     r_entropy = evaluator.evaluate(
         scores_entropy[eval_mask], eval_labels,
@@ -1606,7 +1669,9 @@ for pert_name, subset in split_data.items():
             r_jsd, r_jsd_gmm,
             r_wass, r_wass_gmm,
             r_knn, r_knn_gmm,
-            r_entropy, r_mdx, r_mdx_v2, r_peoc,
+            r_entropy, r_mdx,
+            #r_mdx_v2,
+            r_peoc,
         ]
         if r is not None
     ]
@@ -1676,6 +1741,8 @@ _score_dist_pairs = [
      "Jensen-Shannon divergence", "jsd"),
     (scores_wass_single, results_wass_single, scores_wass_gmm, results_wass_gmm,
      "Wasserstein distance", "wasserstein"),
+     (scores_knn_best, results_knn, scores_knn_gmm_best, results_knn_gmm,
+     "k-NN distance", "knn"),
 ]
 for _sc_s, _res_s, _sc_g, _res_g, _xlabel, _stub in _score_dist_pairs:
     fig_d_s = plot_mahal_distribution(

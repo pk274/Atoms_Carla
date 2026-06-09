@@ -18,9 +18,9 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 13        # None for automatic selection
+    NUM_GMM_CLUSTERS = 18        # None for automatic BIC selection; overridden by --gmm-k CLI arg
 
-    MODE_ANALYSIS = 2
+    MODE_ANALYSIS = 1
     FC_RELEVANCE_FILTER = 0.9       # 0.9
 
 
@@ -38,11 +38,11 @@ class ExperimentConfig:
     RECOMPUTE_TEST_ATOMS = False
     REAPPLY_PERTURBATIONS = False
     RECOMPUTE_MDX_BASELINE    = False
-    RECOMPUTE_MDX_V2_BASELINE = True    # set False after first successful run
+    RECOMPUTE_MDX_V2_BASELINE = False    # set False after first successful run
 
     # MDX-v2 ablation flags — toggle independently to isolate which change helps
-    MDX2_USE_FC_FEATURES      = True    # True: 256-d speed_query; False: 512-d backbone (like v1)
-    MDX2_USE_QUANTILE_BINNING = False    # True: quantile bin edges; False: equal-width (like v1)
+    MDX2_USE_FC_FEATURES      = False    # True: 256-d speed_query; False: 512-d backbone (like v1)
+    MDX2_USE_QUANTILE_BINNING = True    # True: quantile bin edges; False: equal-width (like v1)
 
     PLOT_SEG_AND_REL = True
     PLOT_COMPARATIVE_REL = True
@@ -55,10 +55,22 @@ class ExperimentConfig:
     MAX_TEST_SIZE = 200
     MAX_LIVE_PERT_SIZE = 100
     _DATA_ROOT = Path("C:/Users/paulk/Desktop/Unistuff/Masterarbeit/Code/PCLA/data") / AGENT
-    BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data"
-    TEST_DATA_DIR     = _DATA_ROOT / "test_data"
-    VAL_DATA_DIR      = _DATA_ROOT / "val_data"
-    RESULTS_DIR       = _DATA_ROOT / "results"
+
+    # Switch to "alternative" to use the same-distribution split (all towns,
+    # random route-level split into *_data_alt directories).
+    # "original" keeps the Town05-held-out split unchanged.
+    EXPERIMENT_VARIANT = "original"   # "original" | "alternative"
+
+    if EXPERIMENT_VARIANT == "alternative":
+        BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data_alt"
+        TEST_DATA_DIR     = _DATA_ROOT / "test_data_alt"
+        VAL_DATA_DIR      = _DATA_ROOT / "val_data_alt"
+        RESULTS_DIR       = _DATA_ROOT / "results_alt"
+    else:
+        BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data"
+        TEST_DATA_DIR     = _DATA_ROOT / "test_data"
+        VAL_DATA_DIR      = _DATA_ROOT / "val_data"
+        RESULTS_DIR       = _DATA_ROOT / "results"
 
     ADD_AUTOPILOT_VEHICLES = True
 

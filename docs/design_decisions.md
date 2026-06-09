@@ -46,6 +46,27 @@ test set. GMM cluster count K stays selected by BIC on the baseline, which is al
 - `hpc/collect_results.sh` — added `val` pipeline case → `data/<AG>/val_data/attention/`.
 - `run_analysis.py` — Step 9.5 loads val profiles; k-NN/GMM-kNN k selected on val AUC; sensitivity plot shows val AUC; falls back to test AUC with a warning when val is absent.
 
+**Extension — GMM cluster count K also selected on val (implemented 2026-06-09):**
+
+The original design left GMM K selected by BIC on the baseline, which is clean. However, the
+intended sweep workflow (`sweep_clusters.py` + manual inspection of `summarize_results.py`) had
+users picking K by test-set AUROC — leakage. Two additional problems existed:
+
+1. `sweep_clusters.py` passed `--gmm-k {K}` to `run_analysis.py`, but `run_analysis.py` had no
+   argparse, so the flag was silently ignored and every sweep run used `conf.NUM_GMM_CLUSTERS`.
+2. Val profiles and `val_labeled.npz` existed on HPC but were not yet used for GMM K selection.
+
+**Changes (2026-06-09):**
+- `run_analysis.py` — added argparse for `--gmm-k`; K resolution order is now: CLI arg → `conf.NUM_GMM_CLUSTERS` → BIC. Step 9.5 extended: after GMM is fitted, scores all 5 GMM detector variants on val profiles and computes their mean AUROC (`__val_auc_gmm_avg__`), written to `summary.json`. Skipped gracefully when val files are absent.
+- `summarize_results.py` — `load_summary` reads `__val_auc_gmm_avg__`; `Run` dataclass gains `val_auc_gmm_avg` field; Section 3 of SUMMARY.md gains a **Val-set K selection** table and a recommendation blockquote identifying the best K by val AUROC. The old test-set aggregate table is retained but labelled as not suitable for reporting.
+- `atoms_config.py` — comment on `NUM_GMM_CLUSTERS` updated to note CLI override.
+
+**Correct sweep workflow after these changes:**
+1. Download `val_labeled.npz` + `val_profiles_{mode}.npy` from HPC to `data/TFV6/val_data/`.
+2. `python sweep_clusters.py --k-values 3 5 7 9 11 13 15` — each run now computes and stores `__val_auc_gmm_avg__`.
+3. `python summarize_results.py` — SUMMARY.md Section 3 shows the recommended K.
+4. Report test results from the `{best_K} clusters/` snapshot folder.
+
 ---
 
 ## Agent support
@@ -593,3 +614,30 @@ all other `RECOMPUTE_*` flags are independent.
 Files changed: `lrp_transfuser.py` (`_return_wps` flag, two new extraction methods),
 `detectors.py` (`bin_strategy` param + quantile `_build_bin_edges`), `atoms_config.py`
 (new flag), `run_analysis.py` (fit + score + evaluate blocks for TFV6 only).
+
+
+---
+
+## Alternative Same-Distribution Data Split (`EXPERIMENT_VARIANT`)
+
+### Motivation
+
+The original split (non-Town05 baseline, Town05 test/val) makes test frames OOD by construction due to domain shift (different road geometry, visual character) independent of any applied perturbation. This confounds evaluation: a detector that merely recognises "novel town" would score well without detecting perturbations at all.
+
+### Design
+
+`atoms_config.py` exposes `EXPERIMENT_VARIANT = "original" | "alternative"`. When set to `"alternative"`, all four path variables (`BASELINE_DATA_DIR`, `TEST_DATA_DIR`, `VAL_DATA_DIR`, `RESULTS_DIR`) resolve to `*_data_alt` / `results_alt` counterparts under the same `_DATA_ROOT`. No analysis scripts need changes — they read paths exclusively from config.
+
+### Data split strategy
+
+`migrate_lead_to_baseline.py --mode alt_split`:
+1. Discovers all routes across all towns (Town05 included by default in the alt split).
+2. Shuffles routes deterministically with `conf.RANDOM_SEED` via `np.random.default_rng`.
+3. Splits at the **route level** (whole routes go to one split, never both) using proportional slicing: first `baseline_n / (baseline_n + test_n + val_n)` fraction → baseline, next slice → test, remainder → val. Default: 5000 / 1000 / 1000.
+4. Writes all three sets in one invocation using `_build_plan_from_routes` (even sampling across the pre-assigned route list, no per-town balancing).
+
+Route-level splitting prevents leakage from temporally-correlated frames within a route.
+
+### Invariant
+
+No filename overlap between `baseline_data_alt/frames/`, `test_data_alt/frames/`, and `val_data_alt/frames/` — guaranteed by construction (each shuffled route appears in exactly one slice).

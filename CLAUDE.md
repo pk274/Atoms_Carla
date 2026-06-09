@@ -65,18 +65,19 @@ The main entry point. Runs end-to-end and produces all figures and JSON results 
 | 2.5 | Fit `MDXDetector` (MDX-v1) on baseline — 512-d backbone features + speed-derived action proxy. For TFV6: reads pre-computed `mdx_features.npz` if available; otherwise extracts locally. Controlled by `RECOMPUTE_MDX_BASELINE`. |
 | 2.5-v2 | Fit `MDXDetector` (MDX-v2) on baseline — 256-d F_c (`speed_query`) features + waypoint steer proxy + quantile binning. Runs locally only (full planning-decoder forward per frame). Controlled by `RECOMPUTE_MDX_V2_BASELINE`. Saves `mdx_v2_parameters.pkl`. |
 | 3 | Fit single-Gaussian `MahalanobisDetector` on baseline profiles; set threshold at 99th percentile |
-| 4 | BIC/AIC sweep over K=1..MAX_K to select GMM component count |
+| 4 | BIC/AIC sweep over K=1..MAX_K to select GMM component count. K is then resolved in priority order: (1) `--gmm-k` CLI arg (used by `sweep_clusters.py`), (2) `conf.NUM_GMM_CLUSTERS` if not None, (3) BIC-selected K. |
 | 5 | Fit `GMMClustering` with selected K; assign baseline frames to clusters |
 | 6 | Visualize baseline: attention bar chart, per-cluster attention comparison, PCA coloured by run and cluster |
 | 7 | Apply perturbation mix to test set → `test_labeled.npz` with ground-truth labels |
 | 8 | Compute ATOMs profiles + action logits on labeled test set → `test_profiles.npy` |
 | 8.5 | Trajectory analysis: match clean↔perturbed pairs by (run_id, frame_idx); compute displacement stats and PCA trajectories per perturbation type. **DISABLED — this block is currently commented out in `run_analysis.py`; any `trajectory_analysis/` figures on disk are stale.** |
 | 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX-v1, MDX-v2, Action Entropy |
+| 9.5 | Load val profiles + `val_labeled.npz`. When present: score val profiles with all GMM detectors (Mahalanobis-GMM, Euclidean-GMM, JSD-GMM, Wasserstein-GMM, k-NN-GMM); compute per-detector val AUC and their mean → `__val_auc_gmm_avg__`; use val AUC to select k-NN/GMM-kNN k. Falls back to test-set k selection with a warning when val files are absent. |
 | 10 | Evaluate each detector: ROC curve, AUC, Youden-J optimal threshold |
 | 11 | Per-perturbation breakdown: evaluate each detector separately on each perturbation type |
-| 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/` |
+| 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/`. `summary.json` includes `__val_auc_gmm_avg__` when val set is present; `sweep_clusters.py` copies this per-K. `summarize_results.py` reads it to produce a **val-set K selection recommendation** (Section 3 of SUMMARY.md). |
 
-Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`.
+Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`. GMM cluster count K is overridden at runtime by the `--gmm-k` CLI arg (passed automatically by `sweep_clusters.py`).
 
 ---
 
@@ -208,6 +209,17 @@ python migrate_lead_to_baseline.py \
 
 The `valset` mode auto-excludes routes already present in `test_data/frames/` by reading the existing npz stems — no manual exclusion list needed.
 
+**Alternative same-distribution split** (`alt_split` mode): pools all towns, shuffles routes with a fixed seed (`conf.RANDOM_SEED`), and writes disjoint baseline / test / val sets to `*_data_alt/frames/`. OOD signal comes exclusively from perturbations, not domain shift. Requires `EXPERIMENT_VARIANT = "alternative"` in `atoms_config.py` so paths resolve to the `_alt` directories.
+
+```bash
+# All three sets at once, ~5000 baseline + 1000 test + 1000 val frames
+# Set EXPERIMENT_VARIANT = "alternative" in atoms_config.py first
+python migrate_lead_to_baseline.py \
+    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --mode alt_split \
+    --baseline_n 5000 --test_n 1000 --val_n 1000
+```
+
 ### Stage 3 — HPC profile computation
 
 Once npz frame files exist in `baseline_data/frames/` or `test_data/frames/`, the HPC pipeline takes over (see `docs/cluster_explanations.md`). This stage is identical for baseline, test, and val data — only the source frames directory and output paths differ.
@@ -249,6 +261,8 @@ data/
 ```
 
 Profile filenames are always suffixed with the `MODE_ANALYSIS` value (`_1` or `_2`). `run_analysis.py` and `run_online_analysis.py` load the file matching `conf.MODE_ANALYSIS`; `BaselineComputer` saves to the same mode-specific path. To compare modes, set `MODE_ANALYSIS = 1` or `2` in `atoms_config.py` and re-run the analysis without recomputing.
+
+**Alternative split** (`EXPERIMENT_VARIANT = "alternative"` in `atoms_config.py`): all four path variables (`BASELINE_DATA_DIR`, `TEST_DATA_DIR`, `VAL_DATA_DIR`, `RESULTS_DIR`) resolve to `*_data_alt` / `results_alt` counterparts. No other code changes needed — flip the flag to switch splits entirely.
 
 Frame `.npz` files contain: `wide_rgb`, `narr_rgb`, `seg_red_wide`, `seg_red_narr`, `cmd`, `speed`, `run_id`, `frame_idx`. Labeled test `.npz` also contains `label` (0=clean, 1=perturbed) and `perturbation` (string name).
 

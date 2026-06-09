@@ -76,7 +76,7 @@ from ATOMs_Analysis.detection.clustering import GMMClustering
 
 from ATOMs_Analysis.utils.visualization_carla import (plot_bic_aic,
     save_figure, plot_distance_over_time, visualize_comparative_relevance,
-    CARLA_CLASSES,
+    CARLA_CLASSES, TFV6_CLASSES,
 )
 from ATOMs_Analysis.utils.distance_computer import DistanceComputer
 from ATOMs_Analysis.detection.detectors import MDXDetector
@@ -141,12 +141,14 @@ action_logits_available = (conf.AGENT == "WOR")
 #
 # use_reduced=True tracks only 7 driving-relevant classes instead of all 23.
 # Good for quick experiments; set False for the full analysis.
+_seg_class_map = TFV6_CLASSES if conf.AGENT == "TFV6" else CARLA_CLASSES
 atoms = ATOMsCarla(
     lrp_model     = lrp,
     p_relevance   = conf.FC_RELEVANCE_FILTER,   # <<< typically 0.9 (90% mass filter)
     default_cmd   = conf.DEFAULT_CMD,   # <<< 3 = FOLLOW_LANE
     mode_analysis = conf.MODE_ANALYSIS,                  # <<< ADJUST: 1 is paper default
     use_reduced   = False,              # <<< ADJUST
+    class_map     = _seg_class_map,
 )
 
 print(f"  Classes tracked : {atoms.num_classes}  ({', '.join(atoms.class_names[:5])}, ...)")
@@ -494,7 +496,7 @@ scores_knn_single = np.array([
     DistanceComputer.compute_knn_distance(
         reference_samples=baseline_series,
         target_point   = test_profiles[i],
-        k              = 10,
+        k              = 25,
         normalize      = True,
     )
     for i in range(len(test_profiles))

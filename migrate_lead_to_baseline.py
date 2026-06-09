@@ -403,6 +403,36 @@ def migrate_testset(
 
 
 # ---------------------------------------------------------------------------
+# Helpers for alternative (same-distribution) split
+# ---------------------------------------------------------------------------
+
+def _build_plan_from_routes(
+    routes: List[Path], n_frames: int
+) -> Dict[str, List[Tuple[Path, List[int]]]]:
+    """
+    Build a sampling plan from a pre-assigned list of routes, sampling evenly
+    across the whole list (no per-town balancing).  Used by migrate_alt_split.
+    """
+    all_pairs: List[Tuple[Path, int]] = [
+        (r, idx) for r in routes for idx in list_frame_indices(r)
+    ]
+    if not all_pairs:
+        return {}
+    step     = max(1, len(all_pairs) // n_frames)
+    selected = all_pairs[::step][:n_frames]
+
+    by_route: Dict[Path, List[int]] = defaultdict(list)
+    for route_dir, fidx in selected:
+        by_route[route_dir].append(fidx)
+
+    plan: Dict[str, List[Tuple[Path, List[int]]]] = defaultdict(list)
+    for route_dir, indices in by_route.items():
+        town = _detect_town({}, route_dir) or "unknown"
+        plan[town].append((route_dir, sorted(indices)))
+    return plan
+
+
+# ---------------------------------------------------------------------------
 # Validation-set conversion
 # ---------------------------------------------------------------------------
 
@@ -458,6 +488,83 @@ def migrate_valset(
 
 
 # ---------------------------------------------------------------------------
+# Alternative split: all towns, random route-level 5k/1k/1k partition
+# ---------------------------------------------------------------------------
+
+def migrate_alt_split(
+    lead_dir: Path,
+    baseline_n: int = 5000,
+    test_n: int     = 1000,
+    val_n: int      = 1000,
+    exclude_towns: Optional[List[str]] = None,
+    seed: int = conf.RANDOM_SEED,
+) -> None:
+    """
+    Discover all routes from all towns (minus exclude_towns), shuffle with a
+    fixed seed, split at the route level into disjoint baseline/test/val sets,
+    and write ~baseline_n / test_n / val_n frames to the corresponding
+    conf.*_DATA_DIR/frames/ directories.
+
+    All three sets come from the same town distribution so OOD signal comes
+    exclusively from perturbations, not domain shift.
+    """
+    if exclude_towns is None:
+        exclude_towns = []
+
+    all_routes = discover_routes(lead_dir)
+
+    # Filter by town
+    filtered: List[Path] = []
+    for route in all_routes:
+        indices = list_frame_indices(route)
+        if not indices:
+            continue
+        meta_path = route / "metas" / f"{indices[0]:04d}.pkl"
+        town = None
+        if meta_path.exists():
+            try:
+                town = _detect_town(_load_meta(meta_path), route)
+            except Exception:
+                pass
+        if town is None:
+            town = _detect_town({}, route)
+        if town in exclude_towns:
+            continue
+        filtered.append(route)
+
+    LOG.info("%d routes after town filtering (excluded: %s)", len(filtered), exclude_towns)
+    if not filtered:
+        raise ValueError("No routes remaining after town filtering.")
+
+    # Deterministic shuffle, then proportional route-level split
+    rng   = np.random.default_rng(seed)
+    order = rng.permutation(len(filtered)).tolist()
+    shuffled = [filtered[i] for i in order]
+
+    total_frac = baseline_n + test_n + val_n
+    i_test = round(len(shuffled) * baseline_n / total_frac)
+    i_val  = round(len(shuffled) * (baseline_n + test_n) / total_frac)
+
+    baseline_routes = shuffled[:i_test]
+    test_routes     = shuffled[i_test:i_val]
+    val_routes      = shuffled[i_val:]
+
+    LOG.info(
+        "Route split — baseline: %d  test: %d  val: %d",
+        len(baseline_routes), len(test_routes), len(val_routes),
+    )
+
+    for routes_subset, n_target, out_dir_path in [
+        (baseline_routes, baseline_n, Path(conf.BASELINE_DATA_DIR) / "frames"),
+        (test_routes,     test_n,     Path(conf.TEST_DATA_DIR)     / "frames"),
+        (val_routes,      val_n,      Path(conf.VAL_DATA_DIR)      / "frames"),
+    ]:
+        plan  = _build_plan_from_routes(routes_subset, n_target)
+        total = _write_plan(plan, out_dir_path)
+        LOG.info("Written %d frames → %s", total, out_dir_path)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -467,10 +574,13 @@ if __name__ == "__main__":
             "Convert LEAD CARLA routes to ATOMs npz format.\n"
             "\n"
             "Modes:\n"
-            "  baseline  — sample from all towns except Town05 → conf.BASELINE_DATA_DIR/frames/\n"
-            "  testset   — sample from Town05 only             → conf.TEST_DATA_DIR/frames/\n"
-            "  valset    — sample from Town05, auto-excluding test routes → conf.VAL_DATA_DIR/frames/\n"
-            "  both      — run baseline then testset\n"
+            "  baseline   — sample from all towns except Town05 → conf.BASELINE_DATA_DIR/frames/\n"
+            "  testset    — sample from Town05 only             → conf.TEST_DATA_DIR/frames/\n"
+            "  valset     — sample from Town05, auto-excluding test routes → conf.VAL_DATA_DIR/frames/\n"
+            "  both       — run baseline then testset\n"
+            "  alt_split  — all towns, random route-level split into\n"
+            "               baseline_data_alt / test_data_alt / val_data_alt\n"
+            "               (requires EXPERIMENT_VARIANT='alternative' in atoms_config.py)\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -479,8 +589,10 @@ if __name__ == "__main__":
         help="Path to unzipped noScenarios directory (or any root containing routes)",
     )
     parser.add_argument(
-        "--mode", choices=["baseline", "testset", "valset", "both"], default="baseline",
-        help="What to generate (default: baseline)",
+        "--mode",
+        choices=["baseline", "testset", "valset", "both", "alt_split"],
+        default="baseline",
+        help="What to generate (default: baseline). Use alt_split for the same-distribution split.",
     )
     parser.add_argument(
         "--n_frames", type=int, default=3000,
@@ -498,6 +610,19 @@ if __name__ == "__main__":
         "--testset_towns", nargs="*", default=["Town05"],
         help="Towns to include in test/val set (default: Town05)",
     )
+    # alt_split-specific args
+    parser.add_argument(
+        "--baseline_n", type=int, default=5000,
+        help="[alt_split] Target baseline frame count (default: 5000)",
+    )
+    parser.add_argument(
+        "--test_n", type=int, default=1000,
+        help="[alt_split] Target test frame count (default: 1000)",
+    )
+    parser.add_argument(
+        "--val_n", type=int, default=1000,
+        help="[alt_split] Target val frame count (default: 1000)",
+    )
     args = parser.parse_args()
 
     if args.mode in ("baseline", "both"):
@@ -506,3 +631,11 @@ if __name__ == "__main__":
         migrate_testset(args.lead_dir, args.testset_n_frames, args.testset_towns)
     if args.mode == "valset":
         migrate_valset(args.lead_dir, args.testset_n_frames, args.testset_towns)
+    if args.mode == "alt_split":
+        migrate_alt_split(
+            args.lead_dir,
+            baseline_n    = args.baseline_n,
+            test_n        = args.test_n,
+            val_n         = args.val_n,
+            exclude_towns = args.exclude_towns,
+        )

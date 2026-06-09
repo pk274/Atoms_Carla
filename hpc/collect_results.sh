@@ -51,6 +51,7 @@ WORK_DIR=""
 CODE_DIR=""
 DO_ADD=1
 DRY_RUN=0
+ALT=0
 
 usage() { sed -n '2,40p' "$0"; exit "${1:-1}"; }
 
@@ -67,6 +68,7 @@ while [ "${1:-}" ]; do
         --code-dir) CODE_DIR="$2"; shift 2 ;;
         --no-add)   DO_ADD=0; shift ;;
         --dry-run)  DRY_RUN=1; shift ;;
+        --alt)      ALT=1; shift ;;
         -h|--help)  usage 0 ;;
         *) echo "ERROR: unknown option '$1'." >&2; usage 1 ;;
     esac
@@ -85,11 +87,12 @@ if [ "$PIPELINE" = "live_pert" ] && [ -z "$PERT" ]; then
     echo "ERROR: live_pert requires a <pert> argument (e.g. pgd)." >&2; exit 1
 fi
 
-# Default work dir: /ptmp/$USER/atoms_[wor_]<pipeline>
+# Default work dir: /ptmp/$USER/atoms_[wor_]<pipeline>[_alt]
 # "val" maps to atoms_val (no wor_ prefix even for WoR, as val is TFV6-only for now).
 if [ -z "$WORK_DIR" ]; then
     WOR_PREFIX=""; [ "$AGENT_LC" = "wor" ] && [ "$PIPELINE" != "val" ] && WOR_PREFIX="wor_"
-    WORK_DIR="/ptmp/${USER}/atoms_${WOR_PREFIX}${PIPELINE}"
+    ALT_SUFFIX=""; [ "$ALT" = 1 ] && ALT_SUFFIX="_alt"
+    WORK_DIR="/ptmp/${USER}/atoms_${WOR_PREFIX}${PIPELINE}${ALT_SUFFIX}"
 fi
 
 # Default code dir: git toplevel of this script, else /u/$USER/pcla
@@ -128,6 +131,8 @@ case "$PIPELINE" in
         SRC_NAMES=("live_pert_profiles_${MODE}.npy" "$LOGIT")
         ;;
 esac
+# Redirect to _alt directories when --alt is set
+[ "$ALT" = 1 ] && DEST_REL="${DEST_REL//_data/_data_alt}"
 DEST_DIR="${CODE_DIR}/${DEST_REL}"
 
 echo "=== collect_results: ${PIPELINE} / ${AG} / mode ${MODE}${PERT:+ / $PERT} ==="
