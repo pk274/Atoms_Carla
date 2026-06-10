@@ -100,9 +100,12 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         self._pm               = PerturbationManager(verbose=False)
         self._injection_active = False
         # Pending data for PGD frames: collected in tick(), recorded in _perturb_tensor_hook
-        self._pending_seg_wide = None
-        self._pending_cmd      = None
-        self._pending_speed    = None
+        self._pending_seg_wide  = None
+        self._pending_cmd       = None
+        self._pending_speed     = None
+        self._pending_clean_rgb = None
+        # Parallel list of pre-perturbation images for every sampled frame
+        self._clean_frames: List[np.ndarray] = []
 
         if conf.LIVE_PERTURBATION_RECORDING_MODE:
             self._live_pert_collector = TestDataCollector(
@@ -145,7 +148,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             perturbed_uint8 = (
                 tensors["rgb"].squeeze(0).clamp(0, 255).byte().cpu().numpy()
             )  # [3, H, W] uint8
-            self._live_pert_collector.add_frame(
+            sampled = self._live_pert_collector.add_frame(
                 wide_rgb         = perturbed_uint8,
                 narr_rgb         = None,
                 seg_red_wide     = self._pending_seg_wide,
@@ -155,9 +158,12 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 live_perturbation= True,
                 is_perturbed     = True,
             )
-            self._pending_seg_wide = None
-            self._pending_cmd      = None
-            self._pending_speed    = None
+            if sampled and self._pending_clean_rgb is not None:
+                self._clean_frames.append(self._pending_clean_rgb)
+            self._pending_seg_wide  = None
+            self._pending_cmd       = None
+            self._pending_speed     = None
+            self._pending_clean_rgb = None
 
         return tensors
 
@@ -197,6 +203,9 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         if input_data["rgb"].shape[-1] > fwd_width:
             input_data["rgb"] = input_data["rgb"][..., :fwd_width]
 
+        # Capture the clean (pre-perturbation) image for every frame.
+        clean_rgb = input_data["rgb"].copy()
+
         # ── Inject non-PGD perturbation ───────────────────────────────────
         # PGD is applied to the float tensor later in _perturb_tensor_hook;
         # all other perturbations are applied here to the uint8 image.
@@ -233,11 +242,12 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         if self._injection_active and conf.PERTURBATION == "pgd":
             # PGD image is not ready yet — _perturb_tensor_hook will record it
             # after applying the attack.  Store pending data for that call.
-            self._pending_seg_wide = seg_wide
-            self._pending_cmd      = cmd
-            self._pending_speed    = speed
+            self._pending_seg_wide  = seg_wide
+            self._pending_cmd       = cmd
+            self._pending_speed     = speed
+            self._pending_clean_rgb = clean_rgb
         else:
-            self._live_pert_collector.add_frame(
+            sampled = self._live_pert_collector.add_frame(
                 wide_rgb         = input_data["rgb"],   # [3, H, W] uint8
                 narr_rgb         = None,
                 seg_red_wide     = seg_wide,
@@ -247,9 +257,12 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 live_perturbation= True,
                 is_perturbed     = self._injection_active,
             )
-            self._pending_seg_wide = None
-            self._pending_cmd      = None
-            self._pending_speed    = None
+            if sampled:
+                self._clean_frames.append(clean_rgb)
+            self._pending_seg_wide  = None
+            self._pending_cmd       = None
+            self._pending_speed     = None
+            self._pending_clean_rgb = None
 
         return input_data
 
@@ -262,4 +275,28 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             saved = self._live_pert_collector.save_run(live_perturbation=True)
             if saved:
                 LOG.info(f"[LivePerturbation] Run saved → {saved}")
+
+            if self._clean_frames:
+                if saved is None:
+                    # Buffer was auto-saved when it filled; find the most recent file
+                    live_pert_dir = (
+                        self._live_pert_collector._live_pert_frames_dir
+                    )
+                    candidates = sorted(
+                        live_pert_dir.glob(
+                            f"run_{conf.PERTURBATION}_live_pert_*.npz"
+                        ),
+                        key=lambda f: f.stat().st_mtime,
+                        reverse=True,
+                    )
+                    saved = candidates[0] if candidates else None
+
+                if saved is not None:
+                    clean_path = saved.parent / (saved.stem + "_clean_rgb.npz")
+                    np.savez_compressed(
+                        str(clean_path),
+                        wide_rgb=np.stack(self._clean_frames),
+                    )
+                    LOG.info(f"[LivePerturbation] Clean frames saved → {clean_path}")
+
         super().destroy(_)
