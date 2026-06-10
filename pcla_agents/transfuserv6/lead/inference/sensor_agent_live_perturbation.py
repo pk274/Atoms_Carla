@@ -145,9 +145,10 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         # tick() stored the seg/cmd/speed as pending; recording was deferred to here
         # so that the SAVED image contains the actual perturbation the model sees.
         if self._live_pert_collector is not None and self._pending_seg_wide is not None:
+            fwd_width = _N_FORWARD_CAMS * _CAM_PX
             perturbed_uint8 = (
                 tensors["rgb"].squeeze(0).clamp(0, 255).byte().cpu().numpy()
-            )  # [3, H, W] uint8
+            )[..., :fwd_width]  # [3, H, 1152] — crop to 3 forward cams for saving
             sampled = self._live_pert_collector.add_frame(
                 wide_rgb         = perturbed_uint8,
                 narr_rgb         = None,
@@ -196,15 +197,16 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         if "rgb" not in input_data:
             return input_data
 
-        # ── Crop to forward cameras only ──────────────────────────────────
-        # The LEAD baseline uses only 3 forward cameras (1152 px wide).
-        # Rear cameras (indices 4-6) are discarded so live frames stay compatible.
+        # ── Crop for saving only — do NOT modify input_data["rgb"] ───────────
+        # The model receives the full image (all cameras) for correct inference.
+        # The LEAD baseline was collected with 3 forward cameras (1152 px), so we
+        # crop only the copy that goes to the live-pert collector.
         fwd_width = _N_FORWARD_CAMS * _CAM_PX  # 1152
-        if input_data["rgb"].shape[-1] > fwd_width:
-            input_data["rgb"] = input_data["rgb"][..., :fwd_width]
+        full_rgb  = input_data["rgb"]           # [3, H, W_full] — untouched for model
+        save_rgb  = full_rgb[..., :fwd_width]   # [3, H, 1152]   — saved to disk
 
-        # Capture the clean (pre-perturbation) image for every frame.
-        clean_rgb = input_data["rgb"].copy()
+        # Capture the clean (pre-perturbation) image for every frame (save-side crop).
+        clean_rgb = save_rgb.copy()
 
         # ── Inject non-PGD perturbation ───────────────────────────────────
         # PGD is applied to the float tensor later in _perturb_tensor_hook;
@@ -217,6 +219,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 camera_index=conf.CAM_INDEX,
                 n_cameras=_N_FORWARD_CAMS,
             )
+            save_rgb = input_data["rgb"][..., :fwd_width]
 
         # ── Build segmentation map (forward cameras only) ─────────────────
         if self._live_pert_collector is None:
@@ -248,7 +251,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             self._pending_clean_rgb = clean_rgb
         else:
             sampled = self._live_pert_collector.add_frame(
-                wide_rgb         = input_data["rgb"],   # [3, H, W] uint8
+                wide_rgb         = save_rgb,   # [3, H, 1152] — 3-cam crop
                 narr_rgb         = None,
                 seg_red_wide     = seg_wide,
                 seg_red_narr     = None,
