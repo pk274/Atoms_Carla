@@ -554,10 +554,13 @@ def migrate_alt_split(
         len(baseline_routes), len(test_routes), len(val_routes),
     )
 
+    # Always write to the _alt directories regardless of EXPERIMENT_VARIANT —
+    # alt_split is the alternative split by definition.
+    _alt_root = Path(conf._DATA_ROOT)
     for routes_subset, n_target, out_dir_path in [
-        (baseline_routes, baseline_n, Path(conf.BASELINE_DATA_DIR) / "frames"),
-        (test_routes,     test_n,     Path(conf.TEST_DATA_DIR)     / "frames"),
-        (val_routes,      val_n,      Path(conf.VAL_DATA_DIR)      / "frames"),
+        (baseline_routes, baseline_n, _alt_root / "baseline_data_alt" / "frames"),
+        (test_routes,     test_n,     _alt_root / "test_data_alt"     / "frames"),
+        (val_routes,      val_n,      _alt_root / "val_data_alt"      / "frames"),
     ]:
         plan  = _build_plan_from_routes(routes_subset, n_target)
         total = _write_plan(plan, out_dir_path)

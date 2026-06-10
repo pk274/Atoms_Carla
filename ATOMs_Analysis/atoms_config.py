@@ -12,15 +12,15 @@ class ExperimentConfig:
     TOWN = "Town05"
     WEATHER = "sunny"
     SPEED_MODE = False
-    HIGH_SPEED_MODE = True
+    HIGH_SPEED_MODE = False
 
     BASELINE_RECORDING_MODE = False
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 18        # None for automatic BIC selection; overridden by --gmm-k CLI arg
+    NUM_GMM_CLUSTERS = 12        # None for automatic BIC selection; overridden by --gmm-k CLI arg
 
-    MODE_ANALYSIS = 1
+    MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9
 
 
@@ -79,9 +79,9 @@ class ExperimentConfig:
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
-    PGD_TARGET  = "steer_right"
-    PGD_EPSILON = 12.0      # ε budget (pixel units); must match hpc/prep_test.py PGD_EPSILON default
-    PGD_N_STEPS = 10        # PGD iterations; more steps = stronger attack # Wor: 10
+    PGD_TARGET  = "brake"
+    PGD_EPSILON = 14.0      # ε budget (pixel units); must match hpc/prep_test.py PGD_EPSILON default
+    PGD_N_STEPS = 8        # PGD iterations; more steps = stronger attack # Wor: 10     # TFV6: 6
 
     DEFAULT_CMD = 2
     MAHAL_RIDGE = 0.01
