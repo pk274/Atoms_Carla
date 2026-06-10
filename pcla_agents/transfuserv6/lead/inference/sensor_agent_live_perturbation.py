@@ -53,9 +53,19 @@ from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 from ATOMs_Analysis.detection.dataset import TestDataCollector
 from ATOMs_Analysis.perturbation_manager import PerturbationManager
 
+from lead.common.constants import SEMANTIC_SEGMENTATION_CONVERTER
 from lead.inference.sensor_agent_data_collection import (
     DataCollectionSensorAgent,
 )
+
+# Lookup table: raw CARLA class ID (0-28) → grouped TFV6 class ID (0-9).
+_SEG_CONVERTER = np.uint8(list(SEMANTIC_SEGMENTATION_CONVERTER.values()))
+
+# Only the 3 forward-facing cameras (indices 1-3) are saved.
+# The LEAD baseline dataset was collected with 3 cameras (1152 px wide);
+# using 6 cameras here would produce 2304 px images incompatible with it.
+_N_FORWARD_CAMS = 3
+_CAM_PX         = 384   # pixels per camera
 
 LOG = logging.getLogger(__name__)
 
@@ -89,6 +99,10 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
 
         self._pm               = PerturbationManager(verbose=False)
         self._injection_active = False
+        # Pending data for PGD frames: collected in tick(), recorded in _perturb_tensor_hook
+        self._pending_seg_wide = None
+        self._pending_cmd      = None
+        self._pending_speed    = None
 
         if conf.LIVE_PERTURBATION_RECORDING_MODE:
             self._live_pert_collector = TestDataCollector(
@@ -123,6 +137,28 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 epsilon=conf.EPSILON,
                 n_steps=conf.PGD_N_STEPS,
             )
+
+        # Record the PGD-perturbed frame now that we have the adversarial image.
+        # tick() stored the seg/cmd/speed as pending; recording was deferred to here
+        # so that the SAVED image contains the actual perturbation the model sees.
+        if self._live_pert_collector is not None and self._pending_seg_wide is not None:
+            perturbed_uint8 = (
+                tensors["rgb"].squeeze(0).clamp(0, 255).byte().cpu().numpy()
+            )  # [3, H, W] uint8
+            self._live_pert_collector.add_frame(
+                wide_rgb         = perturbed_uint8,
+                narr_rgb         = None,
+                seg_red_wide     = self._pending_seg_wide,
+                seg_red_narr     = None,
+                cmd              = self._pending_cmd,
+                speed            = self._pending_speed,
+                live_perturbation= True,
+                is_perturbed     = True,
+            )
+            self._pending_seg_wide = None
+            self._pending_cmd      = None
+            self._pending_speed    = None
+
         return tensors
 
     # ------------------------------------------------------------------
@@ -154,54 +190,66 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         if "rgb" not in input_data:
             return input_data
 
-        # ── Inject perturbation ────────────────────────────────────────
-        # "pgd" is handled as a tensor-level attack in _perturb_tensor_hook;
-        # all other names go through the numpy registry here.
+        # ── Crop to forward cameras only ──────────────────────────────────
+        # The LEAD baseline uses only 3 forward cameras (1152 px wide).
+        # Rear cameras (indices 4-6) are discarded so live frames stay compatible.
+        fwd_width = _N_FORWARD_CAMS * _CAM_PX  # 1152
+        if input_data["rgb"].shape[-1] > fwd_width:
+            input_data["rgb"] = input_data["rgb"][..., :fwd_width]
+
+        # ── Inject non-PGD perturbation ───────────────────────────────────
+        # PGD is applied to the float tensor later in _perturb_tensor_hook;
+        # all other perturbations are applied here to the uint8 image.
         if self._injection_active and conf.PERTURBATION != "pgd":
-            n_cams = (
-                self.training_config.num_cameras
-                if hasattr(self, "training_config")
-                else 6
-            )
             input_data["rgb"] = self._pm.perturb_tfv6_image(
                 input_data["rgb"],
                 perturbation=conf.PERTURBATION,
                 intensity=conf.INTENSITY,
                 camera_index=conf.CAM_INDEX,
-                n_cameras=n_cams,
+                n_cameras=_N_FORWARD_CAMS,
             )
 
-        # ── Record for offline analysis ────────────────────────────────
+        # ── Build segmentation map (forward cameras only) ─────────────────
         if self._live_pert_collector is None:
             return input_data
 
         if not hasattr(self, "training_config"):
             return input_data
 
-        config = self.training_config
         seg_slices: List[np.ndarray] = []
-        for idx in range(1, config.num_cameras + 1):
+        for idx in range(1, _N_FORWARD_CAMS + 1):   # cameras 1-3 only
             key = f"semantics_{idx}"
             if key not in input_data:
                 LOG.warning(f"[LivePerturbation] '{key}' missing — frame skipped")
                 return input_data
             _, sem_bgra = input_data[key]            # (ts, [H, W, 4] BGRA)
-            seg_slices.append(sem_bgra[:, :, 2].astype(np.uint8))
+            raw_ids = sem_bgra[:, :, 2].astype(np.uint8)
+            seg_slices.append(_SEG_CONVERTER[raw_ids])  # raw CARLA ID → grouped TFV6 ID
 
-        seg_wide = np.concatenate(seg_slices, axis=1)            # [H, num_cams*W]
+        seg_wide = np.concatenate(seg_slices, axis=1)   # [H, 3*W]
         cmd      = int(np.argmax(input_data["command"]))
         speed    = float(input_data.get("speed", 0.0))
 
-        self._live_pert_collector.add_frame(
-            wide_rgb         = input_data["rgb"],   # [3, H, W] — perturbed or clean
-            narr_rgb         = None,                # TFV6 wide-only
-            seg_red_wide     = seg_wide,
-            seg_red_narr     = None,
-            cmd              = cmd,
-            speed            = speed,
-            live_perturbation= True,
-            is_perturbed     = self._injection_active,
-        )
+        if self._injection_active and conf.PERTURBATION == "pgd":
+            # PGD image is not ready yet — _perturb_tensor_hook will record it
+            # after applying the attack.  Store pending data for that call.
+            self._pending_seg_wide = seg_wide
+            self._pending_cmd      = cmd
+            self._pending_speed    = speed
+        else:
+            self._live_pert_collector.add_frame(
+                wide_rgb         = input_data["rgb"],   # [3, H, W] uint8
+                narr_rgb         = None,
+                seg_red_wide     = seg_wide,
+                seg_red_narr     = None,
+                cmd              = cmd,
+                speed            = speed,
+                live_perturbation= True,
+                is_perturbed     = self._injection_active,
+            )
+            self._pending_seg_wide = None
+            self._pending_cmd      = None
+            self._pending_speed    = None
 
         return input_data
 
