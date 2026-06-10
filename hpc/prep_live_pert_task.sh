@@ -8,6 +8,7 @@
 #   PERTURBATION    perturbation name, e.g. "pgd"
 #   CONCAT_FILE     output path for live_pert_concat.npz
 #   CODE_DIR        project root
+#   FILE_PATH       (optional) single NPZ file to process; if empty, globs FRAMES_DIR
 
 #SBATCH -J atoms_prep_live_pert
 #SBATCH -o /ptmp/%u/atoms_live_pert/logs/prep_%j.out
@@ -32,10 +33,14 @@ echo "Output file  : $CONCAT_FILE"
 echo "Node         : $(hostname)"
 date
 
-srun python3 "$CODE_DIR/hpc/prep_live_pert.py" \
-    --frames-dir   "$FRAMES_DIR"   \
-    --perturbation "$PERTURBATION" \
+PY_ARGS=(
+    --frames-dir   "$FRAMES_DIR"
+    --perturbation "$PERTURBATION"
     --output       "$CONCAT_FILE"
+)
+[ -n "${FILE_PATH:-}" ] && PY_ARGS+=(--file "$FILE_PATH")
+
+srun python3 "$CODE_DIR/hpc/prep_live_pert.py" "${PY_ARGS[@]}"
 
 echo "Prep finished with exit code $?"
 date

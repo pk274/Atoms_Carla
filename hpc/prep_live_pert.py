@@ -34,20 +34,27 @@ def parse_args() -> argparse.Namespace:
                    help="Perturbation name, e.g. 'pgd'. Used to match filenames.")
     p.add_argument("--output",       required=True, type=Path,
                    help="Output path for live_pert_concat.npz.")
+    p.add_argument("--file",         default=None, type=Path,
+                   help="Process a single specific NPZ file instead of globbing --frames-dir.")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
 
-    pattern = f"run_{args.perturbation}_live_pert_*.npz"
-    files   = sorted(args.frames_dir.glob(pattern))
-    if not files:
-        raise FileNotFoundError(
-            f"No files matching '{pattern}' found in {args.frames_dir}\n"
-            f"Check that CARLA live-perturbation recording has been run for "
-            f"perturbation='{args.perturbation}'."
-        )
+    if args.file is not None:
+        if not args.file.exists():
+            raise FileNotFoundError(f"--file not found: {args.file}")
+        files = [args.file]
+    else:
+        pattern = f"run_{args.perturbation}_live_pert_*.npz"
+        files   = sorted(args.frames_dir.glob(pattern))
+        if not files:
+            raise FileNotFoundError(
+                f"No files matching '{pattern}' found in {args.frames_dir}\n"
+                f"Check that CARLA live-perturbation recording has been run for "
+                f"perturbation='{args.perturbation}'."
+            )
     print(f"[prep_live_pert] Found {len(files)} run file(s).")
 
     parts = []

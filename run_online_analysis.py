@@ -345,240 +345,260 @@ print()
 
 
 # ===========================================================================
-# STEP 7 — Load live perturbation test data
+# STEPS 7–9 — Per-file: load frames, compute/load profiles, score, plot
 # ===========================================================================
-# ---------------------------------------------------------------------------
-
-# Load and summarise
-test_data = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
-
-
-# ===========================================================================
-# STEP 8 — Compute ATOMs profiles on test set
-# ===========================================================================
-# We process each test frame through ATOMsCarla to get attention profiles,
-# then collect them alongside their ground-truth labels for evaluation.
+# Each run_*.npz in live_pert_frames/ is processed independently.
+# Attention profiles are saved as live_pert_profiles_{variant}_{mode}.npy
+# and plots are saved with the variant name appended.
 # ---------------------------------------------------------------------------
 from ATOMs_Analysis.utils.visualization_carla import visualize_relevance, visualize_comparative_relevance
-REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME
-REL_DIR.mkdir(parents=True, exist_ok=True)
-
-has_narr_test     = test_data.get("narr_rgb")     is not None
-has_seg_narr_test = test_data.get("seg_red_narr") is not None
-
-if conf.RECOMPUTE_TEST_ATOMS:
-    print("[Step 8] Computing ATOMs on test set...")
-    atoms.reset()
-    n_test          = test_data["wide_rgb"].shape[0]
-    test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
-    test_logits_all = [] if action_logits_available else None
-    t0 = time.time()
-    for i in range(n_test):
-        wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
-        narr     = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float() if has_narr_test else None
-        seg_wide = test_data["seg_red_wide"][i]
-        seg_narr = test_data["seg_red_narr"][i] if has_seg_narr_test else None
-        cmd      = int(test_data["cmd"][i])
-        spd      = float(test_data["speed"][i])
-
-        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
-        test_profiles[i] = profile
-
-        savepath_rel_w = REL_DIR / f"relevance_wide_{i}"
-        rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
-
-        # Normal map (default seed — what feeds _hierarchical)
-        default_wide = atoms.saliency_data_wide_default
-        if default_wide is None:
-            default_wide = atoms.saliency_data_wide_brake if atoms._last_is_brake else atoms.saliency_data_wide_drive
-        visualize_relevance(default_wide, rgb_image=rgb_wide,
-                            save_path=savepath_rel_w, is_brake=atoms._last_is_brake)
-
-        if conf.PLOT_COMPARATIVE_REL:
-            # Brake map (one-hot bin 0 seed)
-            if atoms.saliency_data_wide_brake is not None:
-                visualize_relevance(atoms.saliency_data_wide_brake, rgb_image=rgb_wide,
-                                    save_path=f"{savepath_rel_w}_brake", is_brake=True)
-            # Drive map (one-hot best non-brake bin seed)
-            if atoms.saliency_data_wide_drive is not None:
-                visualize_relevance(atoms.saliency_data_wide_drive, rgb_image=rgb_wide,
-                                    save_path=f"{savepath_rel_w}_drive", is_brake=False)
-            # Difference map: drive − brake (diverging colormap)
-            if atoms.saliency_data_wide_brake is not None and atoms.saliency_data_wide_drive is not None:
-                comp_map_wide = atoms.saliency_data_wide_drive - atoms.saliency_data_wide_brake
-                vmax_w = comp_map_wide.abs().max().item() + 1e-12
-                # For dual-camera agents normalize both maps to a shared scale
-                if has_narr_test and narr is not None and atoms.saliency_data_narr_brake is not None:
-                    comp_map_narr = atoms.saliency_data_narr_drive - atoms.saliency_data_narr_brake
-                    vmax_w = max(vmax_w, comp_map_narr.abs().max().item()) + 1e-12
-                visualize_comparative_relevance(comp_map_wide / vmax_w, rgb_image=rgb_wide,
-                                                save_path=f"{savepath_rel_w}_comparative",
-                                                is_brake=atoms._last_is_brake)
-            # Narr maps — dual-camera agents (WoR/LBC) only
-            if has_narr_test and narr is not None:
-                rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
-                savepath_rel_n = REL_DIR / f"relevance_narr_{i}"
-                if atoms.saliency_data_narr_brake is not None:
-                    visualize_relevance(atoms.saliency_data_narr_brake, rgb_image=rgb_narr,
-                                        save_path=f"{savepath_rel_n}_brake", is_brake=True)
-                if atoms.saliency_data_narr_drive is not None:
-                    visualize_relevance(atoms.saliency_data_narr_drive, rgb_image=rgb_narr,
-                                        save_path=f"{savepath_rel_n}_drive", is_brake=False)
-                if atoms.saliency_data_narr_brake is not None and atoms.saliency_data_narr_drive is not None:
-                    visualize_comparative_relevance(comp_map_narr / vmax_w, rgb_image=rgb_narr,
-                                                    save_path=f"{savepath_rel_n}_comparative",
-                                                    is_brake=atoms._last_is_brake)
 
 
-        # PEOC: 28-dim joint action logits at the interpolated speed (true π(a|s))
-        if action_logits_available:
-            test_logits_all.append(lrp.get_action_logits(wide, narr, cmd=cmd, spd=spd))
-
-        if (i + 1) % 100 == 0:
-            fps = (i + 1) / (time.time() - t0)
-            print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
-
-    atoms.reset()
-    np.save(ATT_DIR / f"live_pert_profiles_{_mode}.npy", test_profiles)
-    if action_logits_available:
-        test_logits_all = np.array(test_logits_all, dtype=np.float32)
-        _logits_fname = f"live_pert_action_logits_{_mode}.npy" if conf.AGENT == "WOR" else f"live_pert_speed_logits_{_mode}.npy"
-        np.save(ATT_DIR / _logits_fname, test_logits_all)
-    print(f"  Done. {n_test} frames processed.\n")
-
-else:
-    test_data     = LabeledTestLoader.load_live_pert(LIVE_PERT_NAME)
-    test_profiles = np.load(ATT_DIR / f"live_pert_profiles_{_mode}.npy")
-    n_frames = test_data["wide_rgb"].shape[0]
-    if len(test_profiles) != n_frames:
-        raise RuntimeError(
-            f"Profile count mismatch: live_pert_profiles_{_mode}.npy has {len(test_profiles)} rows "
-            f"but load_live_pert loaded {n_frames} frames from live_pert_frames/.\n"
-            "This usually means new recordings were added after the HPC run, or files from "
-            "a different experiment are in the same directory.\n"
-            "Fix: remove stale/unrelated files from live_pert_frames/, then re-run HPC "
-            "or set RECOMPUTE_TEST_ATOMS=True."
-        )
-    if action_logits_available:
-        _logits_fname = f"live_pert_action_logits_{_mode}.npy" if conf.AGENT == "WOR" else f"live_pert_speed_logits_{_mode}.npy"
-        test_logits_all = np.load(ATT_DIR / _logits_fname)
-    else:
-        test_logits_all = None
-    print(f"  Loaded {len(test_profiles)} test profiles.")
+def _load_single_live_pert_file(fp: Path) -> dict:
+    """Load one live_pert_frames npz file into a frame dict."""
+    d = np.load(fp)
+    n = d["wide_rgb"].shape[0]
+    return {
+        "wide_rgb":     d["wide_rgb"],
+        "narr_rgb":     d["narr_rgb"]     if "narr_rgb"     in d else None,
+        "seg_red_wide": d["seg_red_wide"],
+        "seg_red_narr": d["seg_red_narr"] if "seg_red_narr" in d else None,
+        "cmd":          d["cmd"],
+        "speed":        d["speed"],
+        "is_brake":     d["is_brake"]     if "is_brake"     in d else np.zeros(n, dtype=np.int8),
+        "frame_idx":    d["frame_idx"],
+        "is_perturbed": d["is_perturbed"] if "is_perturbed" in d else np.zeros(n, dtype=np.int8),
+    }
 
 
-# ===========================================================================
-# STEP 9 — Score all test profiles with every detector
-# ===========================================================================
-print("[Step 9] Scoring test profiles...")
-
-# --- 9a: Single-Gaussian Mahalanobis (ATOMs) ---
-# compute_mahalanobis() takes (mu_ref, cov_ref, mu_target) — called once per frame.
-scores_mahal_single = np.array([
-    DistanceComputer.compute_mahalanobis(
-        mu_ref         = baseline_mean,
-        cov_ref        = baseline_cov,
-        mu_target      = test_profiles[i],
-        regularization = conf.MAHAL_RIDGE,
+frames_dir  = Path(conf.TEST_DATA_DIR) / "live_pert_frames"
+frame_files = sorted(frames_dir.glob(f"run_{LIVE_PERT_NAME}_live_pert_*.npz"))
+if not frame_files:
+    raise FileNotFoundError(
+        f"No run_{LIVE_PERT_NAME}_live_pert_*.npz found in {frames_dir}.\n"
+        "Run the CARLA live-perturbation recording first."
     )
-    for i in range(len(test_profiles))
-])
 
-scores_euclid_single = np.array([
-    DistanceComputer.compute_euclidean(
-        mu_ref         = baseline_mean,
-        mu_target      = test_profiles[i]
-    )
-    for i in range(len(test_profiles))
-])
-
-scores_knn_single = np.array([
-    DistanceComputer.compute_knn_distance(
-        reference_samples=baseline_series,
-        target_point   = test_profiles[i],
-        k              = 25,
-        normalize      = True,
-    )
-    for i in range(len(test_profiles))
-])
-
-scores_jsd_single = np.array([
-    DistanceComputer.compute_jsd(
-        p           = baseline_mean,
-        q           = test_profiles[i],
-    )
-    for i in range(len(test_profiles))
-])
-
-# --- 9b: GMM Mahalanobis (nearest cluster) ---
-# compute_gmm_distance() takes the full GMM parameters + one target point.
-# Returns a DistanceResult; we extract .distance for the score.
-# mode="nearest"   → distance to closest cluster centre      [default, recommended]
-# mode="weighted"  → probability-weighted average distance   [alternative]
-gmm_results = [
-    DistanceComputer.compute_gmm_distance(
-        means          = gmm.means_,
-        covariances    = gmm.covariances_,
-        weights        = gmm.weights_,
-        mu_target      = test_profiles[i],
-        mode           = "nearest",         # <<< ADJUST: "nearest" or "weighted"
-        regularization = conf.MAHAL_RIDGE,
-    )
-    for i in range(len(test_profiles))
-]
-scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
-nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
-
-# --- 9c: Action entropy (WoR only) ---
-scores_entropy = None
-if test_logits_all is not None:
-    entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
-    scores_entropy   = entropy_detector.score_batch(test_logits_all)
-
-# --- 9d: MDX detection ---
-scores_mdx = None
-if mdx is not None:
-    scores_list = []
-    for i in range(len(test_data["frame_idx"])):
-        if conf.AGENT == "TFV6":
-            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
-            feat_vec = lrp.get_backbone_features(wide_t)
-        else:  # WOR
-            features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
-                                          torch.from_numpy(test_data["narr_rgb"][i]),
-                                          test_data["speed"][i])
-            feat_vec = features[0].cpu().detach().numpy()
-        scores_list.append(mdx.score(feat_vec))
-    scores_mdx = np.array(scores_list)
-
-
+print(f"[Steps 7–9] Processing {len(frame_files)} live_pert file(s):")
+for fp in frame_files:
+    print(f"  {fp.name}")
 print()
 
-### ================= PLOT ALL OF THIS =================================================
-live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
-live_pert_dir.mkdir(parents=True, exist_ok=True)
+_prefix = f"run_{LIVE_PERT_NAME}_live_pert_"
+for frame_file in frame_files:
+    variant = frame_file.stem[len(_prefix):]   # e.g. "brake_205328_000"
+    print(f"\n{'─'*55}")
+    print(f"  Variant: {variant}")
+    print(f"{'─'*55}")
 
-# Determine injection frame for the vertical marker.
-# New recordings carry is_perturbed; old files fall back to tick-based estimate.
-if "is_perturbed" in test_data and test_data["is_perturbed"].any():
-    _injection_frame = int(np.argmax(test_data["is_perturbed"]))
-    print(f"  Injection frame from is_perturbed flag: {_injection_frame}")
-else:
-    _CARLA_HZ = 20
-    _injection_frame = int(np.searchsorted(
-        test_data["frame_idx"], conf.INJECTION_TIME * _CARLA_HZ
-    ))
-    print(f"  Injection frame estimated from INJECTION_TIME={conf.INJECTION_TIME}s "
-          f"@ {_CARLA_HZ} Hz: {_injection_frame}  (no is_perturbed key in data)")
+    test_data = _load_single_live_pert_file(frame_file)
 
-plot_distance_over_time(scores_mahal_single,  LIVE_PERT_NAME, "mahalanobis_single", OUT_DIR, _injection_frame)
-plot_distance_over_time(scores_mahal_gmm,     LIVE_PERT_NAME, "mahalanobis_gmm",    OUT_DIR, _injection_frame)
-plot_distance_over_time(scores_euclid_single, LIVE_PERT_NAME, "euclidean",          OUT_DIR, _injection_frame)
-plot_distance_over_time(scores_jsd_single,    LIVE_PERT_NAME, "jsd",                OUT_DIR, _injection_frame)
-plot_distance_over_time(scores_knn_single,    LIVE_PERT_NAME, "knn",                OUT_DIR, _injection_frame)
-if scores_entropy is not None:
-    plot_distance_over_time(scores_entropy,   LIVE_PERT_NAME, "PEOC",               OUT_DIR, _injection_frame)
-if scores_mdx is not None:
-    plot_distance_over_time(scores_mdx,       LIVE_PERT_NAME, "mdx",                OUT_DIR, _injection_frame)
+    has_narr_test     = test_data.get("narr_rgb")     is not None
+    has_seg_narr_test = test_data.get("seg_red_narr") is not None
+
+    profile_path = ATT_DIR / f"live_pert_profiles_{variant}_{_mode}.npy"
+    _logits_fname = (
+        f"live_pert_action_logits_{variant}_{_mode}.npy"
+        if conf.AGENT == "WOR"
+        else f"live_pert_speed_logits_{variant}_{_mode}.npy"
+    )
+
+    # --- Step 8: compute or load profiles ---
+    if conf.RECOMPUTE_TEST_ATOMS:
+        print(f"[Step 8] Computing ATOMs for variant '{variant}'...")
+        REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME / variant
+        REL_DIR.mkdir(parents=True, exist_ok=True)
+        atoms.reset()
+        n_test          = test_data["wide_rgb"].shape[0]
+        test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+        test_logits_all = [] if action_logits_available else None
+        t0 = time.time()
+        for i in range(n_test):
+            wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
+            narr     = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float() if has_narr_test else None
+            seg_wide = test_data["seg_red_wide"][i]
+            seg_narr = test_data["seg_red_narr"][i] if has_seg_narr_test else None
+            cmd      = int(test_data["cmd"][i])
+            spd      = float(test_data["speed"][i])
+
+            profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+            test_profiles[i] = profile
+
+            savepath_rel_w = REL_DIR / f"relevance_wide_{i}"
+            rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
+
+            default_wide = atoms.saliency_data_wide_default
+            if default_wide is None:
+                default_wide = atoms.saliency_data_wide_brake if atoms._last_is_brake else atoms.saliency_data_wide_drive
+            visualize_relevance(default_wide, rgb_image=rgb_wide,
+                                save_path=savepath_rel_w, is_brake=atoms._last_is_brake)
+
+            if conf.PLOT_COMPARATIVE_REL:
+                if atoms.saliency_data_wide_brake is not None:
+                    visualize_relevance(atoms.saliency_data_wide_brake, rgb_image=rgb_wide,
+                                        save_path=f"{savepath_rel_w}_brake", is_brake=True)
+                if atoms.saliency_data_wide_drive is not None:
+                    visualize_relevance(atoms.saliency_data_wide_drive, rgb_image=rgb_wide,
+                                        save_path=f"{savepath_rel_w}_drive", is_brake=False)
+                if atoms.saliency_data_wide_brake is not None and atoms.saliency_data_wide_drive is not None:
+                    comp_map_wide = atoms.saliency_data_wide_drive - atoms.saliency_data_wide_brake
+                    vmax_w = comp_map_wide.abs().max().item() + 1e-12
+                    if has_narr_test and narr is not None and atoms.saliency_data_narr_brake is not None:
+                        comp_map_narr = atoms.saliency_data_narr_drive - atoms.saliency_data_narr_brake
+                        vmax_w = max(vmax_w, comp_map_narr.abs().max().item()) + 1e-12
+                    visualize_comparative_relevance(comp_map_wide / vmax_w, rgb_image=rgb_wide,
+                                                    save_path=f"{savepath_rel_w}_comparative",
+                                                    is_brake=atoms._last_is_brake)
+                if has_narr_test and narr is not None:
+                    rgb_narr = narr[0].permute(1, 2, 0).cpu().detach().numpy()
+                    savepath_rel_n = REL_DIR / f"relevance_narr_{i}"
+                    if atoms.saliency_data_narr_brake is not None:
+                        visualize_relevance(atoms.saliency_data_narr_brake, rgb_image=rgb_narr,
+                                            save_path=f"{savepath_rel_n}_brake", is_brake=True)
+                    if atoms.saliency_data_narr_drive is not None:
+                        visualize_relevance(atoms.saliency_data_narr_drive, rgb_image=rgb_narr,
+                                            save_path=f"{savepath_rel_n}_drive", is_brake=False)
+                    if atoms.saliency_data_narr_brake is not None and atoms.saliency_data_narr_drive is not None:
+                        visualize_comparative_relevance(comp_map_narr / vmax_w, rgb_image=rgb_narr,
+                                                        save_path=f"{savepath_rel_n}_comparative",
+                                                        is_brake=atoms._last_is_brake)
+
+            if action_logits_available:
+                test_logits_all.append(lrp.get_action_logits(wide, narr, cmd=cmd, spd=spd))
+
+            if (i + 1) % 100 == 0:
+                fps = (i + 1) / (time.time() - t0)
+                print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
+
+        atoms.reset()
+        np.save(profile_path, test_profiles)
+        if action_logits_available:
+            test_logits_all = np.array(test_logits_all, dtype=np.float32)
+            np.save(ATT_DIR / _logits_fname, test_logits_all)
+        print(f"  Done. {n_test} frames processed.\n")
+
+    else:
+        if not profile_path.exists():
+            raise FileNotFoundError(
+                f"Profile file not found: {profile_path}\n"
+                "Run HPC (submit_live_pert.sh + collect_results.sh) first, "
+                "or set RECOMPUTE_TEST_ATOMS=True."
+            )
+        test_profiles = np.load(profile_path)
+        n_frames = test_data["wide_rgb"].shape[0]
+        if len(test_profiles) != n_frames:
+            raise RuntimeError(
+                f"Profile count mismatch for variant '{variant}': "
+                f"{profile_path.name} has {len(test_profiles)} rows "
+                f"but the frame file has {n_frames} frames.\n"
+                "Re-run HPC for this file or set RECOMPUTE_TEST_ATOMS=True."
+            )
+        if action_logits_available and (ATT_DIR / _logits_fname).exists():
+            test_logits_all = np.load(ATT_DIR / _logits_fname)
+        else:
+            test_logits_all = None
+        print(f"  Loaded {len(test_profiles)} profiles from {profile_path.name}")
+
+    # --- Step 9: score ---
+    print(f"[Step 9] Scoring variant '{variant}'...")
+
+    scores_mahal_single = np.array([
+        DistanceComputer.compute_mahalanobis(
+            mu_ref         = baseline_mean,
+            cov_ref        = baseline_cov,
+            mu_target      = test_profiles[i],
+            regularization = conf.MAHAL_RIDGE,
+        )
+        for i in range(len(test_profiles))
+    ])
+
+    scores_euclid_single = np.array([
+        DistanceComputer.compute_euclidean(
+            mu_ref    = baseline_mean,
+            mu_target = test_profiles[i],
+        )
+        for i in range(len(test_profiles))
+    ])
+
+    scores_knn_single = np.array([
+        DistanceComputer.compute_knn_distance(
+            reference_samples = baseline_series,
+            target_point      = test_profiles[i],
+            k                 = 25,
+            normalize         = True,
+        )
+        for i in range(len(test_profiles))
+    ])
+
+    scores_jsd_single = np.array([
+        DistanceComputer.compute_jsd(
+            p = baseline_mean,
+            q = test_profiles[i],
+        )
+        for i in range(len(test_profiles))
+    ])
+
+    gmm_results = [
+        DistanceComputer.compute_gmm_distance(
+            means          = gmm.means_,
+            covariances    = gmm.covariances_,
+            weights        = gmm.weights_,
+            mu_target      = test_profiles[i],
+            mode           = "nearest",
+            regularization = conf.MAHAL_RIDGE,
+        )
+        for i in range(len(test_profiles))
+    ]
+    scores_mahal_gmm = np.array([r.distance for r in gmm_results])
+
+    scores_entropy = None
+    if test_logits_all is not None:
+        entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
+        scores_entropy   = entropy_detector.score_batch(test_logits_all)
+
+    scores_mdx = None
+    if mdx is not None:
+        scores_list = []
+        for i in range(len(test_data["frame_idx"])):
+            if conf.AGENT == "TFV6":
+                wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+                feat_vec = lrp.get_backbone_features(wide_t)
+            else:
+                features = model.get_features(torch.from_numpy(test_data["wide_rgb"][i]),
+                                              torch.from_numpy(test_data["narr_rgb"][i]),
+                                              test_data["speed"][i])
+                feat_vec = features[0].cpu().detach().numpy()
+            scores_list.append(mdx.score(feat_vec))
+        scores_mdx = np.array(scores_list)
+
+    # --- Plot ---
+    live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
+    live_pert_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine injection frame from is_perturbed flag; fall back to tick estimate.
+    if "is_perturbed" in test_data and test_data["is_perturbed"].any():
+        _injection_frame = int(np.argmax(test_data["is_perturbed"]))
+        print(f"  Injection frame from is_perturbed flag: {_injection_frame}")
+    else:
+        _CARLA_HZ = 20
+        _injection_frame = int(np.searchsorted(
+            test_data["frame_idx"], conf.INJECTION_TIME * _CARLA_HZ
+        ))
+        print(f"  Injection frame estimated from INJECTION_TIME={conf.INJECTION_TIME}s "
+              f"@ {_CARLA_HZ} Hz: {_injection_frame}  (no is_perturbed key)")
+
+    # The perturbation label passed to the plot includes the variant so filenames are unique.
+    _plot_label = f"{LIVE_PERT_NAME}_{variant}"
+    plot_distance_over_time(scores_mahal_single,  _plot_label, "mahalanobis_single", OUT_DIR, _injection_frame)
+    plot_distance_over_time(scores_mahal_gmm,     _plot_label, "mahalanobis_gmm",    OUT_DIR, _injection_frame)
+    plot_distance_over_time(scores_euclid_single, _plot_label, "euclidean",          OUT_DIR, _injection_frame)
+    plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame)
+    plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame)
+    if scores_entropy is not None:
+        plot_distance_over_time(scores_entropy, _plot_label, "PEOC", OUT_DIR, _injection_frame)
+    if scores_mdx is not None:
+        plot_distance_over_time(scores_mdx, _plot_label, "mdx", OUT_DIR, _injection_frame)
+
+print(f"\nAll variants processed. Figures in {OUT_DIR}")
 
 

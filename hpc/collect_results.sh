@@ -105,6 +105,7 @@ fi
 # Build the file list + destination directory
 # --------------------------------------------------------------------------- #
 declare -a SRC_NAMES
+LIVE_PERT_MULTI=0   # set to 1 for live_pert (per-variant subdirs, different loop)
 case "$PIPELINE" in
     baseline)
         DEST_REL="data/${AG}/baseline_data"
@@ -125,10 +126,10 @@ case "$PIPELINE" in
         SRC_NAMES=("val_profiles_${MODE}.npy" "val_speed_logits_${MODE}.npy")
         ;;
     live_pert)
+        LIVE_PERT_MULTI=1
         DEST_REL="data/${AG}/test_data/attention/live_pert/${PERT}"
-        if [ "$AG" = "WOR" ]; then LOGIT="live_pert_action_logits_${MODE}.npy"
-        else                       LOGIT="live_pert_speed_logits_${MODE}.npy"; fi
-        SRC_NAMES=("live_pert_profiles_${MODE}.npy" "$LOGIT")
+        if [ "$AG" = "WOR" ]; then LOGIT_BASE="live_pert_action_logits"
+        else                       LOGIT_BASE="live_pert_speed_logits"; fi
         ;;
 esac
 # Redirect to _alt directories when --alt is set
@@ -152,31 +153,68 @@ fi
 # --------------------------------------------------------------------------- #
 N_OK=0; N_MISS=0
 declare -a STAGED_REL
-for fname in "${SRC_NAMES[@]}"; do
-    # Locate the source anywhere under the work dir (handles partials/mode_* nesting)
-    mapfile -t HITS < <(find "$WORK_DIR" -type f -name "$fname" 2>/dev/null | sort)
-    if [ "${#HITS[@]}" -eq 0 ]; then
-        echo "  MISSING  $fname  (not found under $WORK_DIR)"
-        N_MISS=$((N_MISS + 1)); continue
-    fi
-    SRC="${HITS[0]}"
-    if [ "${#HITS[@]}" -gt 1 ]; then
-        echo "  WARN     $fname  matched ${#HITS[@]} files; using: $SRC"
-    fi
-    DEST="${DEST_DIR}/${fname}"
-    if [ "$DRY_RUN" = 1 ]; then
-        echo "  would cp $SRC"
-        echo "        -> ${DEST_REL}/${fname}"
-    else
-        cp -f "$SRC" "$DEST"
-        echo "  copied   ${DEST_REL}/${fname}"
-        if [ "$DO_ADD" = 1 ]; then
-            git -C "$CODE_DIR" add -f "${DEST_REL}/${fname}"
+
+if [ "$LIVE_PERT_MULTI" = "1" ]; then
+    # live_pert: each variant has its own subdir; files are named live_pert_profiles_{MODE}.npy
+    # → copied as live_pert_profiles_{VARIANT}_{MODE}.npy in the destination.
+    for VARIANT_DIR in "$WORK_DIR"/*/; do
+        [ -d "$VARIANT_DIR" ] || continue
+        VARIANT=$(basename "$VARIANT_DIR")
+        SRCS=(
+            "$VARIANT_DIR/live_pert_profiles_${MODE}.npy"
+            "$VARIANT_DIR/${LOGIT_BASE}_${MODE}.npy"
+        )
+        DNAMES=(
+            "live_pert_profiles_${VARIANT}_${MODE}.npy"
+            "${LOGIT_BASE}_${VARIANT}_${MODE}.npy"
+        )
+        for idx in "${!SRCS[@]}"; do
+            SRC="${SRCS[$idx]}"
+            DNAME="${DNAMES[$idx]}"
+            DEST="${DEST_DIR}/${DNAME}"
+            if [ ! -f "$SRC" ]; then
+                echo "  MISSING  $SRC"
+                N_MISS=$((N_MISS + 1)); continue
+            fi
+            if [ "$DRY_RUN" = 1 ]; then
+                echo "  would cp $SRC"
+                echo "        -> ${DEST_REL}/${DNAME}"
+            else
+                cp -f "$SRC" "$DEST"
+                echo "  copied   ${DEST_REL}/${DNAME}"
+                [ "$DO_ADD" = 1 ] && git -C "$CODE_DIR" add -f "${DEST_REL}/${DNAME}"
+            fi
+            STAGED_REL+=("${DEST_REL}/${DNAME}")
+            N_OK=$((N_OK + 1))
+        done
+    done
+else
+    for fname in "${SRC_NAMES[@]}"; do
+        # Locate the source anywhere under the work dir (handles partials/mode_* nesting)
+        mapfile -t HITS < <(find "$WORK_DIR" -type f -name "$fname" 2>/dev/null | sort)
+        if [ "${#HITS[@]}" -eq 0 ]; then
+            echo "  MISSING  $fname  (not found under $WORK_DIR)"
+            N_MISS=$((N_MISS + 1)); continue
         fi
-    fi
-    STAGED_REL+=("${DEST_REL}/${fname}")
-    N_OK=$((N_OK + 1))
-done
+        SRC="${HITS[0]}"
+        if [ "${#HITS[@]}" -gt 1 ]; then
+            echo "  WARN     $fname  matched ${#HITS[@]} files; using: $SRC"
+        fi
+        DEST="${DEST_DIR}/${fname}"
+        if [ "$DRY_RUN" = 1 ]; then
+            echo "  would cp $SRC"
+            echo "        -> ${DEST_REL}/${fname}"
+        else
+            cp -f "$SRC" "$DEST"
+            echo "  copied   ${DEST_REL}/${fname}"
+            if [ "$DO_ADD" = 1 ]; then
+                git -C "$CODE_DIR" add -f "${DEST_REL}/${fname}"
+            fi
+        fi
+        STAGED_REL+=("${DEST_REL}/${fname}")
+        N_OK=$((N_OK + 1))
+    done
+fi
 
 # --------------------------------------------------------------------------- #
 # Summary + next steps
