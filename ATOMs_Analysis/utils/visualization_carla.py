@@ -1362,18 +1362,21 @@ def plot_distance_over_time(
         distance_type: str,
         results_dir: Path = None,
         injection_frame: Optional[int] = None,
+        dist_clean: Optional[np.ndarray] = None,
     ) -> None:
     """
     Plot mean distance vs frame index for a single perturbation type.
 
     Parameters
     ----------
-    dist            : np.ndarray [T]  -- mean distance per frame.
+    dist            : np.ndarray [T]  -- distance per frame for perturbed (or only) series.
     perturbation    : str            -- perturbation name (used in title & filename).
     distance_type   : str            -- one of: knn, jsd, wasserstein, gmm_*, mahalanobis, euclidean.
     results_dir     : Path           -- directory to save the figure.  REQUIRED.
     injection_frame : int or None    -- saved-frame index of first perturbed frame;
                                         draws a vertical dotted line when provided.
+    dist_clean      : np.ndarray [T] or None -- when provided, overlaid as a dashed line
+                                        labelled "Clean" on the same axes.
     """
     if results_dir is None:
         raise ValueError(
@@ -1384,7 +1387,13 @@ def plot_distance_over_time(
     color, ylabel = _get_plot_style(distance_type)
     frame_idx = np.arange(len(dist))
     fig, ax = plt.subplots(figsize=vc.FIGSIZE_DISTANCE_OVER_TIME)
-    ax.plot(frame_idx, dist, "o-", color=color, linewidth=2, label="Mean across agents")
+
+    pert_label = "Perturbed" if dist_clean is not None else "Mean across agents"
+    ax.plot(frame_idx, dist, "o-", color=color, linewidth=2, label=pert_label)
+
+    if dist_clean is not None:
+        ax.plot(np.arange(len(dist_clean)), dist_clean, "--", color=color,
+                linewidth=1.5, alpha=0.6, label="Clean")
 
     if injection_frame is not None:
         ax.axvline(x=injection_frame, color="red", linestyle=":", linewidth=1.5,

@@ -178,6 +178,58 @@ other perturbations from 25 %→20 %, so their AUCs will shift slightly on re-ru
 
 ---
 
+## Full val-set pipeline
+
+The val set is used exclusively for hyperparameter selection (k-NN k, GMM-kNN k).
+Val frames must come from routes **not** present in `test_data/frames/` — guaranteed by
+`migrate_lead_to_baseline.py --mode valset`.
+
+### 1. Upload val frames (see above)
+
+Source: `data/TFV6/val_data/frames/` (or `val_data_alt/frames/` for the alt split)
+Destination on Viper: `/ptmp/paulkull/atoms_val/frames/`
+
+Use the same HTTP tunnel method, pointing Terminal 1 at the val frames directory.
+
+### 2. Submit (on Viper)
+
+```bash
+cd /u/paulkull/pcla
+git pull
+bash hpc/submit_val.sh \
+    /ptmp/paulkull/atoms_val/frames \
+    /ptmp/paulkull/atoms_val \
+    /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
+    "" "" 2   # CODE_DIR, CHUNK_SIZE (defaults), MODE_ANALYSIS
+```
+
+This chains three SLURM jobs automatically:
+1. **prep** — applies the same 5-way perturbation mix as the test set → `val_labeled.npz`
+2. **array** — parallel ATOMs tasks (20 frames each), also computing 8-bin speed logits
+3. **gather** — concatenates results → `val_profiles_{MODE}.npy` + `val_speed_logits_{MODE}.npy`
+
+Monitor: `squeue -u paulkull`
+
+### 3. Collect results (on Viper, then git pull locally)
+
+```bash
+cd /u/$USER/pcla
+bash hpc/collect_results.sh val tfv6 2          # original split
+# OR for the alternative split:
+bash hpc/collect_results.sh val tfv6 2 --alt    # → val_data_alt/
+git commit -m "add TFV6 val results from HPC"
+git push
+```
+
+`collect_results.sh val` copies three files:
+- `val_labeled.npz` → `data/TFV6/val_data[_alt]/`
+- `val_profiles_{MODE}.npy` → `data/TFV6/val_data[_alt]/attention/`
+- `val_speed_logits_{MODE}.npy` → `data/TFV6/val_data[_alt]/attention/`
+
+Then locally: `git pull` and run `run_analysis.py` — it auto-detects both files and selects k on val AUC instead of test AUC (no data leakage).
+
+---
+
 ## Full baseline pipeline
 
 ### 1. Upload baseline frames

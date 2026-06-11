@@ -27,7 +27,7 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "pgd"
+    PERTURBATION = "phantom_obstacle"
     INTENSITY = 0.01
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
@@ -123,7 +123,7 @@ class ExperimentConfig:
         SPEC_POS = [-90, 245, 7]
         SPEC_ROT = [-19, -0, 0]
     if TOWN == "Town05":
-        if LIVE_PERTURBATION_RECORDING_MODE:
+        if LIVE_PERTURBATION_RECORDING_MODE and False:
             SPAWN_INDEX = 235
             SPEC_POS = [30, 203, 10]
             SPEC_ROT = [-20, -0, 0]

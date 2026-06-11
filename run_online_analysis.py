@@ -372,7 +372,10 @@ def _load_single_live_pert_file(fp: Path) -> dict:
 
 
 frames_dir  = Path(conf.TEST_DATA_DIR) / "live_pert_frames"
-frame_files = sorted(frames_dir.glob(f"run_{LIVE_PERT_NAME}_live_pert_*.npz"))
+frame_files = sorted(
+    fp for fp in frames_dir.glob(f"run_{LIVE_PERT_NAME}_live_pert_*.npz")
+    if not fp.stem.endswith("_clean_rgb")
+)
 if not frame_files:
     raise FileNotFoundError(
         f"No run_{LIVE_PERT_NAME}_live_pert_*.npz found in {frames_dir}.\n"
@@ -396,7 +399,18 @@ for frame_file in frame_files:
     has_narr_test     = test_data.get("narr_rgb")     is not None
     has_seg_narr_test = test_data.get("seg_red_narr") is not None
 
-    profile_path = ATT_DIR / f"live_pert_profiles_{variant}_{_mode}.npy"
+    # Load matching clean-RGB file if present (same stem + "_clean_rgb.npz").
+    # Metadata (seg, cmd, speed) is borrowed from the perturbed file.
+    _clean_rgb_path = frame_file.parent / (frame_file.stem + "_clean_rgb.npz")
+    clean_data = None
+    if _clean_rgb_path.exists():
+        _c = np.load(_clean_rgb_path)
+        clean_data = dict(test_data)
+        clean_data["wide_rgb"] = _c["wide_rgb"]
+        print(f"  Clean RGB file found: {_clean_rgb_path.name}")
+
+    profile_path       = ATT_DIR / f"live_pert_profiles_{variant}_{_mode}.npy"
+    clean_profile_path = ATT_DIR / f"live_pert_profiles_{variant}_clean_{_mode}.npy"
     _logits_fname = (
         f"live_pert_action_logits_{variant}_{_mode}.npy"
         if conf.AGENT == "WOR"
@@ -477,6 +491,38 @@ for frame_file in frame_files:
             np.save(ATT_DIR / _logits_fname, test_logits_all)
         print(f"  Done. {n_test} frames processed.\n")
 
+        # --- Clean frames (same loop, only wide_rgb replaced) ---
+        clean_profiles = None
+        if clean_data is not None:
+            print(f"[Step 8] Computing ATOMs for clean frames of variant '{variant}'...")
+            CLEAN_REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME / (variant + "_clean")
+            CLEAN_REL_DIR.mkdir(parents=True, exist_ok=True)
+            atoms.reset()
+            clean_profiles = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+            t0 = time.time()
+            for i in range(n_test):
+                wide     = torch.from_numpy(clean_data["wide_rgb"][i:i+1]).float()
+                narr     = torch.from_numpy(test_data["narr_rgb"][i:i+1]).float() if has_narr_test else None
+                seg_wide = test_data["seg_red_wide"][i]   # borrow seg from perturbed file
+                seg_narr = test_data["seg_red_narr"][i]   if has_seg_narr_test else None
+                cmd      = int(test_data["cmd"][i])
+                spd      = float(test_data["speed"][i])
+                profile  = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+                clean_profiles[i] = profile
+                savepath_rel_w = CLEAN_REL_DIR / f"relevance_wide_{i}"
+                rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
+                default_wide = atoms.saliency_data_wide_default
+                if default_wide is None:
+                    default_wide = atoms.saliency_data_wide_brake if atoms._last_is_brake else atoms.saliency_data_wide_drive
+                visualize_relevance(default_wide, rgb_image=rgb_wide,
+                                    save_path=savepath_rel_w, is_brake=atoms._last_is_brake)
+                if (i + 1) % 100 == 0:
+                    fps = (i + 1) / (time.time() - t0)
+                    print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
+            atoms.reset()
+            np.save(clean_profile_path, clean_profiles)
+            print(f"  Done. {n_test} clean frames processed.\n")
+
     else:
         if not profile_path.exists():
             raise FileNotFoundError(
@@ -498,6 +544,14 @@ for frame_file in frame_files:
         else:
             test_logits_all = None
         print(f"  Loaded {len(test_profiles)} profiles from {profile_path.name}")
+
+        clean_profiles = None
+        if clean_data is not None:
+            if clean_profile_path.exists():
+                clean_profiles = np.load(clean_profile_path)
+                print(f"  Loaded {len(clean_profiles)} clean profiles from {clean_profile_path.name}")
+            else:
+                print(f"  Clean profiles not found: {clean_profile_path.name} — skipping clean scoring.")
 
     # --- Step 9: score ---
     print(f"[Step 9] Scoring variant '{variant}'...")
@@ -556,6 +610,37 @@ for frame_file in frame_files:
         entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
         scores_entropy   = entropy_detector.score_batch(test_logits_all)
 
+    # --- Clean scores (computed only when clean_profiles available) ---
+    _cs_mahal   = _cs_euclid = _cs_knn = _cs_jsd = _cs_mahal_gmm = None
+    if clean_profiles is not None:
+        _cs_mahal = np.array([
+            DistanceComputer.compute_mahalanobis(
+                mu_ref=baseline_mean, cov_ref=baseline_cov,
+                mu_target=clean_profiles[i], regularization=conf.MAHAL_RIDGE,
+            ) for i in range(len(clean_profiles))
+        ])
+        _cs_euclid = np.array([
+            DistanceComputer.compute_euclidean(mu_ref=baseline_mean, mu_target=clean_profiles[i])
+            for i in range(len(clean_profiles))
+        ])
+        _cs_knn = np.array([
+            DistanceComputer.compute_knn_distance(
+                reference_samples=baseline_series, target_point=clean_profiles[i],
+                k=25, normalize=True,
+            ) for i in range(len(clean_profiles))
+        ])
+        _cs_jsd = np.array([
+            DistanceComputer.compute_jsd(p=baseline_mean, q=clean_profiles[i])
+            for i in range(len(clean_profiles))
+        ])
+        _clean_gmm = [
+            DistanceComputer.compute_gmm_distance(
+                means=gmm.means_, covariances=gmm.covariances_, weights=gmm.weights_,
+                mu_target=clean_profiles[i], mode="nearest", regularization=conf.MAHAL_RIDGE,
+            ) for i in range(len(clean_profiles))
+        ]
+        _cs_mahal_gmm = np.array([r.distance for r in _clean_gmm])
+
     scores_mdx = None
     if mdx is not None:
         scores_list = []
@@ -589,11 +674,11 @@ for frame_file in frame_files:
 
     # The perturbation label passed to the plot includes the variant so filenames are unique.
     _plot_label = f"{LIVE_PERT_NAME}_{variant}"
-    plot_distance_over_time(scores_mahal_single,  _plot_label, "mahalanobis_single", OUT_DIR, _injection_frame)
-    plot_distance_over_time(scores_mahal_gmm,     _plot_label, "mahalanobis_gmm",    OUT_DIR, _injection_frame)
-    plot_distance_over_time(scores_euclid_single, _plot_label, "euclidean",          OUT_DIR, _injection_frame)
-    plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame)
-    plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame)
+    plot_distance_over_time(scores_mahal_single,  _plot_label, "mahalanobis_single", OUT_DIR, _injection_frame, dist_clean=_cs_mahal)
+    plot_distance_over_time(scores_mahal_gmm,     _plot_label, "mahalanobis_gmm",    OUT_DIR, _injection_frame, dist_clean=_cs_mahal_gmm)
+    plot_distance_over_time(scores_euclid_single, _plot_label, "euclidean",          OUT_DIR, _injection_frame, dist_clean=_cs_euclid)
+    plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame, dist_clean=_cs_jsd)
+    plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame, dist_clean=_cs_knn)
     if scores_entropy is not None:
         plot_distance_over_time(scores_entropy, _plot_label, "PEOC", OUT_DIR, _injection_frame)
     if scores_mdx is not None:

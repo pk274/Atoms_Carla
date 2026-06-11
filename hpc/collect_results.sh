@@ -33,6 +33,10 @@
 #                -> data/<AGENT>/baseline_data/
 #   test       : <work>/**/test_profiles_<mode>.npy, <logit>
 #                -> data/<AGENT>/test_data/attention/
+#   val        : <work>/val_labeled.npz
+#                -> data/<AGENT>/val_data/
+#              + <work>/**/val_profiles_<mode>.npy, val_speed_logits_<mode>.npy
+#                -> data/<AGENT>/val_data/attention/
 #   live_pert  : <work>/**/live_pert_profiles_<mode>.npy, <logit>
 #                -> data/<AGENT>/test_data/attention/live_pert/<pert>/
 #   <logit>: TFV6 test=test_speed_logits  WOR test=test_logits
@@ -214,6 +218,31 @@ else
         STAGED_REL+=("${DEST_REL}/${fname}")
         N_OK=$((N_OK + 1))
     done
+fi
+
+# For the val pipeline, also collect val_labeled.npz to the val_data root (not attention/).
+if [ "$PIPELINE" = "val" ]; then
+    VAL_ROOT_DIR="$(dirname "$DEST_DIR")"
+    VAL_LABELED_REL="${DEST_REL%/attention}/val_labeled.npz"
+    mapfile -t HITS < <(find "$WORK_DIR" -maxdepth 1 -type f -name "val_labeled.npz" 2>/dev/null)
+    if [ "${#HITS[@]}" -eq 0 ]; then
+        echo "  MISSING  val_labeled.npz  (not found at $WORK_DIR/val_labeled.npz)"
+        N_MISS=$((N_MISS + 1))
+    else
+        SRC="${HITS[0]}"
+        DEST="${CODE_DIR}/${VAL_LABELED_REL}"
+        if [ "$DRY_RUN" = 1 ]; then
+            echo "  would cp $SRC"
+            echo "        -> ${VAL_LABELED_REL}"
+        else
+            mkdir -p "$VAL_ROOT_DIR"
+            cp -f "$SRC" "$DEST"
+            echo "  copied   ${VAL_LABELED_REL}"
+            [ "$DO_ADD" = 1 ] && git -C "$CODE_DIR" add -f "${VAL_LABELED_REL}"
+        fi
+        STAGED_REL+=("${VAL_LABELED_REL}")
+        N_OK=$((N_OK + 1))
+    fi
 fi
 
 # --------------------------------------------------------------------------- #
