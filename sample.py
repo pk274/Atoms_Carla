@@ -62,6 +62,8 @@ def main():
         else:
             agent = "wor_lb"
         route = f"./route_{conf.TOWN}.xml"
+        if conf.TOWN == "Town07" and conf.LIVE_PERTURBATION_RECORDING_MODE:
+            route = f"./route_{conf.TOWN}_live_rec.xml"
         pcla = PCLA(agent, vehicle, route, client)
         
         print('\nSpawned the vehicle with model =', agent,', press Ctrl+C to exit.\n')

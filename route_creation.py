@@ -5,16 +5,17 @@ client = carla.Client('localhost', 2000)
 world = client.get_world()
 
 vehicle_spawn_points = world.get_map().get_spawn_points()
-startLoc = vehicle_spawn_points[398].location
-middleLoc1 = vehicle_spawn_points[287].location
-middleLoc2 = vehicle_spawn_points[312].location
-endLoc = vehicle_spawn_points[368].location
+startLoc = vehicle_spawn_points[58].location
+#middleLoc1 = vehicle_spawn_points[287].location
+#middleLoc2 = vehicle_spawn_points[312].location
+endLoc = vehicle_spawn_points[76].location
 
 # 1. Generate waypoints
-waypoints1 = location_to_waypoint(client, startLoc, middleLoc1)
-waypoints2 = location_to_waypoint(client, middleLoc2, endLoc)
+#waypoints1 = location_to_waypoint(client, startLoc, middleLoc1)
+#waypoints2 = location_to_waypoint(client, middleLoc2, endLoc)
+waypoints = location_to_waypoint(client, startLoc, endLoc)
 
-waypoints = waypoints1 + waypoints2
+#waypoints = waypoints1 + waypoints2
 
 # 2. Create the PCLA XML route file
 route_maker(waypoints, "route.xml")

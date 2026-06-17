@@ -44,13 +44,13 @@ def parse_args() -> argparse.Namespace:
                    help="ATOMs analysis mode (1=paper default, 2=alternative).")
     # PGD attack settings — used only for TFV6 frames labelled perturbation=="pgd"
     # (prep_test.py marks them with clean pixels; the attack is crafted here).
-    p.add_argument("--pgd-target", default="steer_right",
+    p.add_argument("--pgd-target", default="brake",
                    choices=["brake", "max_speed", "steer_left", "steer_right"],
                    help="TFV6 PGD attack objective.")
-    p.add_argument("--pgd-epsilon", default=12.0, type=float,
+    p.add_argument("--pgd-epsilon", default=14.0, type=float,
                    help="ℓ∞ ε budget (0–255 scale); fallback when a pgd frame's "
                         "recorded intensity is missing/zero.")
-    p.add_argument("--pgd-steps", default=10, type=int,
+    p.add_argument("--pgd-steps", default=8, type=int,
                    help="Number of PGD iterations.")
     return p.parse_args()
 
@@ -150,7 +150,7 @@ def main() -> None:
     class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
     atoms = ATOMsCarla(
         lrp_model     = lrp,
-        p_relevance   = 0.25,
+        p_relevance   = 0.9,    # FC_RELEVANCE_FILTER — must match conf.FC_RELEVANCE_FILTER (paper value 0.9); was 0.25, fixed 2026-06-14 (finding 4.3)
         default_cmd   = 2,
         mode_analysis = args.mode_analysis,
         use_reduced   = False,

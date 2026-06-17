@@ -138,7 +138,7 @@ def main() -> None:
     class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
     atoms = ATOMsCarla(
         lrp_model     = lrp,
-        p_relevance   = 0.25,
+        p_relevance   = 0.9,    # FC_RELEVANCE_FILTER — must match conf.FC_RELEVANCE_FILTER (paper value 0.9); was 0.25, fixed 2026-06-14 (finding 4.3)
         default_cmd   = 2,
         mode_analysis = args.mode_analysis,
         use_reduced   = False,

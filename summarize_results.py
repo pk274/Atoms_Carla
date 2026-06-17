@@ -179,14 +179,14 @@ def _nongmm_fingerprint(auc: dict) -> tuple:
                  if d not in GMM_DETECTORS)
 
 
-def discover_runs(data_root: Path) -> list[Run]:
+def discover_runs(data_root: Path, results_subdir: str = "results") -> list[Run]:
     """Find every summary.json. Named '<K> clusters/' folders are authoritative
     snapshots; the bare 'atoms_analysis*' folders are last-run scratch dirs whose
     K reflects whatever was run most recently. Bare folders with no mode suffix
     get their mode inferred from the K-invariant fingerprint. Runs are then
     de-duplicated by (agent, mode, K), preferring snapshot folders."""
     cands: list[Run] = []
-    for summ in sorted(data_root.glob("*/results/**/summary.json")):
+    for summ in sorted(data_root.glob(f"*/{results_subdir}/**/summary.json")):
         agent = summ.relative_to(data_root).parts[0]
         mm = re.search(r"mode_(\d)", str(summ))
         mode = mm.group(1) if mm else "?"
@@ -233,11 +233,11 @@ def discover_runs(data_root: Path) -> list[Run]:
     return list(best.values())
 
 
-def inventory_live(data_root: Path) -> dict:
+def inventory_live(data_root: Path, results_subdir: str = "results") -> dict:
     """Map agent -> {perturbation -> sorted list of detector plot stems}.
     Live runs hold only score-distribution PNGs (no AUC)."""
     live: dict[str, dict] = defaultdict(lambda: defaultdict(set))
-    for png in data_root.glob("*/results/*live*/**/*.png"):
+    for png in data_root.glob(f"*/{results_subdir}/*live*/**/*.png"):
         agent = png.relative_to(data_root).parts[0]
         stem = png.stem  # e.g. "mahalanobis_gmm_pgd"
         m = re.search(r"_(pgd|phantom_obstacle|brightness_scale|camera_loss|gaussian_noise)$", stem)
@@ -806,8 +806,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-root", default="data", type=Path)
-    ap.add_argument("--out", default="results_summary", type=Path)
+    ap.add_argument("--out", default=None, type=Path)
+    ap.add_argument("--alt", action="store_true",
+                    help="Summarize the alternative split (results_alt/) and write "
+                         "to results_summary_alt/ by default.")
     args = ap.parse_args()
+
+    results_subdir = "results_alt" if args.alt else "results"
+    if args.out is None:
+        args.out = Path("results_summary_alt" if args.alt else "results_summary")
 
     data_root = args.data_root.resolve()
     out = args.out.resolve()
@@ -816,9 +823,9 @@ def main():
     for old in list(out.glob("*.png")) + list(out.glob("SUMMARY.md")):
         old.unlink()
 
-    runs = discover_runs(data_root)
+    runs = discover_runs(data_root, results_subdir)
     groups = group_by_agent_mode(runs)
-    live = inventory_live(data_root)
+    live = inventory_live(data_root, results_subdir)
 
     print(f"Discovered {len(runs)} runs across {len(groups)} (agent, mode) groups:")
     for (agent, mode), gr in groups.items():

@@ -1153,13 +1153,13 @@ scores_jsd_single = np.array([
     for i in range(len(test_profiles))
 ])
 
-scores_wass_single = np.array([
-    DistanceComputer.compute_wasserstein(
-        p = baseline_mean,
-        q = test_profiles[i],
-    )
-    for i in range(len(test_profiles))
-])
+#scores_wass_single = np.array([
+#    DistanceComputer.compute_wasserstein(
+#        p = baseline_mean,
+#        q = test_profiles[i],
+#    )
+#    for i in range(len(test_profiles))
+#])
 
 # --- 9b: GMM Mahalanobis (nearest cluster) ---
 # compute_gmm_distance() takes the full GMM parameters + one target point.
@@ -1197,13 +1197,13 @@ scores_jsd_gmm = np.array([
     for i in range(len(test_profiles))
 ])
 
-scores_wass_gmm = np.array([
-    DistanceComputer.compute_gmm_wasserstein(
-        means     = gmm.means_,
-        mu_target = test_profiles[i],
-    )
-    for i in range(len(test_profiles))
-])
+#scores_wass_gmm = np.array([
+#    DistanceComputer.compute_gmm_wasserstein(
+#        means     = gmm.means_,
+#        mu_target = test_profiles[i],
+#    )
+#    for i in range(len(test_profiles))
+#])
 
 # --- 9b.4: GMM val scores for K selection (Mahalanobis/Euclidean/JSD/Wasserstein) ---
 # k-NN val scores are computed below alongside test k-NN; Wasserstein added last.
@@ -1233,13 +1233,13 @@ if _has_val:
         )
         for i in range(len(val_profiles))
     ])
-    scores_wass_gmm_val = np.array([
-        DistanceComputer.compute_gmm_wasserstein(
-            means     = gmm.means_,
-            mu_target = val_profiles[i],
-        )
-        for i in range(len(val_profiles))
-    ])
+    #scores_wass_gmm_val = np.array([
+    #    DistanceComputer.compute_gmm_wasserstein(
+    #        means     = gmm.means_,
+    #        mu_target = val_profiles[i],
+    #    )
+    #    for i in range(len(val_profiles))
+    #])
     print("  Val GMM (non-kNN) scores: done")
 
 # --- 9b.3: GMM k-NN (kNN within the nearest cluster's data) ---
@@ -1314,26 +1314,38 @@ if action_logits_available and test_logits_all is not None:
 # ----- 9d: MDX detection ----
 scores_mdx = None
 if mdx is not None:
-    scores_list = []
-    n_mdx_test = len(test_data["frame_idx"])
-    for i in range(n_mdx_test):
-        if i % 100 == 0:
-            print(f"  MDX scoring frame {i}/{n_mdx_test}")
-        if action_logits_available:
-            # WoR: penultimate-layer features via model.get_features()
-            features = model.get_features(
-                torch.from_numpy(test_data["wide_rgb"][i]),
-                torch.from_numpy(test_data["narr_rgb"][i]),
-                test_data["speed"][i],
-            )
-            feat_vec = features[0].cpu().detach().numpy()
-        else:
-            # TFV6: 512-dim globally-pooled backbone features
-            wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
-            feat_vec = lrp.get_backbone_features(wide_t)
-        scores_list.append(mdx.score(feat_vec))
-    scores_mdx = np.array(scores_list)
-    print(f"  MDX: scored {len(scores_mdx)} frames")
+    _mdx_scores_path = ATT_DIR / f"mdx_scores_{_mode}.npy"
+    _mdx_cache_valid = (
+        _mdx_scores_path.exists()
+        and not conf.RECOMPUTE_MDX_TEST_SCORES
+        and not conf.RECOMPUTE_MDX_BASELINE
+        and not conf.RECOMPUTE_TEST_ATOMS
+    )
+    if _mdx_cache_valid:
+        scores_mdx = np.load(_mdx_scores_path)
+        print(f"  MDX: loaded {len(scores_mdx)} cached scores from {_mdx_scores_path.name}")
+    else:
+        scores_list = []
+        n_mdx_test = len(test_data["frame_idx"])
+        for i in range(n_mdx_test):
+            if i % 100 == 0:
+                print(f"  MDX scoring frame {i}/{n_mdx_test}")
+            if action_logits_available:
+                # WoR: penultimate-layer features via model.get_features()
+                features = model.get_features(
+                    torch.from_numpy(test_data["wide_rgb"][i]),
+                    torch.from_numpy(test_data["narr_rgb"][i]),
+                    test_data["speed"][i],
+                )
+                feat_vec = features[0].cpu().detach().numpy()
+            else:
+                # TFV6: 512-dim globally-pooled backbone features
+                wide_t   = torch.from_numpy(test_data["wide_rgb"][i]).unsqueeze(0)
+                feat_vec = lrp.get_backbone_features(wide_t)
+            scores_list.append(mdx.score(feat_vec))
+        scores_mdx = np.array(scores_list)
+        np.save(_mdx_scores_path, scores_mdx)
+        print(f"  MDX: scored {len(scores_mdx)} frames, cached → {_mdx_scores_path.name}")
 
 # ----- 9d-v2: MDX-v2 (ablation-controlled features + binning) ----
 #scores_mdx_v2 = None
@@ -1382,8 +1394,8 @@ for name, scores in [
     ("Euclidean (GMM)",      scores_euclid_gmm),
     ("Jensen-Shannon",       scores_jsd_single),
     ("JSD (GMM)",            scores_jsd_gmm),
-    ("Wasserstein (single)", scores_wass_single),
-    ("Wasserstein (GMM)",    scores_wass_gmm),
+    #("Wasserstein (single)", scores_wass_single),
+    #("Wasserstein (GMM)",    scores_wass_gmm),
 ] + [(n, s) for n, s in _optional if s is not None] + _knn_sanity + _knn_gmm_sanity:
     clean_mean = scores[test_labels == 0].mean()
     pert_mean  = scores[test_labels == 1].mean()
@@ -1440,17 +1452,17 @@ results_jsd_gmm = evaluator.evaluate(
     detector_name = f"ATOMs-JSD (GMM K={N_COMPONENTS})",
 )
 
-results_wass_single = evaluator.evaluate(
-    scores        = scores_wass_single,
-    labels        = test_labels,
-    detector_name = "ATOMs-Wasserstein",
-)
-
-results_wass_gmm = evaluator.evaluate(
-    scores        = scores_wass_gmm,
-    labels        = test_labels,
-    detector_name = f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})",
-)
+#results_wass_single = evaluator.evaluate(
+#    scores        = scores_wass_single,
+#    labels        = test_labels,
+#    detector_name = "ATOMs-Wasserstein",
+#)
+#
+#results_wass_gmm = evaluator.evaluate(
+#    scores        = scores_wass_gmm,
+#    labels        = test_labels,
+#    detector_name = f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})",
+#)
 
 # Evaluate all k-NN variants on the TEST set — used for the sensitivity plot
 # and for per-perturbation breakdown, but NOT for selecting k.
@@ -1523,7 +1535,7 @@ if _has_val:
         (f"ATOMs-Mahalanobis (GMM K={N_COMPONENTS})", scores_mahal_gmm_val),
         (f"ATOMs-Euclidean (GMM K={N_COMPONENTS})", scores_euclid_gmm_val),
         (f"ATOMs-JSD (GMM K={N_COMPONENTS})", scores_jsd_gmm_val),
-        (f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})", scores_wass_gmm_val),
+        #(f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})", scores_wass_gmm_val),
         (f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)", scores_knn_gmm_val_by_k[best_k_gmm]),
     ]
     _gmm_val_aucs = {name: evaluator.evaluate(s, val_labels, name)["auc"]
@@ -1554,7 +1566,7 @@ all_results = [
         results_single, results_gmm,
         results_euclidean, results_euclidean_gmm,
         results_jsd, results_jsd_gmm,
-        results_wass_single, results_wass_gmm,
+        #results_wass_single, results_wass_gmm,
         results_knn, results_knn_gmm,
         results_entropy,
         results_mdx,
@@ -1627,14 +1639,14 @@ for pert_name, subset in split_data.items():
         scores_euclid_gmm[eval_mask], eval_labels,
         detector_name=f"Euclidean-GMM | {pert_name}",
     )
-    r_wass = evaluator.evaluate(
-        scores_wass_single[eval_mask], eval_labels,
-        detector_name=f"Wasserstein-single | {pert_name}",
-    )
-    r_wass_gmm = evaluator.evaluate(
-        scores_wass_gmm[eval_mask], eval_labels,
-        detector_name=f"Wasserstein-GMM | {pert_name}",
-    )
+    #r_wass = evaluator.evaluate(
+    #    scores_wass_single[eval_mask], eval_labels,
+    #    detector_name=f"Wasserstein-single | {pert_name}",
+    #)
+    #r_wass_gmm = evaluator.evaluate(
+    #    scores_wass_gmm[eval_mask], eval_labels,
+    #    detector_name=f"Wasserstein-GMM | {pert_name}",
+    #)
     r_knn = evaluator.evaluate(
         scores_knn_best[eval_mask], eval_labels,
         detector_name=f"kNN (k={best_k}) | {pert_name}",
@@ -1667,7 +1679,7 @@ for pert_name, subset in split_data.items():
             r_single, r_gmm,
             r_euclidean, r_euclidean_gmm,
             r_jsd, r_jsd_gmm,
-            r_wass, r_wass_gmm,
+            #r_wass, r_wass_gmm,
             r_knn, r_knn_gmm,
             r_entropy, r_mdx,
             #r_mdx_v2,
@@ -1712,7 +1724,7 @@ fig_roc_static = plot_roc(
 save_figure(fig_roc_static, dirs["roc"] / "roc_static_detectors.png")
 
 # GMM detectors paired with their single-Gaussian counterpart
-_gmm_names = {"Mahalanobis", "Euclidean", "JSD", "Wasserstein", "k-NN"}
+_gmm_names = {"Mahalanobis", "Euclidean", "JSD", "k-NN"}
 _results_gmm_group = [
     r for r in all_results
     if any(m.lower() in r["detector_name"].lower() for m in _gmm_names)
@@ -1739,8 +1751,8 @@ _score_dist_pairs = [
      "Euclidean distance", "euclidean"),
     (scores_jsd_single, results_jsd, scores_jsd_gmm, results_jsd_gmm,
      "Jensen-Shannon divergence", "jsd"),
-    (scores_wass_single, results_wass_single, scores_wass_gmm, results_wass_gmm,
-     "Wasserstein distance", "wasserstein"),
+    #(scores_wass_single, results_wass_single, scores_wass_gmm, results_wass_gmm,
+    # "Wasserstein distance", "wasserstein"),
      (scores_knn_best, results_knn, scores_knn_gmm_best, results_knn_gmm,
      "k-NN distance", "knn"),
 ]

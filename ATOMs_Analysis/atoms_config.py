@@ -9,8 +9,8 @@ class ExperimentConfig:
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
     AGENT = "TFV6"
 
-    TOWN = "Town05"
-    WEATHER = "sunny"
+    TOWN = "Town04"
+    WEATHER = "rainy"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -18,7 +18,7 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 12        # None for automatic BIC selection; overridden by --gmm-k CLI arg
+    NUM_GMM_CLUSTERS = 10        # None for automatic BIC selection; overridden by --gmm-k CLI arg
 
     MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9
@@ -27,18 +27,19 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "phantom_obstacle"
-    INTENSITY = 0.01
+    PERTURBATION = "gaussian_noise"
+    INTENSITY = 30                    # 4 for brightness, 21 gn
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = None               # None for all cams
-    MANUAL_SPAWNS = True
+    CAM_INDEX = 1               # None for all cams
+    MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = False
     REAPPLY_PERTURBATIONS = False
-    RECOMPUTE_MDX_BASELINE    = False
-    RECOMPUTE_MDX_V2_BASELINE = False    # set False after first successful run
+    RECOMPUTE_MDX_BASELINE      = False
+    RECOMPUTE_MDX_V2_BASELINE   = False    # set False after first successful run
+    RECOMPUTE_MDX_TEST_SCORES   = False    # set True to re-extract backbone features on test set
 
     # MDX-v2 ablation flags — toggle independently to isolate which change helps
     MDX2_USE_FC_FEATURES      = False    # True: 256-d speed_query; False: 512-d backbone (like v1)
@@ -59,7 +60,7 @@ class ExperimentConfig:
     # Switch to "alternative" to use the same-distribution split (all towns,
     # random route-level split into *_data_alt directories).
     # "original" keeps the Town05-held-out split unchanged.
-    EXPERIMENT_VARIANT = "original"   # "original" | "alternative"
+    EXPERIMENT_VARIANT = "alternative"   # "original" | "alternative"
 
     if EXPERIMENT_VARIANT == "alternative":
         BASELINE_DATA_DIR = _DATA_ROOT / "baseline_data_alt"
@@ -96,12 +97,14 @@ class ExperimentConfig:
     WIDE_ONLY_PROFILE = True
 
 
-    if TOWN == "Town07":
-        #SPAWN_INDEX = 62
-        #SPAWN_INDEX = 2
+    if TOWN == "Town07" and not LIVE_PERTURBATION_RECORDING_MODE:
         SPAWN_INDEX = 85
         SPEC_POS = [-200, -150, 7]
         SPEC_ROT = [-19, -90, 0]
+    if TOWN == "Town07" and LIVE_PERTURBATION_RECORDING_MODE:
+        SPAWN_INDEX = 58            # 89
+        SPEC_POS = [-70, -150, 7]
+        SPEC_ROT = [-19, 90, 0]
     if TOWN == "Town02":
         SPAWN_INDEX = 97
         SPEC_POS = [143, 108, 7]

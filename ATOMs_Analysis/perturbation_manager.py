@@ -1056,7 +1056,7 @@ def _phantom_obstacle(
     """
     scale = float(np.clip(intensity, 0.0, 1.0))
     result = []
-    offset = 5
+    offset = 10
     for img in wide_rgbs:
         if isinstance(img, torch.Tensor):
             arr = img.numpy().astype(np.uint8)
@@ -1067,7 +1067,7 @@ def _phantom_obstacle(
         box_w = int(w * scale)
         box_h = int(h * scale)
 
-        x0 = (w - box_w) // 2
+        x0 = (w - box_w) // 3
         x1 = x0 + box_w
         y0 = h - box_h - offset   # anchored to the bottom
         y1 = h - offset

@@ -16,6 +16,9 @@ pcla_agents/pretrained.zip
 # Large data files — transfer separately via rsync/scp (see hpc/sync_to_hpc.sh)
 data/
 
+# GIF output from make_live_pert_gif.py
+gifs/
+
 # Binary outputs
 *.pdf
 *.npy

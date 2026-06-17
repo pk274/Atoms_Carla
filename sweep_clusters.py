@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-K_VALUES_DEFAULT = [8, 12, 22]
+K_VALUES_DEFAULT = [10, 8, 12]
 
 
 def main() -> None:
@@ -71,9 +71,10 @@ def main() -> None:
 
     # Warn if the user left expensive recompute flags on
     expensive = {
-        "RECOMPUTE_BASELINE":     conf.RECOMPUTE_BASELINE,
-        "RECOMPUTE_TEST_ATOMS":   conf.RECOMPUTE_TEST_ATOMS,
-        "RECOMPUTE_MDX_BASELINE": conf.RECOMPUTE_MDX_BASELINE,
+        "RECOMPUTE_BASELINE":         conf.RECOMPUTE_BASELINE,
+        "RECOMPUTE_TEST_ATOMS":       conf.RECOMPUTE_TEST_ATOMS,
+        "RECOMPUTE_MDX_BASELINE":     conf.RECOMPUTE_MDX_BASELINE,
+        "RECOMPUTE_MDX_TEST_SCORES":  conf.RECOMPUTE_MDX_TEST_SCORES,
     }
     active = [k for k, v in expensive.items() if v]
     if active and not args.dry_run:

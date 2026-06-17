@@ -12,6 +12,30 @@ Gate server: `gate1.mpcdf.mpg.de` — only reachable once VPN is active.
 
 ---
 
+## Downloading files from Viper (SCP via jump host)
+
+Direct SCP through the gateway works without a running HTTP server or git.  
+Use this for any download: results files, npz outputs, entire directories.
+
+```powershell
+# Download a single file
+scp -J paulkull@gate1.mpcdf.mpg.de `
+    paulkull@viper.mpcdf.mpg.de:/ptmp/paulkull/atoms_test/test_profiles_2.npy `
+    "C:\Users\paulk\Desktop\Unistuff\Masterarbeit\Code\PCLA\data\TFV6\test_data\attention\test_profiles_2.npy"
+
+# Download a whole directory (add -r)
+scp -J paulkull@gate1.mpcdf.mpg.de -r `
+    paulkull@viper.mpcdf.mpg.de:/u/paulkull/ATOMsAD/data/perturbed_datasets/breakout_gaussian_noise_individual_run/ `
+    "C:\Users\paulk\Desktop\Unistuff\Masterarbeit\Code\ATOMs_SOLID\data\perturbed_datasets\breakout_gaussian_noise_individual_run"
+```
+
+**Pattern:** `scp -J <gate> [-r] <user>@viper:<remote_path> "<local_path>"`
+
+> You will be prompted for your password + OTP for the gate and again for Viper.  
+> The MPCDF VPN must be connected first.
+
+---
+
 ## Transferring large files to Viper (HTTP reverse tunnel)
 
 Direct rsync/scp to Viper does not work from Windows — you must go through the gateway.  

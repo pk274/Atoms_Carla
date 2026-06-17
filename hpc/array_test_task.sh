@@ -51,9 +51,9 @@ srun python3 "$CODE_DIR/hpc/compute_test_chunk.py" \
     --output        "$OUTPUT"              \
     --model-dir     "$MODEL_DIR"           \
     --mode-analysis "${MODE_ANALYSIS:-1}"  \
-    --pgd-target    "${PGD_TARGET:-steer_right}" \
-    --pgd-epsilon   "${PGD_EPSILON:-12.0}"       \
-    --pgd-steps     "${PGD_STEPS:-10}"
+    --pgd-target    "${PGD_TARGET:-brake}" \
+    --pgd-epsilon   "${PGD_EPSILON:-14.0}"       \
+    --pgd-steps     "${PGD_STEPS:-8}"
 
 echo "Task $SLURM_ARRAY_TASK_ID finished with exit code $?"
 date
