@@ -73,27 +73,25 @@ def main() -> None:
 
         n_clean = int(clean_d["wide_rgb"].shape[0])
         n_pert  = int(paired_d["wide_rgb"].shape[0])
+        n       = min(n_clean, n_pert)
         if n_clean != n_pert:
-            raise ValueError(
-                f"Frame count mismatch: clean={n_clean}, perturbed={n_pert}.\n"
-                f"  clean:    {args.file}\n"
-                f"  perturbed:{args.paired_file}"
-            )
+            print(f"[prep_live_pert] frame count mismatch: clean={n_clean}, "
+                  f"perturbed={n_pert} — truncating to {n}.")
 
         combined = {
-            "wide_rgb":     clean_d["wide_rgb"],
-            "seg_red_wide": paired_d["seg_red_wide"],
-            "cmd":          paired_d["cmd"],
-            "speed":        paired_d["speed"],
-            "is_brake":     paired_d["is_brake"] if "is_brake" in paired_d
-                            else np.zeros(n_clean, dtype=np.int8),
-            "frame_idx":    paired_d["frame_idx"],
-            "run_id":       np.zeros(n_clean, dtype=np.int32),
+            "wide_rgb":     clean_d["wide_rgb"][:n],
+            "seg_red_wide": paired_d["seg_red_wide"][:n],
+            "cmd":          paired_d["cmd"][:n],
+            "speed":        paired_d["speed"][:n],
+            "is_brake":     paired_d["is_brake"][:n] if "is_brake" in paired_d
+                            else np.zeros(n, dtype=np.int8),
+            "frame_idx":    paired_d["frame_idx"][:n],
+            "run_id":       np.zeros(n, dtype=np.int32),
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(args.output, **combined)
-        (args.output.parent / "live_pert_meta.txt").write_text(str(n_clean))
-        print(f"[prep_live_pert] clean-RGB mode: {n_clean} frames saved → {args.output}")
+        (args.output.parent / "live_pert_meta.txt").write_text(str(n))
+        print(f"[prep_live_pert] clean-RGB mode: {n} frames saved → {args.output}")
         return
 
     # ------------------------------------------------------------------

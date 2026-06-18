@@ -530,6 +530,8 @@ for frame_file in frame_files:
         clean_profiles = None
         if clean_profile_path.exists():
             clean_profiles = np.load(clean_profile_path)
+            if len(clean_profiles) > len(test_profiles):
+                clean_profiles = clean_profiles[:len(test_profiles)]
             print(f"  Loaded {len(clean_profiles)} clean profiles from {clean_profile_path.name}")
         else:
             print(f"  Clean profiles not found: {clean_profile_path.name} — skipping clean overlay.")
