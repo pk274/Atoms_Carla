@@ -134,6 +134,20 @@ class DistanceComputer:
         return knn_distance
 
     @staticmethod
+    def _nearest_cluster_mahal(
+        means: np.ndarray,
+        covariances: np.ndarray,
+        target: np.ndarray,
+        regularization: float = 0.01,
+    ) -> int:
+        """Return the index of the cluster whose Mahalanobis distance to target is smallest."""
+        dists = np.array([
+            DistanceComputer.compute_mahalanobis(means[i], covariances[i], target, regularization)
+            for i in range(len(means))
+        ])
+        return int(np.argmin(dists))
+
+    @staticmethod
     def compute_gmm_distance(
         means: np.ndarray,
         covariances: np.ndarray,
@@ -253,75 +267,76 @@ class DistanceComputer:
     @staticmethod
     def compute_gmm_euclidean(
         means: np.ndarray,
+        covariances: np.ndarray,
         mu_target: np.ndarray,
+        regularization: float = 0.01,
     ) -> float:
         """
-        Min L2 distance from mu_target to any cluster centroid.
+        L2 distance from mu_target to the nearest cluster centroid (nearest by Mahalanobis).
 
         Parameters
         ----------
-        means     : np.ndarray [K, D]
-        mu_target : np.ndarray [D]
+        means         : np.ndarray [K, D]
+        covariances   : np.ndarray [K, D, D]
+        mu_target     : np.ndarray [D]
+        regularization: float
 
         Returns
         -------
-        float — distance to nearest cluster mean.
+        float — Euclidean distance to the Mahalanobis-nearest cluster mean.
         """
-        dists = np.linalg.norm(means - mu_target[None, :], axis=1)
-        return float(dists.min())
+        nc = DistanceComputer._nearest_cluster_mahal(means, covariances, mu_target, regularization)
+        return float(np.linalg.norm(mu_target - means[nc]))
 
     @staticmethod
     def compute_gmm_jsd(
         means: np.ndarray,
+        covariances: np.ndarray,
         mu_target: np.ndarray,
+        regularization: float = 0.01,
     ) -> float:
         """
-        Min JSD between mu_target and any cluster mean profile.
-
-        Treats each cluster mean as a reference probability distribution
-        and computes JSD(mu_target || mu_k) for each cluster k.
+        JSD between mu_target and the nearest cluster mean profile (nearest by Mahalanobis).
 
         Parameters
         ----------
-        means     : np.ndarray [K, D]
-        mu_target : np.ndarray [D]
+        means         : np.ndarray [K, D]
+        covariances   : np.ndarray [K, D, D]
+        mu_target     : np.ndarray [D]
+        regularization: float
 
         Returns
         -------
-        float — minimum JSD over all cluster means.
+        float — JSD against the Mahalanobis-nearest cluster mean.
         """
-        min_jsd = np.inf
-        for k in range(len(means)):
-            jsd = DistanceComputer.compute_jsd(means[k], mu_target)
-            if jsd < min_jsd:
-                min_jsd = jsd
-        return float(min_jsd)
+        nc = DistanceComputer._nearest_cluster_mahal(means, covariances, mu_target, regularization)
+        return DistanceComputer.compute_jsd(means[nc], mu_target)
 
     @staticmethod
     def compute_gmm_wasserstein(
         means: np.ndarray,
+        covariances: np.ndarray,
         mu_target: np.ndarray,
+        regularization: float = 0.01,
         positions: Optional[np.ndarray] = None,
     ) -> float:
         """
-        Min Wasserstein-1 distance between mu_target and any cluster mean profile.
+        Wasserstein-1 distance between mu_target and the nearest cluster mean (nearest by Mahalanobis).
 
         Parameters
         ----------
-        means     : np.ndarray [K, D]
-        mu_target : np.ndarray [D]
-        positions : np.ndarray [D], optional — passed to compute_wasserstein.
+        means         : np.ndarray [K, D]
+        covariances   : np.ndarray [K, D, D]
+        mu_target     : np.ndarray [D]
+        regularization: float
+        positions     : np.ndarray [D], optional — passed to compute_wasserstein.
 
         Returns
         -------
-        float — minimum W1 over all cluster means.
+        float — W1 against the Mahalanobis-nearest cluster mean.
         """
-        min_w = np.inf
-        for k in range(len(means)):
-            w = DistanceComputer.compute_wasserstein(means[k], mu_target, positions)
-            if w < min_w:
-                min_w = w
-        return float(min_w)
+        nc = DistanceComputer._nearest_cluster_mahal(means, covariances, mu_target, regularization)
+        return DistanceComputer.compute_wasserstein(means[nc], mu_target, positions)
 
     @staticmethod
     def compute_wasserstein(

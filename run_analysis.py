@@ -1180,27 +1180,33 @@ gmm_results = [
 scores_mahal_gmm    = np.array([r.distance          for r in gmm_results])
 nearest_clusters    = np.array([r.nearest_component for r in gmm_results])  # useful for analysis
 
-# --- 9b.2: GMM Euclidean, JSD, Wasserstein (nearest cluster by each metric) ---
+# --- 9b.2: GMM Euclidean, JSD, Wasserstein (nearest cluster by Mahalanobis) ---
 scores_euclid_gmm = np.array([
     DistanceComputer.compute_gmm_euclidean(
-        means     = gmm.means_,
-        mu_target = test_profiles[i],
+        means         = gmm.means_,
+        covariances   = gmm.covariances_,
+        mu_target     = test_profiles[i],
+        regularization= conf.MAHAL_RIDGE,
     )
     for i in range(len(test_profiles))
 ])
 
 scores_jsd_gmm = np.array([
     DistanceComputer.compute_gmm_jsd(
-        means     = gmm.means_,
-        mu_target = test_profiles[i],
+        means         = gmm.means_,
+        covariances   = gmm.covariances_,
+        mu_target     = test_profiles[i],
+        regularization= conf.MAHAL_RIDGE,
     )
     for i in range(len(test_profiles))
 ])
 
 #scores_wass_gmm = np.array([
 #    DistanceComputer.compute_gmm_wasserstein(
-#        means     = gmm.means_,
-#        mu_target = test_profiles[i],
+#        means         = gmm.means_,
+#        covariances   = gmm.covariances_,
+#        mu_target     = test_profiles[i],
+#        regularization= conf.MAHAL_RIDGE,
 #    )
 #    for i in range(len(test_profiles))
 #])
@@ -1221,22 +1227,28 @@ if _has_val:
     ])
     scores_euclid_gmm_val = np.array([
         DistanceComputer.compute_gmm_euclidean(
-            means     = gmm.means_,
-            mu_target = val_profiles[i],
+            means         = gmm.means_,
+            covariances   = gmm.covariances_,
+            mu_target     = val_profiles[i],
+            regularization= conf.MAHAL_RIDGE,
         )
         for i in range(len(val_profiles))
     ])
     scores_jsd_gmm_val = np.array([
         DistanceComputer.compute_gmm_jsd(
-            means     = gmm.means_,
-            mu_target = val_profiles[i],
+            means         = gmm.means_,
+            covariances   = gmm.covariances_,
+            mu_target     = val_profiles[i],
+            regularization= conf.MAHAL_RIDGE,
         )
         for i in range(len(val_profiles))
     ])
     #scores_wass_gmm_val = np.array([
     #    DistanceComputer.compute_gmm_wasserstein(
-    #        means     = gmm.means_,
-    #        mu_target = val_profiles[i],
+    #        means         = gmm.means_,
+    #        covariances   = gmm.covariances_,
+    #        mu_target     = val_profiles[i],
+    #        regularization= conf.MAHAL_RIDGE,
     #    )
     #    for i in range(len(val_profiles))
     #])
@@ -1244,7 +1256,7 @@ if _has_val:
 
 # --- 9b.3: GMM k-NN (kNN within the nearest cluster's data) ---
 # Pre-split baseline samples by cluster; for each test point find the
-# closest centroid by L2, then run kNN within that cluster's data.
+# closest centroid by Mahalanobis, then run kNN within that cluster's data.
 # Falls back to the full baseline when the cluster is smaller than k.
 _cluster_data: dict = {}
 for _ck in range(N_COMPONENTS):
@@ -1257,8 +1269,7 @@ for _k in KNN_K_VALUES:
     _gmm_knn_scores = []
     for i in range(len(test_profiles)):
         x = test_profiles[i]
-        _centroid_dists = np.linalg.norm(gmm.means_ - x[None, :], axis=1)
-        _nc = int(np.argmin(_centroid_dists))
+        _nc = DistanceComputer._nearest_cluster_mahal(gmm.means_, gmm.covariances_, x, conf.MAHAL_RIDGE)
         _pool = _cluster_data.get(_nc, baseline_series)
         if len(_pool) < _k:
             _pool = baseline_series   # fallback: too few cluster members
@@ -1291,8 +1302,7 @@ if _has_val:
         _gmm_knn_val_scores = []
         for i in range(len(val_profiles)):
             x = val_profiles[i]
-            _centroid_dists = np.linalg.norm(gmm.means_ - x[None, :], axis=1)
-            _nc = int(np.argmin(_centroid_dists))
+            _nc = DistanceComputer._nearest_cluster_mahal(gmm.means_, gmm.covariances_, x, conf.MAHAL_RIDGE)
             _pool = _cluster_data.get(_nc, baseline_series)
             if len(_pool) < _k:
                 _pool = baseline_series

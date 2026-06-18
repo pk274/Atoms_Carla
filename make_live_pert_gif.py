@@ -124,8 +124,8 @@ def parse_args() -> argparse.Namespace:
 
 def list_available_runs(pert: str, mode: int) -> list[tuple[str, bool]]:
     """Return [(run_label, has_profiles), ...] for all runs of this pert type."""
-    frames_dir   = DATA_ROOT / "test_data" / "live_pert_frames"
-    profiles_dir = DATA_ROOT / "test_data" / "attention" / "live_pert" / pert
+    frames_dir   = DATA_ROOT / "test_data_alt" / "live_pert_frames"
+    profiles_dir = DATA_ROOT / "test_data_alt" / "attention" / "live_pert" / pert
     runs = []
     for npz in sorted(frames_dir.glob(f"run_{pert}_live_pert_*.npz")):
         if "_clean_rgb" in npz.name:
@@ -149,14 +149,14 @@ def find_run(pert: str, mode: int) -> str:
 
 
 def load_frames(pert: str, run: str) -> dict:
-    path = DATA_ROOT / "test_data" / "live_pert_frames" / f"run_{pert}_live_pert_{run}.npz"
+    path = DATA_ROOT / "test_data_alt" / "live_pert_frames" / f"run_{pert}_live_pert_{run}.npz"
     if not path.exists():
         raise FileNotFoundError(f"Frame file not found: {path}")
     return np.load(path, allow_pickle=True)
 
 
 def load_profiles(pert: str, run: str, mode: int) -> np.ndarray:
-    path = (DATA_ROOT / "test_data" / "attention" / "live_pert"
+    path = (DATA_ROOT / "test_data_alt" / "attention" / "live_pert"
             / pert / f"live_pert_profiles_{run}_{mode}.npy")
     if not path.exists():
         raise FileNotFoundError(f"Profile file not found: {path}")
@@ -164,7 +164,7 @@ def load_profiles(pert: str, run: str, mode: int) -> np.ndarray:
 
 
 def load_clean_rgb(pert: str, run: str) -> np.ndarray | None:
-    path = (DATA_ROOT / "test_data" / "live_pert_frames"
+    path = (DATA_ROOT / "test_data_alt" / "live_pert_frames"
             / f"run_{pert}_live_pert_{run}_clean_rgb.npz")
     if path.exists():
         return np.load(path, allow_pickle=True)["wide_rgb"]
@@ -172,7 +172,7 @@ def load_clean_rgb(pert: str, run: str) -> np.ndarray | None:
 
 
 def load_logits(pert: str, run: str, mode: int) -> np.ndarray | None:
-    path = (DATA_ROOT / "test_data" / "attention" / "live_pert"
+    path = (DATA_ROOT / "test_data_alt" / "attention" / "live_pert"
             / pert / f"live_pert_speed_logits_{run}_{mode}.npy")
     return np.load(path) if path.exists() else None
 

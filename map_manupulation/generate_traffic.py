@@ -25,7 +25,7 @@ class TrafficOrganizer:
     def __init__(self, client):
         self.client = client
         self.world = self.client.get_world()
-        self.seed = 7                           # 4
+        self.seed = 10                           # 4
         self.tm_port = 8000
         self.respawn = False
         self.hybrid = False

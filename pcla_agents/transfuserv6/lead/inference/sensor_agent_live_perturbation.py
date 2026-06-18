@@ -212,12 +212,13 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         # PGD is applied to the float tensor later in _perturb_tensor_hook;
         # all other perturbations are applied here to the uint8 image.
         if self._injection_active and conf.PERTURBATION != "pgd":
+            n_total_cams = input_data["rgb"].shape[-1] // _CAM_PX
             input_data["rgb"] = self._pm.perturb_tfv6_image(
                 input_data["rgb"],
                 perturbation=conf.PERTURBATION,
                 intensity=conf.INTENSITY,
                 camera_index=conf.CAM_INDEX,
-                n_cameras=_N_FORWARD_CAMS,
+                n_cameras=n_total_cams,
             )
             save_rgb = input_data["rgb"][..., :fwd_width]
 

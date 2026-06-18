@@ -641,3 +641,36 @@ Route-level splitting prevents leakage from temporally-correlated frames within 
 ### Invariant
 
 No filename overlap between `baseline_data_alt/frames/`, `test_data_alt/frames/`, and `val_data_alt/frames/` — guaranteed by construction (each shuffled route appears in exactly one slice).
+
+---
+
+## GMM nearest-cluster assignment: Mahalanobis for all detectors (2026-06-18)
+
+All GMM-based detectors now determine the nearest cluster via **Mahalanobis distance**
+rather than each detector's own metric (Euclidean / JSD / Wasserstein) or raw L2 to
+centroids (GMM k-NN).
+
+**Rationale:** Euclidean distance to centroids treats all dimensions equally, so it is
+biased toward large-variance clusters (they look closer in raw space).  Mahalanobis
+normalises by each cluster's covariance, making assignment geometry-aware: a cluster
+whose variance is small in a given direction acts as a tighter attractor for nearby
+points, which is the correct behaviour for a GMM.
+
+For JSD and Wasserstein the old approach found the cluster minimising the distance
+under each metric — that is self-consistent but unintuitive because the "nearest
+cluster" depended on the scoring function rather than on the underlying geometry.
+Decoupling assignment (Mahalanobis) from scoring (JSD / Wasserstein) makes all
+detectors comparable: they all see the same cluster partition and differ only in
+how they measure distance to the assigned cluster's mean.
+
+**Changes:**
+- `DistanceComputer._nearest_cluster_mahal(means, covariances, target, regularization)` —
+  new private helper; returns the index of the Mahalanobis-nearest cluster.
+- `compute_gmm_euclidean`, `compute_gmm_jsd`, `compute_gmm_wasserstein` — signatures
+  extended with `covariances` and `regularization`; cluster selection delegated to
+  `_nearest_cluster_mahal`.  Return value semantics unchanged (score against nearest mean).
+- `run_analysis.py` — GMM k-NN centroid loop (test + val) replaced explicit
+  `np.linalg.norm` with `_nearest_cluster_mahal`; all four call sites of
+  `compute_gmm_euclidean` / `compute_gmm_jsd` updated to pass `gmm.covariances_` and
+  `conf.MAHAL_RIDGE`.
+- `compute_gmm_distance` (Mahalanobis-GMM) was already correct; no change.

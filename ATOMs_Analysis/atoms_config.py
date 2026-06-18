@@ -9,8 +9,8 @@ class ExperimentConfig:
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
     AGENT = "TFV6"
 
-    TOWN = "Town04"
-    WEATHER = "rainy"
+    TOWN = "Town07"
+    WEATHER = "cloudy"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -27,11 +27,11 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "pgd"
+    PERTURBATION = "phantom_obstacle"
     INTENSITY = 30                    # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = None               # None for all cams
+    CAM_INDEX = 1               # None for all cams
     MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
