@@ -291,26 +291,8 @@ print()
 # ---------------------------------------------------------------------------
 print("[Step 4] GMM model selection (BIC/AIC sweep)...")
 
-MAX_K = conf.GMM_MAX_K   # <<< e.g. 8 — increase if you expect many driving modes
-
-best_k_bic, scores_bic = GMMClustering.select_n_components(
-    data            = baseline_series,
-    max_components  = MAX_K,
-    criterion       = "bic",
-    covariance_type = conf.GMM_COV_TYPE,   # <<< "full" or "diag"
-)
-_, scores_aic = GMMClustering.select_n_components(
-    data            = baseline_series,
-    max_components  = MAX_K,
-    criterion       = "aic",
-    covariance_type = conf.GMM_COV_TYPE,
-)
-
-fig_bic = plot_bic_aic(scores_bic, scores_aic)
-save_figure(fig_bic, OUT_DIR / "gmm_model_selection.png")
 
 # You can override the auto-selected K here if the sweep result looks wrong.
-N_COMPONENTS = best_k_bic   # <<< ADJUST: override if needed, e.g. N_COMPONENTS = 4
 if conf.NUM_GMM_CLUSTERS is not None:
     N_COMPONENTS = conf.NUM_GMM_CLUSTERS
 print(f"  Selected K = {N_COMPONENTS}")
@@ -546,12 +528,11 @@ for frame_file in frame_files:
         print(f"  Loaded {len(test_profiles)} profiles from {profile_path.name}")
 
         clean_profiles = None
-        if clean_data is not None:
-            if clean_profile_path.exists():
-                clean_profiles = np.load(clean_profile_path)
-                print(f"  Loaded {len(clean_profiles)} clean profiles from {clean_profile_path.name}")
-            else:
-                print(f"  Clean profiles not found: {clean_profile_path.name} — skipping clean scoring.")
+        if clean_profile_path.exists():
+            clean_profiles = np.load(clean_profile_path)
+            print(f"  Loaded {len(clean_profiles)} clean profiles from {clean_profile_path.name}")
+        else:
+            print(f"  Clean profiles not found: {clean_profile_path.name} — skipping clean overlay.")
 
     # --- Step 9: score ---
     print(f"[Step 9] Scoring variant '{variant}'...")
@@ -674,11 +655,12 @@ for frame_file in frame_files:
 
     # The perturbation label passed to the plot includes the variant so filenames are unique.
     _plot_label = f"{LIVE_PERT_NAME}_{variant}"
-    plot_distance_over_time(scores_mahal_single,  _plot_label, "mahalanobis_single", OUT_DIR, _injection_frame, dist_clean=_cs_mahal)
-    plot_distance_over_time(scores_mahal_gmm,     _plot_label, "mahalanobis_gmm",    OUT_DIR, _injection_frame, dist_clean=_cs_mahal_gmm)
-    plot_distance_over_time(scores_euclid_single, _plot_label, "euclidean",          OUT_DIR, _injection_frame, dist_clean=_cs_euclid)
-    plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame, dist_clean=_cs_jsd)
-    plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame, dist_clean=_cs_knn)
+    _clean_overlay = conf.PLOT_CLEAN_ATTENTION_OVERLAY
+    plot_distance_over_time(scores_mahal_single,  _plot_label, "mahalanobis_single", OUT_DIR, _injection_frame, dist_clean=_cs_mahal       if _clean_overlay else None)
+    plot_distance_over_time(scores_mahal_gmm,     _plot_label, "mahalanobis_gmm",    OUT_DIR, _injection_frame, dist_clean=_cs_mahal_gmm   if _clean_overlay else None)
+    plot_distance_over_time(scores_euclid_single, _plot_label, "euclidean",          OUT_DIR, _injection_frame, dist_clean=_cs_euclid      if _clean_overlay else None)
+    plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame, dist_clean=_cs_jsd         if _clean_overlay else None)
+    plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame, dist_clean=_cs_knn         if _clean_overlay else None)
     if scores_entropy is not None:
         plot_distance_over_time(scores_entropy, _plot_label, "PEOC", OUT_DIR, _injection_frame)
     if scores_mdx is not None:

@@ -56,7 +56,7 @@ echo "N_TASKS/file  : $N_TASKS (indices 0–$N_LAST)"
 echo ""
 
 # --- Discover source files ---
-mapfile -t PERT_FILES < <(ls "$FRAMES_DIR"/run_${PERTURBATION}_live_pert_*.npz 2>/dev/null | sort)
+mapfile -t PERT_FILES < <(ls "$FRAMES_DIR"/run_${PERTURBATION}_live_pert_*.npz 2>/dev/null | grep -v '_clean_rgb\.npz$' | sort)
 if [ ${#PERT_FILES[@]} -eq 0 ]; then
     echo "ERROR: No run_${PERTURBATION}_live_pert_*.npz files found in $FRAMES_DIR" >&2
     exit 1
@@ -110,6 +110,70 @@ for FPATH in "${PERT_FILES[@]}"; do
     echo "  Submitted gather: $GATHER_JOB_ID"
     echo ""
 done
+
+# --- Submit one 3-job chain per clean-RGB file ---
+mapfile -t CLEAN_FILES < <(ls "$FRAMES_DIR"/run_${PERTURBATION}_live_pert_*_clean_rgb.npz 2>/dev/null | sort)
+if [ ${#CLEAN_FILES[@]} -gt 0 ]; then
+    echo "Found ${#CLEAN_FILES[@]} clean-RGB file(s):"
+    printf '  %s\n' "${CLEAN_FILES[@]##*/}"
+    echo ""
+
+    for CLEAN_FPATH in "${CLEAN_FILES[@]}"; do
+        CLEAN_FSTEM=$(basename "$CLEAN_FPATH" .npz)
+        # strip "run_{PERT}_live_pert_" prefix and "_clean_rgb" suffix to get perturbed variant
+        CLEAN_VARIANT="${CLEAN_FSTEM#run_${PERTURBATION}_live_pert_}"   # e.g. brake_205328_000_clean_rgb
+        PERTURBED_VARIANT="${CLEAN_VARIANT%_clean_rgb}"                  # e.g. brake_205328_000
+        OUTPUT_VARIANT="${PERTURBED_VARIANT}_clean"                      # e.g. brake_205328_000_clean
+
+        PAIRED_FPATH="$FRAMES_DIR/run_${PERTURBATION}_live_pert_${PERTURBED_VARIANT}.npz"
+        if [ ! -f "$PAIRED_FPATH" ]; then
+            echo "WARNING: no perturbed file for clean variant '$CLEAN_VARIANT' — skipping."
+            echo "  Expected: $PAIRED_FPATH"
+            continue
+        fi
+
+        FILE_WORK="$WORK_DIR/$OUTPUT_VARIANT"
+        CONCAT_FILE="$FILE_WORK/live_pert_concat.npz"
+        PARTIALS_DIR="$FILE_WORK/partials/mode_${MODE_ANALYSIS}"
+        PROFILES_OUT="$FILE_WORK/live_pert_profiles_${MODE_ANALYSIS}.npy"
+        LOG_DIR="$FILE_WORK/logs"
+
+        mkdir -p "$LOG_DIR" "$PARTIALS_DIR"
+
+        echo "=== Clean variant: $OUTPUT_VARIANT ==="
+
+        ARRAY_DEP=""
+        if [ -f "$CONCAT_FILE" ]; then
+            echo "  live_pert_concat.npz already exists — skipping prep job."
+        else
+            PREP_JOB_ID=$(sbatch --parsable \
+                --output="$LOG_DIR/prep_%j.out" --error="$LOG_DIR/prep_%j.err" \
+                --chdir="$CODE_DIR" \
+                --export=ALL,FRAMES_DIR="$FRAMES_DIR",PERTURBATION="$PERTURBATION",CONCAT_FILE="$CONCAT_FILE",CODE_DIR="$CODE_DIR",FILE_PATH="$CLEAN_FPATH",PAIRED_FILE="$PAIRED_FPATH" \
+                "$CODE_DIR/hpc/prep_live_pert_task.sh")
+            echo "  Submitted prep  : $PREP_JOB_ID"
+            ARRAY_DEP="--dependency=afterok:${PREP_JOB_ID}"
+        fi
+
+        ARRAY_JOB_ID=$(sbatch --parsable \
+            --array=0-${N_LAST} \
+            ${ARRAY_DEP} \
+            --output="$LOG_DIR/chunk_%A_%a.out" --error="$LOG_DIR/chunk_%A_%a.err" \
+            --chdir="$CODE_DIR" \
+            --export=ALL,CONCAT_FILE="$CONCAT_FILE",PARTIALS_DIR="$PARTIALS_DIR",MODEL_DIR="$MODEL_DIR",CODE_DIR="$CODE_DIR",CHUNK_SIZE="$CHUNK_SIZE",MODE_ANALYSIS="$MODE_ANALYSIS" \
+            "$CODE_DIR/hpc/array_live_pert_task.sh")
+        echo "  Submitted array : $ARRAY_JOB_ID  ($N_TASKS tasks, indices 0–$N_LAST)"
+
+        GATHER_JOB_ID=$(sbatch --parsable \
+            --dependency=afterok:${ARRAY_JOB_ID} \
+            --output="$LOG_DIR/gather_%j.out" --error="$LOG_DIR/gather_%j.err" \
+            --chdir="$CODE_DIR" \
+            --export=ALL,PARTIALS_DIR="$PARTIALS_DIR",PROFILES_OUT="$PROFILES_OUT",CODE_DIR="$CODE_DIR",MODE_ANALYSIS="$MODE_ANALYSIS" \
+            "$CODE_DIR/hpc/gather_live_pert_task.sh")
+        echo "  Submitted gather: $GATHER_JOB_ID"
+        echo ""
+    done
+fi
 
 echo "Monitor with:"
 echo "  squeue -u \$USER"

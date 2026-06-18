@@ -96,7 +96,7 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("--pert",      default="pgd",
-                   choices=["pgd", "phantom_obstacle", "brightness_scale"],
+                   choices=["pgd", "phantom_obstacle", "brightness_scale", "gaussian_noise"],
                    help="Perturbation type (default: pgd)")
     p.add_argument("--run",       default=None,
                    help="Run label, e.g. nocrash_155706_000 (auto if omitted)")

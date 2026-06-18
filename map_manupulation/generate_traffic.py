@@ -25,7 +25,7 @@ class TrafficOrganizer:
     def __init__(self, client):
         self.client = client
         self.world = self.client.get_world()
-        self.seed = 4
+        self.seed = 7                           # 4
         self.tm_port = 8000
         self.respawn = False
         self.hybrid = False
@@ -40,7 +40,7 @@ class TrafficOrganizer:
         self.car_lights_on = False
         if conf.WEATHER == "foggy" or conf.WEATHER == "night":
             self.car_lights_on = True
-        self.number_of_walkers = 15
+        self.number_of_walkers = 0
         self.synchronous_master = True
         self.vehicles_list = None
         self.all_id = None

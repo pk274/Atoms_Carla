@@ -38,7 +38,8 @@ PY_ARGS=(
     --perturbation "$PERTURBATION"
     --output       "$CONCAT_FILE"
 )
-[ -n "${FILE_PATH:-}" ] && PY_ARGS+=(--file "$FILE_PATH")
+[ -n "${FILE_PATH:-}"   ] && PY_ARGS+=(--file        "$FILE_PATH")
+[ -n "${PAIRED_FILE:-}" ] && PY_ARGS+=(--paired-file "$PAIRED_FILE")
 
 srun python3 "$CODE_DIR/hpc/prep_live_pert.py" "${PY_ARGS[@]}"
 

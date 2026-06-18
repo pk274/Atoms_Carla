@@ -27,11 +27,11 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "gaussian_noise"
-    INTENSITY = 30                    # 4 for brightness, 21 gn
+    PERTURBATION = "pgd"
+    INTENSITY = 30                    # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = 1               # None for all cams
+    CAM_INDEX = None               # None for all cams
     MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
@@ -48,6 +48,7 @@ class ExperimentConfig:
     PLOT_SEG_AND_REL = True
     PLOT_COMPARATIVE_REL = True
     PLOT_INTERVAL = 20           # 20
+    PLOT_CLEAN_ATTENTION_OVERLAY = True  # overlay clean distance as faint line in distance-over-time plots
 
 
     IMAGE_SAMPLE_INTERVAL = 25   # 25
