@@ -16,8 +16,8 @@ class ExperimentConfig:
     # visualization only.  The analysis code auto-detects width from the npz data.
     N_CAMERAS = 6
 
-    TOWN = "Town07"
-    WEATHER = "rainy"
+    TOWN = "Town03"
+    WEATHER = "night"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -34,8 +34,8 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "phantom_obstacle"
-    INTENSITY = 0.08                    # 4 for brightness, 21 gn, 0.07 for po
+    PERTURBATION = "gaussian_noise"
+    INTENSITY = 35                 # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
     CAM_INDEX = None      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
