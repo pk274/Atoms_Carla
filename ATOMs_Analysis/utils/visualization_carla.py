@@ -1002,6 +1002,28 @@ def save_figure(fig, path: str, dpi: int = None) -> None:
     print(f"[visualization] Saved → {p}")
 
 
+def save_figure_both_legend(fig, path: str, dpi: int = None) -> None:
+    """Save a figure twice: once with legend, once without (suffix _nolegend).
+
+    Removes the legend from all axes for the second save, then closes the figure.
+    """
+    if dpi is None:
+        dpi = vc.SAVE_DPI
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(p, dpi=dpi, bbox_inches=vc.SAVE_BBOX_INCHES)
+    print(f"[visualization] Saved → {p}")
+    for ax in fig.get_axes():
+        leg = ax.get_legend()
+        if leg is not None:
+            leg.remove()
+    fig.tight_layout()
+    p_noleg = p.with_stem(p.stem + "_nolegend")
+    fig.savefig(p_noleg, dpi=dpi, bbox_inches=vc.SAVE_BBOX_INCHES)
+    print(f"[visualization] Saved → {p_noleg}")
+    plt.close(fig)
+
+
 def make_output_dirs(base_dir) -> dict:
     """
     Create the standard output subdirectory tree under base_dir.

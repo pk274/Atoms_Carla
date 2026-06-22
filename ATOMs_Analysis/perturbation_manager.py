@@ -650,7 +650,7 @@ class PerturbationManager:
         rgb_chw: np.ndarray,
         perturbation: str,
         intensity: float,
-        camera_index: int | None = None,
+        camera_index: int | list[int] | None = None,
         n_cameras: int = 6,
     ) -> np.ndarray:
         """
@@ -675,9 +675,12 @@ class PerturbationManager:
             Name of the perturbation (same names as perturb_wide_image).
         intensity : float
             Perturbation strength (same semantics as perturb_wide_image).
-        camera_index : int | None
-            If provided, perturbation is applied only to that camera
-            (0..n_cameras-1). If None, applied to all cameras.
+        camera_index : int | list[int] | None
+            If an int, perturbation is applied only to that camera (0-based).
+            If a list of ints, perturbation is applied to each listed camera.
+            If None, applied to all cameras.
+            For the 6-camera TFV6 layout: 0=front-left, 1=front-center,
+            2=front-right, 3=rear-right, 4=rear-center, 5=rear-left.
         n_cameras : int
             Number of cameras concatenated horizontally (default: 6 for TFV6).
 
@@ -694,7 +697,7 @@ class PerturbationManager:
             )
 
         if self.verbose:
-            cam_info = f"camera {camera_index}" if camera_index is not None else "all cameras"
+            cam_info = f"cameras {camera_index}" if camera_index is not None else "all cameras"
             print(f"[PerturbationManager] TFV6 — applying '{perturbation}' "
                   f"(intensity={intensity}) to {cam_info}.")
 
@@ -709,11 +712,13 @@ class PerturbationManager:
 
         fn = _WIDE_IMAGE_REGISTRY[perturbation]
 
-        if camera_index is not None:
-            target = [cameras[camera_index]]
-            cameras[camera_index] = fn(target, intensity)[0]
-        else:
+        if camera_index is None:
             cameras = fn(cameras, intensity)
+        elif isinstance(camera_index, list):
+            for idx in camera_index:
+                cameras[idx] = fn([cameras[idx]], intensity)[0]
+        else:
+            cameras[camera_index] = fn([cameras[camera_index]], intensity)[0]
 
         # Re-concatenate → [H, W_total, 3] → [3, H, W_total]
         rgb_hwc_out = np.concatenate(cameras, axis=1)

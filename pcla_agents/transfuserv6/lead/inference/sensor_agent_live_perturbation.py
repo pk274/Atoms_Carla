@@ -61,11 +61,7 @@ from lead.inference.sensor_agent_data_collection import (
 # Lookup table: raw CARLA class ID (0-28) → grouped TFV6 class ID (0-9).
 _SEG_CONVERTER = np.uint8(list(SEMANTIC_SEGMENTATION_CONVERTER.values()))
 
-# Only the 3 forward-facing cameras (indices 1-3) are saved.
-# The LEAD baseline dataset was collected with 3 cameras (1152 px wide);
-# using 6 cameras here would produce 2304 px images incompatible with it.
-_N_FORWARD_CAMS = 3
-_CAM_PX         = 384   # pixels per camera
+_CAM_PX = 384   # pixels per camera (each camera is square: 384×384)
 
 LOG = logging.getLogger(__name__)
 
@@ -106,6 +102,9 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         self._pending_clean_rgb = None
         # Parallel list of pre-perturbation images for every sampled frame
         self._clean_frames: List[np.ndarray] = []
+        # Set True once the first full buffer (MAX_LIVE_PERT_SIZE frames) has been saved;
+        # stops recording so a second batch doesn't auto-save.
+        self._recording_complete = False
 
         if conf.LIVE_PERTURBATION_RECORDING_MODE:
             self._live_pert_collector = TestDataCollector(
@@ -122,6 +121,30 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             self._live_pert_collector = None
             LOG.info("[LivePerturbation] LIVE_PERTURBATION_RECORDING_MODE is False — "
                      "no live-pert frames will be saved.")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _flush_clean_frames(self):
+        """Save accumulated clean frames alongside the most recently auto-saved perturbed npz."""
+        if not self._clean_frames:
+            return
+        live_pert_dir = self._live_pert_collector._live_pert_frames_dir
+        candidates = sorted(
+            live_pert_dir.glob(f"run_{conf.PERTURBATION}_live_pert_*.npz"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            LOG.warning("[LivePerturbation] No perturbed npz found to pair clean frames with.")
+            return
+        saved = candidates[0]
+        clean_path = saved.parent / (saved.stem + "_clean_rgb.npz")
+        np.savez_compressed(str(clean_path), wide_rgb=np.stack(self._clean_frames))
+        LOG.info(f"[LivePerturbation] Clean frames saved → {clean_path}")
+        self._clean_frames.clear()
+        self._recording_complete = True
 
     # ------------------------------------------------------------------
     # Adversarial perturbation hook — called from SensorAgent.run_step
@@ -144,11 +167,12 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         # Record the PGD-perturbed frame now that we have the adversarial image.
         # tick() stored the seg/cmd/speed as pending; recording was deferred to here
         # so that the SAVED image contains the actual perturbation the model sees.
-        if self._live_pert_collector is not None and self._pending_seg_wide is not None:
-            fwd_width = _N_FORWARD_CAMS * _CAM_PX
+        if (self._live_pert_collector is not None
+                and self._pending_seg_wide is not None
+                and not self._recording_complete):
             perturbed_uint8 = (
                 tensors["rgb"].squeeze(0).clamp(0, 255).byte().cpu().numpy()
-            )[..., :fwd_width]  # [3, H, 1152] — crop to 3 forward cams for saving
+            )  # [3, H, W_full] — all cameras
             sampled = self._live_pert_collector.add_frame(
                 wide_rgb         = perturbed_uint8,
                 narr_rgb         = None,
@@ -161,6 +185,8 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             )
             if sampled and self._pending_clean_rgb is not None:
                 self._clean_frames.append(self._pending_clean_rgb)
+                if len(self._clean_frames) >= conf.MAX_LIVE_PERT_SIZE:
+                    self._flush_clean_frames()
             self._pending_seg_wide  = None
             self._pending_cmd       = None
             self._pending_speed     = None
@@ -197,16 +223,10 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         if "rgb" not in input_data:
             return input_data
 
-        # ── Crop for saving only — do NOT modify input_data["rgb"] ───────────
-        # The model receives the full image (all cameras) for correct inference.
-        # The LEAD baseline was collected with 3 forward cameras (1152 px), so we
-        # crop only the copy that goes to the live-pert collector.
-        fwd_width = _N_FORWARD_CAMS * _CAM_PX  # 1152
-        full_rgb  = input_data["rgb"]           # [3, H, W_full] — untouched for model
-        save_rgb  = full_rgb[..., :fwd_width]   # [3, H, 1152]   — saved to disk
+        full_rgb = input_data["rgb"]   # [3, H, W_full] — all cameras, untouched for model
 
-        # Capture the clean (pre-perturbation) image for every frame (save-side crop).
-        clean_rgb = save_rgb.copy()
+        # Capture the clean (pre-perturbation) image for every frame.
+        clean_rgb = full_rgb.copy()
 
         # ── Inject non-PGD perturbation ───────────────────────────────────
         # PGD is applied to the float tensor later in _perturb_tensor_hook;
@@ -220,17 +240,17 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 camera_index=conf.CAM_INDEX,
                 n_cameras=n_total_cams,
             )
-            save_rgb = input_data["rgb"][..., :fwd_width]
 
         # ── Build segmentation map (forward cameras only) ─────────────────
-        if self._live_pert_collector is None:
+        if self._live_pert_collector is None or self._recording_complete:
             return input_data
 
         if not hasattr(self, "training_config"):
             return input_data
 
+        n_cams = input_data["rgb"].shape[-1] // _CAM_PX
         seg_slices: List[np.ndarray] = []
-        for idx in range(1, _N_FORWARD_CAMS + 1):   # cameras 1-3 only
+        for idx in range(1, n_cams + 1):
             key = f"semantics_{idx}"
             if key not in input_data:
                 LOG.warning(f"[LivePerturbation] '{key}' missing — frame skipped")
@@ -239,7 +259,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             raw_ids = sem_bgra[:, :, 2].astype(np.uint8)
             seg_slices.append(_SEG_CONVERTER[raw_ids])  # raw CARLA ID → grouped TFV6 ID
 
-        seg_wide = np.concatenate(seg_slices, axis=1)   # [H, 3*W]
+        seg_wide = np.concatenate(seg_slices, axis=1)   # [H, n_cams*W]
         cmd      = int(np.argmax(input_data["command"]))
         speed    = float(input_data.get("speed", 0.0))
 
@@ -252,7 +272,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             self._pending_clean_rgb = clean_rgb
         else:
             sampled = self._live_pert_collector.add_frame(
-                wide_rgb         = save_rgb,   # [3, H, 1152] — 3-cam crop
+                wide_rgb         = input_data["rgb"],   # [3, H, W_full] — all cameras
                 narr_rgb         = None,
                 seg_red_wide     = seg_wide,
                 seg_red_narr     = None,
@@ -263,6 +283,8 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
             )
             if sampled:
                 self._clean_frames.append(clean_rgb)
+                if len(self._clean_frames) >= conf.MAX_LIVE_PERT_SIZE:
+                    self._flush_clean_frames()
             self._pending_seg_wide  = None
             self._pending_cmd       = None
             self._pending_speed     = None
@@ -271,36 +293,10 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
         return input_data
 
     # ------------------------------------------------------------------
-    # Cleanup — flush remaining buffer
+    # Cleanup — nothing to flush; perturbed + clean frames are both saved
+    # when the buffer hits MAX_LIVE_PERT_SIZE.  Partial end-of-episode
+    # buffers are intentionally discarded.
     # ------------------------------------------------------------------
 
     def destroy(self, _=None):
-        if self._live_pert_collector is not None:
-            saved = self._live_pert_collector.save_run(live_perturbation=True)
-            if saved:
-                LOG.info(f"[LivePerturbation] Run saved → {saved}")
-
-            if self._clean_frames:
-                if saved is None:
-                    # Buffer was auto-saved when it filled; find the most recent file
-                    live_pert_dir = (
-                        self._live_pert_collector._live_pert_frames_dir
-                    )
-                    candidates = sorted(
-                        live_pert_dir.glob(
-                            f"run_{conf.PERTURBATION}_live_pert_*.npz"
-                        ),
-                        key=lambda f: f.stat().st_mtime,
-                        reverse=True,
-                    )
-                    saved = candidates[0] if candidates else None
-
-                if saved is not None:
-                    clean_path = saved.parent / (saved.stem + "_clean_rgb.npz")
-                    np.savez_compressed(
-                        str(clean_path),
-                        wide_rgb=np.stack(self._clean_frames),
-                    )
-                    LOG.info(f"[LivePerturbation] Clean frames saved → {clean_path}")
-
         super().destroy(_)

@@ -127,13 +127,17 @@ ATOMs_Analysis/
 
 ## Raw Data Creation Pipeline (TFV6)
 
-All TFV6 driving footage originates from the **LEAD CARLA leaderboard dataset**, pre-downloaded to `D:\Carla_tfv6_data\`. The pipeline from raw footage to analysis-ready `.npz` files has three stages.
+All TFV6 driving footage originates from the **lead360 dataset** (`ln2697/lead360` on Hugging Face, 6-camera, 354 GB total), downloaded to `D:\Carla_tfv6_data_lead360\`. Set `conf.N_CAMERAS = 6` when using this dataset.
+
+> **Legacy dataset (archived):** The earlier 3-camera dataset was stored at `D:\Carla_tfv6_data\data\carla_leaderboard2\`. It produced incorrect attributions because TFV6 was trained on 6-camera inputs. Set `conf.N_CAMERAS = 3` if re-running archival comparisons.
+
+The pipeline from raw footage to analysis-ready `.npz` files has three stages.
 
 ### Stage 1 — Select and unzip routes (`unzip_routes.ps1`)
 
 Raw footage is stored as per-route `.zip` files in:
 ```
-D:\Carla_tfv6_data\data\carla_leaderboard2\zip\noScenarios\
+D:\Carla_tfv6_data_lead360\noScenarios\
 ```
 
 Available routes by town (1431 zips total):
@@ -152,11 +156,11 @@ Available routes by town (1431 zips total):
 
 `unzip_routes.ps1` groups zips by town, picks the N largest (by file size) routes per town, and extracts them to:
 ```
-D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios\<route_name>\
+D:\Carla_tfv6_data_lead360\data\noScenarios\<route_name>\
 ```
 
 Each extracted route has three subdirectories:
-- `rgb/NNNN.jpg` — concatenated 6-camera JPEG (384×1152 px)
+- `rgb/NNNN.jpg` — concatenated 6-camera JPEG (384×2304 px)
 - `semantics/NNNN.png` — grouped semantic segmentation (class IDs in channel 0)
 - `metas/NNNN.pkl` — XZ-compressed pickle with: `next_commands` (list of RoadOption ints), `speed` (float64 m/s), `brake` (bool), `town` (str)
 
@@ -186,14 +190,14 @@ Converts the extracted LEAD routes into the npz format consumed by the analysis 
 ```bash
 # Baseline: sample from all non-Town05 towns → data/TFV6/baseline_data/frames/
 python migrate_lead_to_baseline.py \
-    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --lead_dir "D:\Carla_tfv6_data_lead360\data\noScenarios" \
     --mode baseline \
     --n_frames 3000 \
     --exclude_towns Town05
 
 # Test set: sample from Town05 only → data/TFV6/test_data/frames/
 python migrate_lead_to_baseline.py \
-    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --lead_dir "D:\Carla_tfv6_data_lead360\data\noScenarios" \
     --mode testset \
     --testset_towns Town05 \
     --testset_n_frames 500
@@ -201,7 +205,7 @@ python migrate_lead_to_baseline.py \
 # Validation set: sample from Town05 routes NOT yet in test_data/frames/
 # → data/TFV6/val_data/frames/  (auto-excludes test routes by reading test_data/frames/ npz stems)
 python migrate_lead_to_baseline.py \
-    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --lead_dir "D:\Carla_tfv6_data_lead360\data\noScenarios" \
     --mode valset \
     --testset_towns Town05 \
     --testset_n_frames 500
@@ -215,7 +219,7 @@ The `valset` mode auto-excludes routes already present in `test_data/frames/` by
 # All three sets at once, ~5000 baseline + 1000 test + 1000 val frames
 # Set EXPERIMENT_VARIANT = "alternative" in atoms_config.py first
 python migrate_lead_to_baseline.py \
-    --lead_dir "D:\Carla_tfv6_data\data\carla_leaderboard2\data\noScenarios" \
+    --lead_dir "D:\Carla_tfv6_data_lead360\data\noScenarios" \
     --mode alt_split \
     --baseline_n 5000 --test_n 1000 --val_n 1000
 ```

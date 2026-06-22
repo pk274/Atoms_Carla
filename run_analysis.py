@@ -90,7 +90,7 @@ from ATOMs_Analysis.utils.visualization_carla import (
     plot_cluster_representative,
     plot_roc, plot_mahal_distribution, plot_bic_aic,
     plot_knn_sensitivity,
-    save_figure,
+    save_figure, save_figure_both_legend,
     compute_perturbation_displacement_stats,
     format_displacement_stats_text,
     plot_pca_perturbation_trajectories,
@@ -381,7 +381,9 @@ elif conf.AGENT == "TFV6":
     mdx_v2      = None
     _mdx_v2_pkl = Path(conf.BASELINE_DATA_DIR) / "mdx_v2_parameters.pkl"
 
-    if conf.RECOMPUTE_MDX_V2_BASELINE:
+    if not conf.ENABLE_MDX_V2:
+        print("[Step 2.5-v2] MDX-v2 disabled (ENABLE_MDX_V2=False) — skipping.")
+    elif conf.RECOMPUTE_MDX_V2_BASELINE:
         _feat_tag = "F_c 256-d" if conf.MDX2_USE_FC_FEATURES else "backbone 512-d"
         _bin_tag  = "quantile"  if conf.MDX2_USE_QUANTILE_BINNING else "equal-width"
         print(f"\n[Step 2.5-v2] Fitting TFV6 MDX-v2 ({_feat_tag} + {_bin_tag} bins)...")
@@ -1538,8 +1540,13 @@ results_knn_gmm = results_knn_gmm_by_k[best_k_gmm]
 results_knn_gmm["detector_name"] = f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)"
 scores_knn_gmm_best = scores_knn_gmm_by_k[best_k_gmm]
 
-# --- Val GMM AUROC for K selection (all 5 GMM detector variants) ---
+# --- Val GMM AUROC for K selection (Wasserstein excluded, gaussian_noise excluded) ---
+# gaussian_noise frames are labeled OOD but the ATOMs signal is expected to be
+# clean-like (the perturbation is not semantically meaningful to the network).
+# Including them would unfairly penalise detectors that correctly treat them as
+# inliers, so we mask them out before computing val AUC.
 _val_auc_gmm_avg = None
+_val_auc_per_gmm_det: dict = {}
 if _has_val:
     _gmm_val_pairs = [
         (f"ATOMs-Mahalanobis (GMM K={N_COMPONENTS})", scores_mahal_gmm_val),
@@ -1548,10 +1555,20 @@ if _has_val:
         #(f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})", scores_wass_gmm_val),
         (f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)", scores_knn_gmm_val_by_k[best_k_gmm]),
     ]
-    _gmm_val_aucs = {name: evaluator.evaluate(s, val_labels, name)["auc"]
+    _val_perts = val_data["perturbation"]
+    _val_non_gn_mask = _val_perts != "gaussian_noise"
+    _val_labels_filt = val_labels[_val_non_gn_mask]
+    _gmm_val_aucs = {name: evaluator.evaluate(
+                        s[_val_non_gn_mask], _val_labels_filt, name)["auc"]
                      for name, s in _gmm_val_pairs}
     _val_auc_gmm_avg = float(np.mean(list(_gmm_val_aucs.values())))
-    print(f"  Val GMM avg AUC (K={N_COMPONENTS}): {_val_auc_gmm_avg:.4f}")
+    print(f"  Val GMM avg AUC (K={N_COMPONENTS}, ex-gaussian_noise): {_val_auc_gmm_avg:.4f}")
+    _val_auc_per_gmm_det = {
+        "mahalanobis_gmm": _gmm_val_aucs[f"ATOMs-Mahalanobis (GMM K={N_COMPONENTS})"],
+        "euclidean_gmm":   _gmm_val_aucs[f"ATOMs-Euclidean (GMM K={N_COMPONENTS})"],
+        "jsd_gmm":         _gmm_val_aucs[f"ATOMs-JSD (GMM K={N_COMPONENTS})"],
+        "knn_gmm":         _gmm_val_aucs[f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)"],
+    }
 
 results_mdx = evaluator.evaluate(
     scores        = scores_mdx,
@@ -1595,6 +1612,8 @@ for res in all_results:
 summary = {r["detector_name"]: {"auc": r["auc"], "youden_j": r["youden_j"]} for r in all_results}
 if _val_auc_gmm_avg is not None:
     summary["__val_auc_gmm_avg__"] = _val_auc_gmm_avg
+for _det_key, _det_val in _val_auc_per_gmm_det.items():
+    summary[f"__val_auc_{_det_key}__"] = _det_val
 with open(OUT_DIR / "summary.json", "w") as f:
     json.dump(summary, f, indent=2)
 print()
@@ -1720,7 +1739,7 @@ fig_roc_all = plot_roc(
     results_list = all_results,
     title        = "ROC — All detectors (full test set)",
 )
-save_figure(fig_roc_all, dirs["roc"] / "roc_all_detectors.png")
+save_figure_both_legend(fig_roc_all, dirs["roc"] / "roc_all_detectors.png")
 
 # Static (single-Gaussian) detectors only
 _results_static = [
@@ -1731,7 +1750,7 @@ fig_roc_static = plot_roc(
     results_list = _results_static,
     title        = "ROC — Static detectors (full test set)",
 )
-save_figure(fig_roc_static, dirs["roc"] / "roc_static_detectors.png")
+save_figure_both_legend(fig_roc_static, dirs["roc"] / "roc_static_detectors.png")
 
 # GMM detectors paired with their single-Gaussian counterpart
 _gmm_names = {"Mahalanobis", "Euclidean", "JSD", "k-NN"}
@@ -1743,7 +1762,7 @@ fig_roc_gmm = plot_roc(
     results_list = _results_gmm_group,
     title        = f"ROC — Single vs GMM detectors (K={N_COMPONENTS}, full test set)",
 )
-save_figure(fig_roc_gmm, dirs["roc"] / "roc_gmm_vs_static.png")
+save_figure_both_legend(fig_roc_gmm, dirs["roc"] / "roc_gmm_vs_static.png")
 
 # Top-5 detectors by AUC
 _results_top5 = sorted(all_results, key=lambda r: r["auc"], reverse=True)[:5]
@@ -1751,7 +1770,7 @@ fig_roc_top5 = plot_roc(
     results_list = _results_top5,
     title        = "ROC — Top 5 detectors by AUC (full test set)",
 )
-save_figure(fig_roc_top5, dirs["roc"] / "roc_top5.png")
+save_figure_both_legend(fig_roc_top5, dirs["roc"] / "roc_top5.png")
 
 # --- 12b: Score distributions — one panel per metric (single vs GMM) ---
 _score_dist_pairs = [
@@ -1793,21 +1812,21 @@ for pert_name, res_list in perturb_results.items():
         results_list = res_list,
         title        = f"ROC — {pert_name} (all detectors)",
     )
-    save_figure(fig_roc_p, dirs["roc"] / f"roc_{safe}_all.png")
+    save_figure_both_legend(fig_roc_p, dirs["roc"] / f"roc_{safe}_all.png")
 
     _static_p = [r for r in res_list if "gmm" not in r["detector_name"].lower()]
     fig_roc_p_s = plot_roc(
         results_list = _static_p,
         title        = f"ROC — {pert_name} (static detectors)",
     )
-    save_figure(fig_roc_p_s, dirs["roc"] / f"roc_{safe}_static.png")
+    save_figure_both_legend(fig_roc_p_s, dirs["roc"] / f"roc_{safe}_static.png")
 
     _top5_p = sorted(res_list, key=lambda r: r["auc"], reverse=True)[:5]
     fig_roc_p_top5 = plot_roc(
         results_list = _top5_p,
         title        = f"ROC — {pert_name} (top 5)",
     )
-    save_figure(fig_roc_p_top5, dirs["roc"] / f"roc_{safe}_top5.png")
+    save_figure_both_legend(fig_roc_p_top5, dirs["roc"] / f"roc_{safe}_top5.png")
 
 # --- 12d.0: k-NN sensitivity — AUC vs k (global and GMM variants) ---
 # Show val AUC when available (the curve used to select k); fall back to test AUC.

@@ -35,7 +35,9 @@ LEAD meta format (confirmed from real sample):
 - Speed:    meta['speed']             — float64
 - Brake:    meta['brake']             — bool
 - Town:     meta['town']              — str, e.g. 'Town03'
-- RGB shape: (384, 1152, 3)           — 3 cameras x 384px wide
+- RGB shape: (384, W, 3) where W = conf.N_CAMERAS * 384
+    lead360 (6-cam):  W = 2304  — 6 cameras x 384px wide  [current]
+    legacy  (3-cam):  W = 1152  — 3 cameras x 384px wide  [archival]
 """
 
 from __future__ import annotations
@@ -147,7 +149,7 @@ def load_frame(
     Load one frame.  Returns (wide_rgb, seg_red_wide, cmd, speed, is_brake)
     or None if any file is missing or unreadable.
 
-    RGB shape: (384, 1152, 3) — 3 cameras x 384px wide.
+    RGB shape: (384, conf.N_CAMERAS * 384, 3).
     """
     rgb_path  = route_dir / "rgb"       / f"{frame_idx:04d}.jpg"
     seg_path  = route_dir / "semantics" / f"{frame_idx:04d}.png"
@@ -163,6 +165,14 @@ def load_frame(
         return None
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     wide_rgb = np.ascontiguousarray(rgb.transpose(2, 0, 1), dtype=np.uint8)  # [3, H, W]
+
+    expected_w = conf.N_CAMERAS * 384
+    if wide_rgb.shape[-1] != expected_w:
+        LOG.warning(
+            "Frame %s: width %d does not match conf.N_CAMERAS=%d × 384 = %d. "
+            "Set conf.N_CAMERAS = 3 for legacy 3-camera data.",
+            rgb_path, wide_rgb.shape[-1], conf.N_CAMERAS, expected_w,
+        )
 
     # --- Semantics ----------------------------------------------------------
     seg = cv2.imread(str(seg_path), cv2.IMREAD_UNCHANGED)
@@ -263,25 +273,18 @@ def build_sampling_plan(
     plan: Dict[str, List[Tuple[Path, List[int]]]] = defaultdict(list)
 
     for town in active_towns:
-        # Flatten all (route, frame_idx) pairs for this town
-        all_pairs: List[Tuple[Path, int]] = []
-        for route in town_to_routes[town]:
-            for idx in list_frame_indices(route):
-                all_pairs.append((route, idx))
+        town_routes = town_to_routes[town]
+        frames_per_route = max(1, round(frames_per_town / len(town_routes)))
+        LOG.info("  %-10s  %d routes → ~%d frames/route",
+                 town, len(town_routes), frames_per_route)
 
-        if not all_pairs:
-            continue
-
-        step = max(1, len(all_pairs) // frames_per_town)
-        selected = all_pairs[::step][:frames_per_town]
-
-        # Group back by route for per-run npz output
-        by_route: Dict[Path, List[int]] = defaultdict(list)
-        for route_dir, fidx in selected:
-            by_route[route_dir].append(fidx)
-
-        for route_dir, indices in by_route.items():
-            plan[town].append((route_dir, sorted(indices)))
+        for route in town_routes:
+            indices = list_frame_indices(route)
+            if not indices:
+                continue
+            step = max(1, len(indices) // frames_per_route)
+            selected = indices[::step][:frames_per_route]
+            plan[town].append((route, selected))
 
     return plan
 
@@ -410,20 +413,42 @@ def _build_plan_from_routes(
     routes: List[Path], n_frames: int
 ) -> Dict[str, List[Tuple[Path, List[int]]]]:
     """
-    Build a sampling plan from a pre-assigned list of routes, sampling evenly
-    across the whole list (no per-town balancing).  Used by migrate_alt_split.
+    Build a sampling plan from a pre-assigned list of routes, sampling an equal
+    number of frames from every route (route-balanced).  Used by migrate_alt_split.
+
+    Each route receives max(1, round(n_frames / n_routes)) frames, sampled at
+    a uniform stride within that route.  This guarantees that all routes
+    contribute equally regardless of their individual frame counts or town of
+    origin.
     """
-    all_pairs: List[Tuple[Path, int]] = [
-        (r, idx) for r in routes for idx in list_frame_indices(r)
-    ]
-    if not all_pairs:
+    if not routes:
         return {}
-    step     = max(1, len(all_pairs) // n_frames)
-    selected = all_pairs[::step][:n_frames]
+
+    # Ceiling division so we always collect ≥ n_frames before trimming.
+    frames_per_route = max(1, -(-n_frames // len(routes)))
+    LOG.info(
+        "Route-balanced sampling: %d routes × %d frames/route (ceiling) → trim to %d",
+        len(routes), frames_per_route, n_frames,
+    )
+
+    # Collect per-route, keeping insertion order so the trim is deterministic.
+    all_pairs: List[Tuple[Path, int]] = []
+    for route_dir in routes:
+        indices = list_frame_indices(route_dir)
+        if not indices:
+            continue
+        step = max(1, len(indices) // frames_per_route)
+        for idx in indices[::step][:frames_per_route]:
+            all_pairs.append((route_dir, idx))
+
+    # Trim to exactly n_frames (drops at most frames_per_route - 1 frames from the tail).
+    all_pairs = all_pairs[:n_frames]
+    LOG.info("After trim: %d frames from %d routes", len(all_pairs),
+             len({r for r, _ in all_pairs}))
 
     by_route: Dict[Path, List[int]] = defaultdict(list)
-    for route_dir, fidx in selected:
-        by_route[route_dir].append(fidx)
+    for route_dir, idx in all_pairs:
+        by_route[route_dir].append(idx)
 
     plan: Dict[str, List[Tuple[Path, List[int]]]] = defaultdict(list)
     for route_dir, indices in by_route.items():
@@ -640,5 +665,7 @@ if __name__ == "__main__":
             baseline_n    = args.baseline_n,
             test_n        = args.test_n,
             val_n         = args.val_n,
-            exclude_towns = args.exclude_towns,
+            # alt_split pools ALL towns by design — do not inherit the
+            # --exclude_towns default ("Town05") meant for baseline mode.
+            exclude_towns = [],
         )

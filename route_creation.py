@@ -8,7 +8,7 @@ vehicle_spawn_points = world.get_map().get_spawn_points()
 startLoc = vehicle_spawn_points[58].location
 #middleLoc1 = vehicle_spawn_points[287].location
 #middleLoc2 = vehicle_spawn_points[312].location
-endLoc = vehicle_spawn_points[76].location
+endLoc = vehicle_spawn_points[0].location
 
 # 1. Generate waypoints
 #waypoints1 = location_to_waypoint(client, startLoc, middleLoc1)

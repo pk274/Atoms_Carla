@@ -43,6 +43,7 @@ See design_decisions.md for rationale.
 
 import copy
 import math
+import warnings
 
 import torch
 import torch.nn as nn
@@ -55,6 +56,8 @@ from zennit.composites import SpecialFirstLayerMapComposite
 from zennit.canonizers import SequentialMergeBatchNorm
 
 from typing import Dict, Optional, Tuple
+
+from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +674,14 @@ class LRPTFv6Model:
     # ------------------------------------------------------------------
 
     def _prepare_input(self, rgb: torch.Tensor) -> torch.Tensor:
+        expected_w = conf.N_CAMERAS * 384
+        if rgb.shape[-1] != expected_w:
+            warnings.warn(
+                f"Input image width {rgb.shape[-1]} px does not match "
+                f"conf.N_CAMERAS={conf.N_CAMERAS} × 384 = {expected_w} px. "
+                "If using legacy 3-camera data set conf.N_CAMERAS = 3.",
+                UserWarning, stacklevel=3,
+            )
         return rgb.float().to(self.device).requires_grad_(True)
 
     # ------------------------------------------------------------------

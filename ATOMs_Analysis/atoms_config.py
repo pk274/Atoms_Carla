@@ -9,8 +9,15 @@ class ExperimentConfig:
     # Accepted values: "WOR" (World on Rails) | "LBC" (Learning by Cheating) | "TFV6" (TransFuser v6)
     AGENT = "TFV6"
 
+    # Number of cameras in the concatenated wide RGB image.
+    # 6 → lead360 dataset (new, 6-camera; each camera 384×384 px → total 384×2304)
+    # 3 → legacy 3-camera dataset (384×1152); kept for archival comparison only.
+    # Changing this does NOT re-derive any paths — it is used for validation and
+    # visualization only.  The analysis code auto-detects width from the npz data.
+    N_CAMERAS = 6
+
     TOWN = "Town07"
-    WEATHER = "cloudy"
+    WEATHER = "rainy"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -28,10 +35,10 @@ class ExperimentConfig:
     BRIGHTNESS_INTENSITY = 4
 
     PERTURBATION = "phantom_obstacle"
-    INTENSITY = 30                    # 4 for brightness, 21 gn, 0.07 for po
+    INTENSITY = 0.08                    # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = 1               # None for all cams
+    CAM_INDEX = None      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
     MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
@@ -41,8 +48,10 @@ class ExperimentConfig:
     RECOMPUTE_MDX_V2_BASELINE   = False    # set False after first successful run
     RECOMPUTE_MDX_TEST_SCORES   = False    # set True to re-extract backbone features on test set
 
+    ENABLE_MDX_V2 = False   # set True to fit/load and score with the MDX-v2 detector
+
     # MDX-v2 ablation flags — toggle independently to isolate which change helps
-    MDX2_USE_FC_FEATURES      = False    # True: 256-d speed_query; False: 512-d backbone (like v1)
+    MDX2_USE_FC_FEATURES      = True    # True: 256-d speed_query; False: 512-d backbone (like v1)
     MDX2_USE_QUANTILE_BINNING = True    # True: quantile bin edges; False: equal-width (like v1)
 
     PLOT_SEG_AND_REL = True
@@ -127,10 +136,10 @@ class ExperimentConfig:
         SPEC_POS = [-90, 245, 7]
         SPEC_ROT = [-19, -0, 0]
     if TOWN == "Town05":
-        if LIVE_PERTURBATION_RECORDING_MODE and False:
-            SPAWN_INDEX = 235
-            SPEC_POS = [30, 203, 10]
-            SPEC_ROT = [-20, -0, 0]
+        if LIVE_PERTURBATION_RECORDING_MODE:
+            SPAWN_INDEX = 272               # 235
+            SPEC_POS = [140, -120, 50]        # [30, 203, 10]
+            SPEC_ROT = [-50, -20, 0]         # [-20, -0, 0]
         else:
             SPAWN_INDEX = 152
             SPEC_POS = [30, 148, 10]

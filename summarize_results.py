@@ -113,6 +113,7 @@ class Run:
     per_pert: dict = field(default_factory=dict)   # pert -> {canon detector: auc}
     knn_sweep: dict = field(default_factory=dict)  # {"plain": {k: auc}, "gmm": {k: auc}}
     val_auc_gmm_avg: float | None = None           # mean GMM AUROC on val set; None if unavailable
+    val_auc_per_det: dict = field(default_factory=dict)  # {"mahalanobis_gmm": float, ...}
 
 
 def _gmm_k_from_keys(summary: dict) -> int | None:
@@ -123,13 +124,18 @@ def _gmm_k_from_keys(summary: dict) -> int | None:
     return None
 
 
-def load_summary(path: Path) -> tuple[dict, dict, dict, float | None]:
+def load_summary(path: Path) -> tuple[dict, dict, dict, float | None, dict]:
     raw = json.loads(path.read_text())
-    auc, youden, knn_best = {}, {}, {}
+    auc, youden, knn_best, val_per_det = {}, {}, {}, {}
     val_avg = raw.get("__val_auc_gmm_avg__")   # float or None
     for key, val in raw.items():
+        if key.startswith("__val_auc_") and key != "__val_auc_gmm_avg__" and key.endswith("__"):
+            det_key = key[10:-2]   # strip "__val_auc_" prefix and "__" suffix
+            if isinstance(val, float):
+                val_per_det[det_key] = val
+            continue
         if key.startswith("__"):
-            continue   # skip internal metadata keys
+            continue   # skip other internal metadata keys
         if not isinstance(val, dict):
             continue
         c = canon_detector(key)
@@ -139,7 +145,7 @@ def load_summary(path: Path) -> tuple[dict, dict, dict, float | None]:
             bk = extract_best_k(key)
             if bk is not None:
                 knn_best[c] = bk
-    return auc, youden, knn_best, val_avg
+    return auc, youden, knn_best, val_avg, val_per_det
 
 
 def load_per_pert(path: Path) -> dict:
@@ -191,7 +197,7 @@ def discover_runs(data_root: Path, results_subdir: str = "results") -> list[Run]
         mm = re.search(r"mode_(\d)", str(summ))
         mode = mm.group(1) if mm else "?"
         run_dir = summ.parent
-        auc, youden, knn_best, val_avg = load_summary(summ)
+        auc, youden, knn_best, val_avg, val_per_det = load_summary(summ)
         K = _gmm_k_from_keys(json.loads(summ.read_text())) or 0
         named = "clusters" in str(run_dir).lower()
         cands.append(Run(
@@ -200,6 +206,7 @@ def discover_runs(data_root: Path, results_subdir: str = "results") -> list[Run]
             per_pert=load_per_pert(run_dir / "results_per_perturbation.json"),
             knn_sweep=load_knn_sweep(run_dir),
             val_auc_gmm_avg=val_avg,
+            val_auc_per_det=val_per_det,
         ))
 
     # infer mode for bare folders by matching the K-invariant fingerprint
@@ -296,6 +303,34 @@ def best_per_perturbation(group_runs: list[Run]):
                 if cur is None or v > cur[0]:
                     acc[pert][det] = (v, r.K)
     return acc
+
+
+# Detectors included in the per-detector K recommendations (Wasserstein excluded by design).
+_RECOMMEND_DET_KEYS = [  # (summary_json_key, canonical_display_name)
+    ("mahalanobis_gmm", "Mahalanobis-GMM"),
+    ("euclidean_gmm",   "Euclidean-GMM"),
+    ("knn_gmm",         "k-NN-GMM"),
+]
+_EXCLUDE_PERTS_FROM_REC = {"gaussian_noise"}
+
+
+def _val_per_k_for_det(group_runs: list[Run], det_key: str) -> dict:
+    """K -> val AUC for a specific detector key (from __val_auc_<det_key>__ fields).
+    Returns empty dict when no runs have per-detector val AUC stored."""
+    return {r.K: r.val_auc_per_det[det_key]
+            for r in group_runs if det_key in r.val_auc_per_det}
+
+
+def _test_per_k_for_det(group_runs: list[Run], det_name: str) -> dict:
+    """Fallback: test-set mean per-perturbation AUC per K, excluding gaussian_noise."""
+    out = {}
+    for r in group_runs:
+        vals = [v for p, dd in r.per_pert.items()
+                if p not in _EXCLUDE_PERTS_FROM_REC
+                for det, v in dd.items() if det == det_name]
+        if vals:
+            out[r.K] = float(np.mean(vals))
+    return out
 
 
 def mode_comparison_data(groups: dict) -> dict:
@@ -462,10 +497,37 @@ def build_markdown(groups: dict, live: dict) -> str:
             best_test = fmt(float(np.mean(best_test_vals)) if best_test_vals else None)
             _val_recs.append(f"{agent} mode {mode}: K={best_k} (val avg={best_val:.4f}, test avg={best_test})")
         w("")
-        w("> **Recommendation for reporting.** Use the **#1 K** unless a lower-ranked K "
-          "offers a meaningful reduction in cluster count at negligible val-AUC cost. "
-          "Do *not* use the test-set best K — that constitutes hyperparameter leakage.  "
-          + "  ".join(f"**{r}**" for r in _val_recs))
+        w("**Recommendations** _(Wasserstein excluded. gaussian_noise excluded from val AUC "
+          "— this perturbation should not be detected and would unfairly penalise detectors "
+          "that correctly treat it as inlier-like. Per-detector val AUC requires re-running "
+          "the sweep with the updated `run_analysis.py`; falls back to test-set AUC "
+          "excluding gaussian_noise otherwise._")
+        w("")
+        w("| Agent | Mode | Recommendation | K | AUC | Source |")
+        w("|-------|------|----------------|---|-----|--------|")
+        for (agent, mode), gr in groups.items():
+            Ks, dets, mat = matrix_for_group(gr)
+            # Overall winner: best K by val_auc_gmm_avg (ex-Wasserstein; ex-GN in new format)
+            val_avg_per_k = {r.K: r.val_auc_gmm_avg for r in gr if r.val_auc_gmm_avg is not None}
+            if val_avg_per_k:
+                bk = max(val_avg_per_k, key=val_avg_per_k.get)
+                w(f"| {agent} | {mode} | **Overall winner** | **{bk}** | "
+                  f"{fmt(val_avg_per_k[bk])} | val mean GMM |")
+            # Per-detector recommendations: val per-detector AUC when available, else test fallback
+            for det_key, det_name in _RECOMMEND_DET_KEYS:
+                val_pk = _val_per_k_for_det(gr, det_key)
+                if val_pk:
+                    bk = max(val_pk, key=val_pk.get)
+                    src = f"val {det_name} (ex-GN)"
+                    auc_v = val_pk[bk]
+                else:
+                    test_pk = _test_per_k_for_det(gr, det_name)
+                    if not test_pk:
+                        continue
+                    bk = max(test_pk, key=test_pk.get)
+                    src = f"test {det_name} ex-GN (no val per-det — re-run sweep)"
+                    auc_v = test_pk[bk]
+                w(f"| {agent} | {mode} | Best {det_name} | {bk} | {fmt(auc_v)} | {src} |")
         w("")
 
     # ---- 4. distance robustness --------------------------------------------

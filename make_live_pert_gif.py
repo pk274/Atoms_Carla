@@ -265,12 +265,26 @@ class PCAContext:
         self.K                 = len(gmm_means_proj)
 
 
+class _NumpyPCA:
+    """Minimal PCA (n_components=2) backed by numpy SVD — avoids sklearn/scipy.stats import."""
+
+    def fit_transform(self, X: np.ndarray) -> np.ndarray:
+        self._mean = X.mean(axis=0)
+        Xc = X - self._mean
+        _, s, Vt = np.linalg.svd(Xc, full_matrices=False)
+        self._components = Vt[:2]          # (2, D)
+        total_var = (s ** 2).sum()
+        self.explained_variance_ratio_ = (s[:2] ** 2) / total_var if total_var > 0 else np.zeros(2)
+        return Xc @ self._components.T     # (N, 2)
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        return (X - self._mean) @ self._components.T
+
+
 def build_pca_context(baseline_series: np.ndarray,
                       gmm_means: np.ndarray,
                       gmm_inv_covs: np.ndarray) -> PCAContext:
-    from sklearn.decomposition import PCA as _PCA
-
-    pca  = _PCA(n_components=2)
+    pca  = _NumpyPCA()
     proj = pca.fit_transform(baseline_series)          # (N, 2)
 
     K = len(gmm_means)

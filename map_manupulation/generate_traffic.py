@@ -46,7 +46,7 @@ class TrafficOrganizer:
         self.all_id = None
         self.all_actors = None
         self.spawn_manually = conf.MANUAL_SPAWNS
-        self.manual_spwan_points = [155, 272, 144, 234, 163, 179]
+        self.manual_spwan_points = [162, 144]                   # [155, 272, 144, 234, 163, 179]
 
         self.traffic_manager = self.client.get_trafficmanager(self.tm_port)
 
