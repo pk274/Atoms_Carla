@@ -52,8 +52,8 @@ class GMMClustering:
                             'full' (default) is most expressive but requires
                             N >> C^2 samples.  Use 'diag' if N is small.
     random_state    : int   for reproducibility.
-    ridge           : float regularisation on per-cluster covariance matrices
-                            (same role as in MahalanobisDetector).
+    shrinkage_alpha : float shrinkage intensity applied to each EM-fitted component
+                            covariance at fit time (same role as in MahalanobisDetector).
     """
 
     def __init__(
@@ -61,12 +61,12 @@ class GMMClustering:
         n_components:    int   = 4,
         covariance_type: str   = "full",
         random_state:    int   = 42,
-        ridge:           float = 1e-6,
+        shrinkage_alpha: float = 0.01,
     ):
         self.n_components    = n_components
         self.covariance_type = covariance_type
         self.random_state    = random_state
-        self.ridge           = ridge
+        self.shrinkage_alpha = shrinkage_alpha
         self._fitted         = False
 
         # Filled by fit()
@@ -117,9 +117,11 @@ class GMMClustering:
         # Normalise covariances to full [K, C, C] regardless of covariance_type
         self.covariances_ = self._expand_covariances(self._gmm)
 
-        # Pre-compute per-cluster precision matrices
-        C = data.shape[1]
-        ridge_mat = self.ridge * np.eye(C)
+        # Apply shrinkage to each component covariance at fit time
+        for k in range(self.n_components):
+            self.covariances_[k] = DistanceComputer.apply_shrinkage(
+                self.covariances_[k], self.shrinkage_alpha
+            )
 
         self._fitted = True
         print(
@@ -192,7 +194,7 @@ class GMMClustering:
         x = np.asarray(x, dtype=np.float64)
         distances = []
         for k in range(self.n_components):
-            dist2 = DistanceComputer.compute_mahalanobis(self.means_[k], self.covariances_[k], x, self.ridge)
+            dist2 = DistanceComputer.compute_mahalanobis(self.means_[k], self.covariances_[k], x, 1e-6)
             distances.append(dist2)
         return float(min(distances))
 
@@ -215,7 +217,7 @@ class GMMClustering:
         x = np.asarray(x, dtype=np.float64)
         distances = []
         for k in range(self.n_components):
-            dist2 = DistanceComputer.compute_mahalanobis(self.means_[k], self.covariances_[k], x, self.ridge)
+            dist2 = DistanceComputer.compute_mahalanobis(self.means_[k], self.covariances_[k], x, 1e-6)
             distances.append(dist2)
         return np.array(distances)
 
@@ -286,12 +288,12 @@ class GMMClustering:
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
             path,
-            means          = self.means_.astype(np.float32),
-            covariances    = self.covariances_.astype(np.float32),
-            weights        = self.weights_.astype(np.float32),
-            n_components   = np.array([self.n_components]),
-            ridge          = np.array([self.ridge]),
-            covariance_type = np.array([self.covariance_type], dtype=object),
+            means            = self.means_.astype(np.float32),
+            covariances      = self.covariances_.astype(np.float32),
+            weights          = self.weights_.astype(np.float32),
+            n_components     = np.array([self.n_components]),
+            shrinkage_alpha  = np.array([self.shrinkage_alpha]),
+            covariance_type  = np.array([self.covariance_type], dtype=object),
         )
         print(f"[GMMClustering] Saved → {path}")
 
@@ -302,14 +304,11 @@ class GMMClustering:
         data = np.load(path, allow_pickle=True)
 
         self.n_components    = int(data["n_components"][0])
-        self.ridge           = float(data["ridge"][0])
+        self.shrinkage_alpha = float(data["shrinkage_alpha"][0])
         self.covariance_type = str(data["covariance_type"][0])
         self.means_          = data["means"].astype(np.float64)
         self.covariances_    = data["covariances"].astype(np.float64)
         self.weights_        = data["weights"].astype(np.float64)
-
-        C         = self.means_.shape[1]
-        ridge_mat = self.ridge * np.eye(C)
 
         # Reconstruct a sklearn GMM for predict/predict_proba
         self._reconstruct_gmm()

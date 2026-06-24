@@ -16,8 +16,8 @@ class ExperimentConfig:
     # visualization only.  The analysis code auto-detects width from the npz data.
     N_CAMERAS = 6
 
-    TOWN = "Town03"
-    WEATHER = "night"
+    TOWN = "Town07"
+    WEATHER = "rainy"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -25,7 +25,7 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 10        # None for automatic BIC selection; overridden by --gmm-k CLI arg
+    NUM_GMM_CLUSTERS = 9        # None for automatic BIC selection; overridden by --gmm-k CLI arg
 
     MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9
@@ -34,11 +34,11 @@ class ExperimentConfig:
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
     BRIGHTNESS_INTENSITY = 4
 
-    PERTURBATION = "gaussian_noise"
-    INTENSITY = 35                 # 4 for brightness, 21 gn, 0.07 for po
+    PERTURBATION = "brightness_scale"
+    INTENSITY = 0.085                 # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = None      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
+    CAM_INDEX = 1      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
     MANUAL_SPAWNS = False
 
     RECOMPUTE_BASELINE = False
@@ -95,7 +95,8 @@ class ExperimentConfig:
     PGD_N_STEPS = 8        # PGD iterations; more steps = stronger attack # Wor: 10     # TFV6: 6
 
     DEFAULT_CMD = 2
-    MAHAL_RIDGE = 0.01
+    SHRINKAGE_ALPHA = 0.01   # covariance shrinkage factor applied at fit time
+    MAHAL_RIDGE     = 1e-6   # numerical stabiliser added at score time (not a modelling choice)
     GMM_MAX_K = 10
     GMM_COV_TYPE = "full"
     RANDOM_SEED = 17
@@ -105,6 +106,12 @@ class ExperimentConfig:
     # Profiles are re-normalized to sum 1 as usual, so all downstream detectors
     # work without modification.
     WIDE_ONLY_PROFILE = True
+
+    # If True, the per-class relevance in _give_element_selectivity is divided by
+    # the number of active (non-zero relevance) pixels, giving mean relevance per
+    # pixel (as described in Beylier et al.).  If False (default), the raw sum of
+    # relevance over the class mask is used instead.
+    NORMALIZE_BY_PIXEL_COUNT = False
 
 
     if TOWN == "Town07" and not LIVE_PERTURBATION_RECORDING_MODE:
@@ -136,7 +143,7 @@ class ExperimentConfig:
         SPEC_POS = [-90, 245, 7]
         SPEC_ROT = [-19, -0, 0]
     if TOWN == "Town05":
-        if LIVE_PERTURBATION_RECORDING_MODE:
+        if LIVE_PERTURBATION_RECORDING_MODE and False:
             SPAWN_INDEX = 272               # 235
             SPEC_POS = [140, -120, 50]        # [30, 203, 10]
             SPEC_ROT = [-50, -20, 0]         # [-20, -0, 0]

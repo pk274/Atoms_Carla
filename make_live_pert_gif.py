@@ -216,11 +216,17 @@ def load_baseline_series(mode: int) -> np.ndarray:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def compute_distances(profiles: np.ndarray,
-                      mean: np.ndarray,
-                      inv_cov: np.ndarray) -> np.ndarray:
-    diff = profiles.astype(np.float64) - mean
-    return np.sqrt(np.einsum("ni,ij,nj->n", diff, inv_cov, diff))
+def compute_gmm_distances(profiles: np.ndarray,
+                          gmm_means: np.ndarray,
+                          gmm_inv_covs: np.ndarray) -> np.ndarray:
+    """Min Mahalanobis distance to the nearest GMM component."""
+    K = len(gmm_means)
+    X = profiles.astype(np.float64)
+    per_cluster = np.stack([
+        np.sqrt(np.einsum("ni,ij,nj->n", X - gmm_means[k], gmm_inv_covs[k], X - gmm_means[k]))
+        for k in range(K)
+    ], axis=1)  # (N, K)
+    return per_cluster.min(axis=1)  # (N,)
 
 
 def assign_clusters(profiles: np.ndarray,
@@ -581,8 +587,8 @@ def render_frame(
     )
 
     ax_dist.set_xlabel("Frame index", fontsize=9)
-    ax_dist.set_ylabel("Mahalanobis distance", fontsize=9)
-    ax_dist.set_title("OOD Score (Mahalanobis)", fontsize=10, fontweight="bold")
+    ax_dist.set_ylabel("GMM Mahalanobis distance", fontsize=9)
+    ax_dist.set_title("OOD Score (GMM Mahalanobis)", fontsize=10, fontweight="bold")
     ax_dist.legend(fontsize=7.5, loc="upper left")
     ax_dist.spines["top"].set_visible(False)
     ax_dist.spines["right"].set_visible(False)
@@ -644,14 +650,20 @@ def main() -> None:
     elif args.show_diff:
         print("[gif] Warning: --show-diff requested but no clean_rgb file found; skipping diff panel.")
 
-    # ---- detector + GMM ----
-    print(f"[gif] Loading Mahalanobis detector + GMM (mode={args.mode}, alt split)")
-    mean, inv_cov, threshold = load_detector(args.mode)
-    gmm_means, gmm_inv_covs  = load_gmm(args.mode)
+    # ---- GMM ----
+    print(f"[gif] Loading GMM (mode={args.mode}, alt split)")
+    gmm_means, gmm_inv_covs = load_gmm(args.mode)
     print(f"[gif] GMM: {len(gmm_means)} clusters")
 
+    # ---- baseline for GMM threshold (99th percentile) ----
+    print(f"[gif] Loading baseline series to compute GMM threshold...")
+    baseline_series = load_baseline_series(args.mode)
+    baseline_gmm_dists = compute_gmm_distances(baseline_series, gmm_means, gmm_inv_covs)
+    threshold = float(np.percentile(baseline_gmm_dists, 99))
+    print(f"[gif] GMM threshold (99th pct of baseline): {threshold:.3f}")
+
     # ---- distances ----
-    distances = compute_distances(profiles, mean, inv_cov)
+    distances = compute_gmm_distances(profiles, gmm_means, gmm_inv_covs)
     print(f"[gif] Distance range: [{distances.min():.3f}, {distances.max():.3f}]  threshold={threshold:.3f}")
 
     # ---- nearest cluster assignment per frame ----
@@ -662,7 +674,6 @@ def main() -> None:
     pca_ctx = None
     if args.show_pca:
         print(f"[gif] Building PCA context from alt baseline...")
-        baseline_series = load_baseline_series(args.mode)
         pca_ctx = build_pca_context(baseline_series, gmm_means, gmm_inv_covs)
         var = pca_ctx.pca.explained_variance_ratio_
         print(f"[gif] PCA: PC1={var[0]*100:.1f}%  PC2={var[1]*100:.1f}%  (cumulative {sum(var)*100:.1f}%)")

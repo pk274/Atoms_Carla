@@ -25,11 +25,39 @@ class DistanceComputer:
     """
 
     @staticmethod
+    def apply_shrinkage(
+        cov: np.ndarray,
+        alpha: float,
+        diag_floor: float = 1e-10,
+    ) -> np.ndarray:
+        """
+        Apply convex shrinkage toward a scaled identity target.
+
+        Formula: (1 - alpha) * cov + alpha * mean(diag(cov)) * I
+
+        Parameters
+        ----------
+        cov        : np.ndarray [D, D]  empirical covariance
+        alpha      : float              shrinkage intensity (0 = no change, 1 = spherical)
+        diag_floor : float              minimum value enforced on diagonal after shrinkage
+
+        Returns
+        -------
+        np.ndarray [D, D]  shrinkage-regularised covariance
+        """
+        mu = np.mean(np.diag(cov))
+        F  = np.diag(np.full(cov.shape[0], mu))
+        result = (1.0 - alpha) * cov + alpha * F
+        diag = np.maximum(np.diag(result), diag_floor)
+        np.fill_diagonal(result, diag)
+        return result
+
+    @staticmethod
     def compute_mahalanobis(
         mu_ref: np.ndarray,
         cov_ref: np.ndarray,
         mu_target: np.ndarray,
-        regularization: float = 0.01
+        regularization: float = 1e-6
     ) -> float:
         """
         Compute Mahalanobis distance.
@@ -39,11 +67,11 @@ class DistanceComputer:
         mu_ref : np.ndarray [K]
             Reference mean
         cov_ref : np.ndarray [K, K]
-            Reference covariance
+            Reference covariance (should already be shrinkage-regularised at fit time)
         mu_target : np.ndarray [K]
             Target point
         regularization : float
-            Regularization term for numerical stability
+            Small ridge added for numerical stability during inversion (not a modelling choice)
 
         Returns
         -------

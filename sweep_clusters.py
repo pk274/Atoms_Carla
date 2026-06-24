@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-K_VALUES_DEFAULT = [10]
+K_VALUES_DEFAULT = [7]
 
 
 def main() -> None:

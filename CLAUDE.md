@@ -36,7 +36,7 @@ Backpropagates relevance from the network output to the input pixels. Two implem
 
 ### ATOMs (Attention-Oriented Metrics)
 Introduced by Beylier et al. (NeurIPS 2024 workshop). Converts raw LRP heatmaps into structured, object-level attention vectors by intersecting relevance maps with semantic segmentation masks. Two levels:
-- **Hierarchical-attention** `h(o)`: the mean relevance over object `o`'s pixels that carry nonzero relevance (R̄ in Beylier et al.), then re-normalized across objects — not a raw fraction of total relevance.
+- **Hierarchical-attention** `h(o)`: the sum (or mean, see `NORMALIZE_BY_PIXEL_COUNT`) of relevance over object `o`'s pixels that carry nonzero relevance, then re-normalized across objects. The paper (Beylier et al.) uses mean (R̄); the current default (`NORMALIZE_BY_PIXEL_COUNT = False`) uses raw sum on advisor recommendation.
 - **Combinatorial-attention** `c(T)`: fraction of frames where a neuron attends jointly to a subset of objects `T` (using threshold α = 0.25).
 
 For TFV6, CARLA's grouped semantic segmentation (10 classes, `save_grouped_semantic=True`) is used via `TFV6_CLASSES` in `atoms_carla.py`. Implemented in `ATOMs_Analysis/saliency/atoms_carla.py`.

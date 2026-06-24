@@ -647,9 +647,11 @@ class ATOMsCarla:
                     mode="nearest",
                 ).squeeze(0)
             raw  = (masks * r_hw.unsqueeze(0)).flatten(1).sum(dim=1)
-            nz   = ((masks > 0) & (r_hw.unsqueeze(0) != 0)).float() \
-                       .flatten(1).sum(dim=1).clamp(min=1.0)
-            return raw / nz
+            if conf.NORMALIZE_BY_PIXEL_COUNT:
+                nz = ((masks > 0) & (r_hw.unsqueeze(0) != 0)).float() \
+                         .flatten(1).sum(dim=1).clamp(min=1.0)
+                return raw / nz
+            return raw
 
         result = _class_sums(wide_r, self._current_masks_wide)
 

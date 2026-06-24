@@ -430,7 +430,7 @@ elif conf.AGENT == "TFV6":
 print("[Step 4] Fitting single-Gaussian Mahalanobis detector...")
 
 mahal_detector = MahalanobisDetector(
-    ridge = conf.MAHAL_RIDGE,   # <<< 1e-6 default; increase to 1e-4 if unstable
+    shrinkage_alpha = conf.SHRINKAGE_ALPHA,
 )
 mahal_detector.fit(baseline_series)
 
@@ -493,7 +493,7 @@ gmm = GMMClustering(
     n_components    = N_COMPONENTS,
     covariance_type = conf.GMM_COV_TYPE,   # <<< "full" recommended if N >> C^2
     random_state    = conf.RANDOM_SEED,    # <<< for reproducibility
-    ridge           = conf.MAHAL_RIDGE,
+    shrinkage_alpha = conf.SHRINKAGE_ALPHA,
 )
 gmm.fit(baseline_series)
 gmm.save(OUT_DIR / "gmm.npz")

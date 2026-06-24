@@ -153,16 +153,17 @@ class MahalanobisDetector(BaseDetector):
 
     Parameters
     ----------
-    ridge : float
-        Regularisation added to the diagonal of the covariance matrix before
-        inversion.  Prevents singularity for features that are near-constant
-        across the baseline (e.g. rare CARLA classes present in <5% of frames).
-        Default 1e-6 is conservative; increase to 1e-4 if inversion is unstable.
+    shrinkage_alpha : float
+        Shrinkage intensity for covariance regularisation, applied at fit time.
+        Formula: (1-alpha)*cov_emp + alpha*mean(diag)*I.
+        Pulls the covariance toward a scaled identity, stabilising near-singular
+        directions (e.g. rare CARLA classes present in <5% of frames).
+        alpha=0.01 is a mild regularisation; increase toward 0.1 for small N.
     """
 
-    def __init__(self, ridge: float = 1e-6):
+    def __init__(self, shrinkage_alpha: float = 0.01):
         super().__init__()
-        self.ridge = ridge
+        self.shrinkage_alpha = shrinkage_alpha
         self.mean:      Optional[np.ndarray] = None   # [D]
         self.cov:       Optional[np.ndarray] = None   # [D, D]
         self._precision: Optional[np.ndarray] = None  # [D, D]  pre-inverted
@@ -190,8 +191,8 @@ class MahalanobisDetector(BaseDetector):
         if self.cov.ndim == 0:
             self.cov = np.array([[float(self.cov)]])
 
-        ridge_mat = self.ridge * np.eye(len(self.mean))
-        self._precision = np.linalg.inv(self.cov + ridge_mat)
+        self.cov = DistanceComputer.apply_shrinkage(self.cov, self.shrinkage_alpha)
+        self._precision = np.linalg.inv(self.cov + 1e-6 * np.eye(len(self.mean)))
         self._fitted = True
 
     # ------------------------------------------------------------------
@@ -204,7 +205,7 @@ class MahalanobisDetector(BaseDetector):
         # the sqrt internally).  (Fixed 2026-06-08, docs/code_review.md §3.1: this
         # previously applied a second sqrt — returning sqrt(distance) — which put
         # the single-Gaussian scores on a different scale from the GMM path.)
-        return float(DistanceComputer.compute_mahalanobis(self.mean, self.cov, x, self.ridge))
+        return float(DistanceComputer.compute_mahalanobis(self.mean, self.cov, x, 1e-6))
 
     # ------------------------------------------------------------------
     # Threshold helpers
@@ -250,10 +251,10 @@ class MahalanobisDetector(BaseDetector):
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
             path,
-            mean      = self.mean.astype(np.float32),
-            cov       = self.cov.astype(np.float32),
-            ridge     = np.array([self.ridge]),
-            threshold = np.array([getattr(self, "threshold", np.nan)]),
+            mean             = self.mean.astype(np.float32),
+            cov              = self.cov.astype(np.float32),
+            shrinkage_alpha  = np.array([self.shrinkage_alpha]),
+            threshold        = np.array([getattr(self, "threshold", np.nan)]),
         )
 
     def load(self, path: str | Path) -> None:
@@ -261,14 +262,13 @@ class MahalanobisDetector(BaseDetector):
         if not path.exists():
             raise FileNotFoundError(path)
         data = np.load(path)
-        self.mean      = data["mean"].astype(np.float64)
-        self.cov       = data["cov"].astype(np.float64)
-        self.ridge     = float(data["ridge"][0])
-        threshold_val  = float(data["threshold"][0])
-        self.threshold = None if np.isnan(threshold_val) else threshold_val
-        ridge_mat      = self.ridge * np.eye(len(self.mean))
-        self._precision = np.linalg.inv(self.cov + ridge_mat)
-        self._fitted   = True
+        self.mean            = data["mean"].astype(np.float64)
+        self.cov             = data["cov"].astype(np.float64)
+        self.shrinkage_alpha = float(data["shrinkage_alpha"][0])
+        threshold_val        = float(data["threshold"][0])
+        self.threshold       = None if np.isnan(threshold_val) else threshold_val
+        self._precision      = np.linalg.inv(self.cov + 1e-6 * np.eye(len(self.mean)))
+        self._fitted         = True
 
 
 # ---------------------------------------------------------------------------
