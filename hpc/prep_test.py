@@ -16,7 +16,7 @@ Usage (standalone):
         --output      /ptmp/$USER/atoms_test/test_labeled.npz \
         --seed        42 \
         --noise-intensity 21 \
-        --brightness-intensity 4
+        --brightness-intensity 3
 """
 
 import argparse
@@ -36,9 +36,9 @@ _SPEC = [
     # (perturbation_or_None, intensity_default, fraction)
     (None,                0.0, 0.20),
     ("gaussian_noise",   21.0, 0.20),   # overridden by --noise-intensity
-    ("brightness_scale",  4.0, 0.20),   # overridden by --brightness-intensity
+    ("brightness_scale",  3.0, 0.20),   # overridden by --brightness-intensity
     ("camera_loss",       0.0, 0.20),
-    ("pgd",              12.0, 0.20),   # intensity = ℓ∞ ε budget (0–255); overridden by --pgd-epsilon
+    ("pgd",               4.0, 0.20),   # intensity = ℓ∞ ε budget (0–255); overridden by --pgd-epsilon
 ]
 
 
@@ -50,8 +50,8 @@ def parse_args() -> argparse.Namespace:
                    help="Output path for test_labeled.npz.")
     p.add_argument("--seed",                 default=42,   type=int)
     p.add_argument("--noise-intensity",      default=21.0, type=float)
-    p.add_argument("--brightness-intensity", default=4.0,  type=float)
-    p.add_argument("--pgd-epsilon",          default=12.0, type=float,
+    p.add_argument("--brightness-intensity", default=3.0,  type=float)
+    p.add_argument("--pgd-epsilon",          default=4.0, type=float,
                    help="ℓ∞ ε budget recorded for pgd frames; the attack itself "
                         "is crafted in compute_test_chunk.py using this value.")
     return p.parse_args()

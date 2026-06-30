@@ -71,13 +71,13 @@ The main entry point. Runs end-to-end and produces all figures and JSON results 
 | 7 | Apply perturbation mix to test set → `test_labeled.npz` with ground-truth labels |
 | 8 | Compute ATOMs profiles + action logits on labeled test set → `test_profiles.npy` |
 | 8.5 | Trajectory analysis: match clean↔perturbed pairs by (run_id, frame_idx); compute displacement stats and PCA trajectories per perturbation type. **DISABLED — this block is currently commented out in `run_analysis.py`; any `trajectory_analysis/` figures on disk are stale.** |
-| 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX-v1, MDX-v2, Action Entropy |
+| 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX-v1, MDX-v2, Action Entropy. Also computes **PGD success rate** (TFV6 only): counts frames where the brake-target attack forced softmax(speed\_logits)[0] ≥ 99.9%; printed to stdout and saved to `summary.json` as `__pgd_success__`. |
 | 9.5 | Load val profiles + `val_labeled.npz`. When present: score val profiles with all GMM detectors (Mahalanobis-GMM, Euclidean-GMM, JSD-GMM, Wasserstein-GMM, k-NN-GMM); compute per-detector val AUC and their mean → `__val_auc_gmm_avg__`; use val AUC to select k-NN/GMM-kNN k. Falls back to test-set k selection with a warning when val files are absent. |
 | 10 | Evaluate each detector: ROC curve, AUC, Youden-J optimal threshold |
 | 11 | Per-perturbation breakdown: evaluate each detector separately on each perturbation type |
 | 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/`. `summary.json` includes `__val_auc_gmm_avg__` when val set is present; `sweep_clusters.py` copies this per-K. `summarize_results.py` reads it to produce a **val-set K selection recommendation** (Section 3 of SUMMARY.md). |
 
-Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`. GMM cluster count K is overridden at runtime by the `--gmm-k` CLI arg (passed automatically by `sweep_clusters.py`).
+Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`. GMM cluster count K is overridden at runtime by the `--gmm-k` CLI arg (passed automatically by `sweep_clusters.py`). PGD settings: `PGD_TARGET="brake"`, `PGD_EPSILON=4.0`, `PGD_N_STEPS=5` — must stay in sync with `hpc/prep_test.py` (ε) and `hpc/array_test_task.sh` (target, steps).
 
 ---
 
@@ -121,7 +121,7 @@ ATOMs_Analysis/
 | `gaussian_noise` | Additive Gaussian noise on wide/narrow camera images |
 | `brightness_scale` | Multiplicative brightness change |
 | `camera_loss` | Zeros out one camera stream (simulates sensor dropout) |
-| `pgd` | PGD adversarial attack (targeted max-steer) |
+| `pgd` | PGD adversarial attack — target=brake, ε=4 pixel units, 5 steps (TFV6). Attack is deferred to the HPC array job; `test_labeled.npz` stores clean pixels with `label=1` until then. |
 
 ---
 

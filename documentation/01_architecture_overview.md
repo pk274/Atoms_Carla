@@ -255,7 +255,7 @@ left `True` before a sweep.
 | Attribute (line) | Value | Meaning / consumers |
 |---|---|---|
 | `NOISE_INTENSITY` (27) | `21` | Gaussian-noise σ for the labeled-set mix (`run_analysis.py:698,706`). Comment: "25 for day, 21 by night". |
-| `BRIGHTNESS_INTENSITY` (28) | `4` | Brightness scale factor for the mix (`run_analysis.py:699,707`). |
+| `BRIGHTNESS_INTENSITY` (28) | `3` | Brightness scale factor for the mix (`run_analysis.py:699,707`). |
 | `PERTURBATION` (30) | `"brightness_scale"` | Live-injection perturbation name; also keys the online analysis dirs (`run_online_analysis.py:93`; `sensor_agent_live_perturbation.py:113`; `image_agent.py:171–218`). |
 | `INTENSITY` (31) | `4` | Live-injection intensity (`sensor_agent_live_perturbation.py:218`; `image_agent.py:173`). |
 | `INJECTION_TIME` (32) | `10` | Sim-seconds after which the live perturbation activates (`sensor_agent_live_perturbation.py:176`; `image_agent.py:167–169`). |
@@ -303,7 +303,7 @@ All values below are **hardcoded** (not configurable via `atoms_config.py`):
 | `run_analysis.py:1134` | `KNN_K_VALUES = [1, 5, 10, 25, 50, 100, 250]` | k-NN k sweep grid (test + val + GMM variants). |
 | `run_analysis.py:134` | `"pcla_agents/transfuserv6_pretrained/visiononly_resnet34"` | TFV6 checkpoint dir (config has no `MODEL_PATH` despite docstring claims, BUG-2). |
 | `run_analysis.py:172,281` | `"pcla_agents/wor_pretrained/leaderboard_weights"` | WoR weights dir (+ `main_model_10.th`, `config_leaderboard.yaml`). |
-| `hpc/prep_test.py:35–42` | `_SPEC` intensities: noise 21.0, brightness 4.0, pgd 12.0; fractions 0.20 | HPC-side mirror of the perturbation mix (CLI-overridable: `--noise-intensity`, `--brightness-intensity`, `--pgd-epsilon`). |
+| `hpc/prep_test.py:35–42` | `_SPEC` intensities: noise 21.0, brightness 3.0, pgd 4.0; fractions 0.20 | HPC-side mirror of the perturbation mix (CLI-overridable: `--noise-intensity`, `--brightness-intensity`, `--pgd-epsilon`). |
 | `hpc/array_task.sh:48` etc. | `MODE_ANALYSIS:-1` | HPC default analysis mode = 1 (local config currently 2 — must be passed explicitly). |
 | `detectors.py:163` | `ridge=1e-6` | `MahalanobisDetector` default (overridden everywhere by `conf.MAHAL_RIDGE`=0.01). |
 | `detectors.py:216` | `percentile=99.0` | `fit_threshold` default. |

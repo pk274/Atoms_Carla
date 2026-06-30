@@ -32,7 +32,7 @@ class ExperimentConfig:
 
 
     NOISE_INTENSITY = 21        # 25 for day, 21 by night
-    BRIGHTNESS_INTENSITY = 4
+    BRIGHTNESS_INTENSITY = 3
 
     PERTURBATION = "brightness_scale"
     INTENSITY = 0.085                 # 4 for brightness, 21 gn, 0.07 for po
@@ -91,8 +91,8 @@ class ExperimentConfig:
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
     PGD_TARGET  = "brake"
-    PGD_EPSILON = 14.0      # ε budget (pixel units); must match hpc/prep_test.py PGD_EPSILON default
-    PGD_N_STEPS = 8        # PGD iterations; more steps = stronger attack # Wor: 10     # TFV6: 6
+    PGD_EPSILON = 4.0       # ε budget (pixel units); must match hpc/prep_test.py PGD_EPSILON default
+    PGD_N_STEPS = 5         # PGD iterations; converges in ≤2 steps for brake target at ε=4
 
     DEFAULT_CMD = 2
     SHRINKAGE_ALPHA = 0.01   # covariance shrinkage factor applied at fit time

@@ -544,6 +544,33 @@ to 1e-2 to match the composite.
 *Not applied (need discussion): validation split for k/K selection (§2.1), WoR
 steer-objective rework, and dead-code removal.*
 
+### PGD hyperparameter selection: ε=4, 5 steps, target=brake
+Empirically determined by running the brake-target attack across a range of ε values on
+representative test frames. At ε=12 (prior setting) the attack was already converging
+within 2 steps; even at ε=4 with 5 steps the attack drives P(bin 0) to ≥99.9% on
+virtually all frames. Using ε=4 is preferable for the thesis because:
+- The perturbation is imperceptible at ε=4/255 ≈ 0.016 per channel, which more clearly
+  demonstrates that adversarial inputs are visually indistinguishable from clean ones.
+- A weaker budget still achieves near-100% success, showing the model is sensitive
+  rather than merely overwhelmed by a large perturbation.
+
+The `brake` target (maximise P(speed bin 0 = 0 m/s)) was chosen over `steer_right`
+because it produces a measurable scalar output (the speed distribution) that is easy to
+visualise and interpret in the thesis, and because the binary "stopped/not stopped"
+outcome maps cleanly onto a safety-relevant failure mode.
+
+`run_analysis.py` now reports a **PGD success rate** (count of test frames where
+softmax(speed\_logits)[0] ≥ 99.9%) printed at step 9 and saved to `summary.json` as
+`__pgd_success__`. Updated in: `atoms_config.py`, `hpc/prep_test.py`,
+`hpc/compute_test_chunk.py`, `hpc/array_test_task.sh`, `hpc/prep_test_task.sh`.
+
+### Brightness scale factor: 4 → 3
+`BRIGHTNESS_INTENSITY` reduced from 4 to 3 (i.e. 3× pixel multiply, clipped to 255).
+At factor 4 the image was almost entirely saturated to white; factor 3 still produces a
+clearly visible over-exposure artefact while retaining slightly more scene structure.
+Updated in: `atoms_config.py`, `hpc/prep_test.py`, `hpc/prep_test_wor.py`,
+`hpc/prep_test_task.sh`, and all documentation files.
+
 ---
 
 ## MDX-v2: F_c features + waypoint steer proxy + quantile binning (2026-06-08)

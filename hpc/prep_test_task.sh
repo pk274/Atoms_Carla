@@ -34,9 +34,9 @@ srun python3 "$CODE_DIR/hpc/prep_test.py" \
     --frames-dir           "$FRAMES_DIR"                \
     --output               "$LABELED_FILE"              \
     --seed                 42                           \
-    --pgd-epsilon          "${PGD_EPSILON:-12.0}"       \
+    --pgd-epsilon          "${PGD_EPSILON:-4.0}"        \
     --noise-intensity      "${NOISE_INTENSITY:-21.0}"   \
-    --brightness-intensity "${BRIGHTNESS_INTENSITY:-4.0}"
+    --brightness-intensity "${BRIGHTNESS_INTENSITY:-3.0}"
 
 echo "Prep finished with exit code $?"
 date

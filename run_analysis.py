@@ -869,6 +869,33 @@ else:
     print(f"  Loaded {len(test_profiles)} test profiles, "
           f"{int(test_labels.sum())} perturbed.\n")
 
+# ---------------------------------------------------------------------------
+# PGD success rate — count frames where the attack forced speed bin 0 to 100%
+# Requires test_speed_logits (TFV6 only); skipped otherwise.
+# "Success" = softmax assigns ≥99.9% probability to the stop bin (bin 0 = 0 m/s).
+# ---------------------------------------------------------------------------
+pgd_success_stats = None
+if speed_logits_available and test_speed_logits is not None:
+    _pert_labels   = np.asarray(test_data["perturbation"])
+    _pgd_mask      = _pert_labels == "pgd"
+    _n_pgd         = int(_pgd_mask.sum())
+    if _n_pgd > 0:
+        _pgd_logits = test_speed_logits[_pgd_mask]                          # [N_pgd, 8]
+        _pgd_probs  = np.exp(_pgd_logits - _pgd_logits.max(axis=1, keepdims=True))
+        _pgd_probs /= _pgd_probs.sum(axis=1, keepdims=True)                 # softmax
+        _success    = int((_pgd_probs[:, 0] >= 0.999).sum())
+        _rate       = _success / _n_pgd
+        pgd_success_stats = {
+            "n_pgd_frames":   _n_pgd,
+            "n_success":      _success,
+            "success_rate":   float(_rate),
+        }
+        print(
+            f"[PGD success] {_success}/{_n_pgd} frames forced to stop-bin "
+            f"(prob ≥ 99.9%)  —  success rate {_rate:.1%}\n"
+        )
+    else:
+        print("[PGD success] No 'pgd' frames found in test set — skipping.\n")
 
 # ===========================================================================
 # STEP 9.5 — Load validation profiles (for clean k-NN / GMM-kNN k selection)
@@ -1614,6 +1641,8 @@ if _val_auc_gmm_avg is not None:
     summary["__val_auc_gmm_avg__"] = _val_auc_gmm_avg
 for _det_key, _det_val in _val_auc_per_gmm_det.items():
     summary[f"__val_auc_{_det_key}__"] = _det_val
+if pgd_success_stats is not None:
+    summary["__pgd_success__"] = pgd_success_stats
 with open(OUT_DIR / "summary.json", "w") as f:
     json.dump(summary, f, indent=2)
 print()

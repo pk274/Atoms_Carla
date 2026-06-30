@@ -158,7 +158,7 @@ This chains three SLURM jobs automatically:
 2. **array** — parallel ATOMs tasks (20 frames each), each also computing 8-bin speed
    logits for PEOC. For frames labelled `pgd`, `compute_test_chunk.py` crafts the TFV6
    adversarial image via `pgd_attack_tfv6` (a minimal-data `TFv6.forward` backward pass,
-   `target=steer_right`, `ε=12`, 10 steps — override with `PGD_TARGET`/`PGD_EPSILON`/
+   `target=brake`, `ε=4`, 5 steps — override with `PGD_TARGET`/`PGD_EPSILON`/
    `PGD_STEPS`) before running LRP + ATOMs, so both the profile and the PEOC logits see
    the attacked pixels.
 3. **gather** — concatenates results → `test_profiles_{MODE}.npy` + `test_speed_logits_{MODE}.npy`
@@ -196,8 +196,8 @@ bash hpc/submit_test.sh \
 bash hpc/collect_results.sh test tfv6 1 && bash hpc/collect_results.sh test tfv6 2
 ```
 
-Override the attack with `PGD_TARGET` / `PGD_EPSILON` / `PGD_STEPS` (defaults `steer_right` /
-`12` / `10`), e.g. `PGD_EPSILON=8 bash hpc/submit_test.sh …`. The PGD fraction (20 %) shrinks the
+Override the attack with `PGD_TARGET` / `PGD_EPSILON` / `PGD_STEPS` (defaults `brake` /
+`4` / `5`), e.g. `PGD_EPSILON=8 bash hpc/submit_test.sh …`. The PGD fraction (20 %) shrinks the
 other perturbations from 25 %→20 %, so their AUCs will shift slightly on re-run — expected.
 
 ---

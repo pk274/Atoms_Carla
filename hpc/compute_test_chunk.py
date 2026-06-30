@@ -47,10 +47,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--pgd-target", default="brake",
                    choices=["brake", "max_speed", "steer_left", "steer_right"],
                    help="TFV6 PGD attack objective.")
-    p.add_argument("--pgd-epsilon", default=14.0, type=float,
+    p.add_argument("--pgd-epsilon", default=4.0, type=float,
                    help="ℓ∞ ε budget (0–255 scale); fallback when a pgd frame's "
                         "recorded intensity is missing/zero.")
-    p.add_argument("--pgd-steps", default=8, type=int,
+    p.add_argument("--pgd-steps", default=5, type=int,
                    help="Number of PGD iterations.")
     return p.parse_args()
 

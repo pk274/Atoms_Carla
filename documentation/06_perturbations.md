@@ -33,9 +33,9 @@ Of the nine registered perturbations, only **four image-space transforms plus PG
 |---|---|---|---|---|
 | 1 | `None` (clean) | 0.20 | — | 0 |
 | 2 | `gaussian_noise` | 0.20 | `conf.NOISE_INTENSITY = 21` | 1 |
-| 3 | `brightness_scale` | 0.20 | `conf.BRIGHTNESS_INTENSITY = 4` | 1 |
+| 3 | `brightness_scale` | 0.20 | `conf.BRIGHTNESS_INTENSITY = 3` | 1 |
 | 4 | `camera_loss` | 0.20 | 0 (drops camera 0) | 1 |
-| 5 | `pgd` | 0.20 | `conf.PGD_EPSILON = 14.0` (ε) | 1 |
+| 5 | `pgd` | 0.20 | `conf.PGD_EPSILON = 4.0` (ε), target=brake, 5 steps | 1 |
 
 Defined at `run_analysis.py:696-702` (TFV6) and `run_analysis.py:704-710` (WoR), and hardcoded as `_SPEC` at `prep_test.py:35-42`. The remaining five registered perturbations (`isolate_channel`, `mirror_horizontal`, `camera_swap`, `blur`, `salt_and_pepper`, `phantom_obstacle`) are **registered but not used** by any labeled-set spec or HPC prep. They are reachable only manually via `pm.perturb_wide_image(...)` or through the *live* perturbation path (`conf.PERTURBATION` can be set to any registered name, §3.6) — so they are exercised in the online experiment but not in the offline 5-way ROC/AUC evaluation. (This contradicts `CLAUDE.md`'s "Perturbation types" table, which lists only four — finding 6.1; and the "registered-but-unused-in-offline" distinction is finding 6.2.)
 
@@ -87,7 +87,7 @@ A module-level dict `_WIDE_IMAGE_REGISTRY` maps perturbation name → function. 
 
 **`gaussian_noise`** (`:732-756`). Adds `N(0, intensity²)` noise per pixel, clips to `[0,255]`. `intensity` = standard deviation σ in pixel units (docstring range 1–50, `:744-746`). Configured σ = 21 (`NOISE_INTENSITY`, day=25 / night=21 per config comment `:27`). **Unseeded** — `np.random.normal` uses the global NumPy RNG, so the noise realisation differs every run even with a fixed labeling seed (finding 6.6).
 
-**`brightness_scale`** (`:759-783`). Multiplies every pixel by the scalar `intensity`, clips to `[0,255]`. `<1` darkens, `>1` brightens (`:770-774`). Configured factor = 4 (`BRIGHTNESS_INTENSITY`) — a 4× multiply that saturates most of the frame to white (a strong over-exposure, far past the "1.5 = 50 % brighter" docstring example). Deterministic.
+**`brightness_scale`** (`:759-783`). Multiplies every pixel by the scalar `intensity`, clips to `[0,255]`. `<1` darkens, `>1` brightens (`:770-774`). Configured factor = 3 (`BRIGHTNESS_INTENSITY`) — a 3× multiply that strongly over-exposes the image while leaving slightly more residual detail than the former 4× setting. Deterministic.
 
 **`camera_loss`** (`:786-824`). Replaces one camera's sub-image with zeros (a hard black-out simulating sensor dropout). The camera index is `int(intensity)`; out-of-range indices no-op with a warning (`:816-820`). In the active mix `intensity=0`, so **camera 0** (the first sub-image) is always dropped. For TFV6 this drops one of the three forward camera tiles. Deterministic.
 
@@ -157,12 +157,12 @@ Distinct from the offline labeled set: the **live** path injects a perturbation 
 | WoR HPC mix | 4-way 0.25 each (no pgd) | `prep_test_wor.py:27-32` | code | diverges from WoR local 5-way (finding 6.5) |
 | labeling `seed` | 42 | `dataset.py:241`, `run_analysis.py:715`, `prep_test.py:51` | partly (CLI on HPC) | frame-to-entry shuffle; must match local↔HPC |
 | `NOISE_INTENSITY` (σ) | 21 | `atoms_config.py:27` (day 25 / night 21) | config | gaussian noise std dev (pixel units) |
-| `BRIGHTNESS_INTENSITY` | 4 | `atoms_config.py:28` | config | multiplicative brightness factor (4× → saturates) |
+| `BRIGHTNESS_INTENSITY` | 3 | `atoms_config.py:28` | config | multiplicative brightness factor (3× over-exposure) |
 | camera_loss intensity | 0 → drops cam 0 | `run_analysis.py:700`, `prep_test.py:40` | code | which camera tile is zeroed |
-| `PGD_EPSILON` (ε, offline) | 14.0 | `atoms_config.py:84` | config | recorded ℓ∞ budget for offline pgd label |
-| `prep_test.py --pgd-epsilon` | 12.0 default | `prep_test.py:54`, `compute_test_chunk.py:50` | CLI | HPC ε default — **≠14.0** (finding 1.1) |
+| `PGD_EPSILON` (ε, offline) | 4.0 | `atoms_config.py:84` | config | recorded ℓ∞ budget for offline pgd label |
+| `prep_test.py --pgd-epsilon` | 4.0 default | `prep_test.py:54`, `compute_test_chunk.py:50` | CLI | HPC ε default — matches config |
 | `EPSILON` (ε, live) | 8.0 | `atoms_config.py:79` | config | ℓ∞ budget for the **live** PGD attack |
-| `PGD_N_STEPS` | 8 | `atoms_config.py:85` | config | PGD iterations (live + `compute_test_chunk.py --pgd-steps` default 8) |
+| `PGD_N_STEPS` | 5 | `atoms_config.py:85` | config | PGD iterations (5 steps converges for brake target at ε=4) |
 | `PGD_TARGET` | `"brake"` | `atoms_config.py:83` | config | PGD objective; also `compute_test_chunk.py --pgd-target` default `brake` |
 | `pgd_attack` default n_steps | 15 | `perturbation_manager.py:200` | signature | WoR PGD iterations (signature default; overridden by callers) |
 | `pgd_attack_tfv6` default n_steps | 10 | `perturbation_manager.py:385` | signature | TFV6 PGD iterations (overridden by callers) |
