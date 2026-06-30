@@ -127,7 +127,7 @@ def main():
     # interesting visual — scan up to 50 files.
     chosen_npz = None
     chosen_idx = 0
-    for npz_path in frame_files[:50]:
+    for npz_path in frame_files[40:50]:
         d = np.load(npz_path)
         speeds = d["speed"]
         # Prefer frames where the agent is moving (spd > 3 m/s)

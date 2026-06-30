@@ -160,7 +160,7 @@ class LivePerturbationSensorAgent(DataCollectionSensorAgent):
                 nets=self.closed_loop_inference.nets,
                 data=tensors,
                 target=conf.PGD_TARGET,
-                epsilon=conf.EPSILON,
+                epsilon=conf.PGD_EPSILON,
                 n_steps=conf.PGD_N_STEPS,
             )
 

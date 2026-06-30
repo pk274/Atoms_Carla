@@ -16,8 +16,8 @@ class ExperimentConfig:
     # visualization only.  The analysis code auto-detects width from the npz data.
     N_CAMERAS = 6
 
-    TOWN = "Town07"
-    WEATHER = "rainy"
+    TOWN = "Town05"
+    WEATHER = "sunny"
     SPEED_MODE = False
     HIGH_SPEED_MODE = False
 
@@ -35,11 +35,11 @@ class ExperimentConfig:
     BRIGHTNESS_INTENSITY = 3
 
     PERTURBATION = "brightness_scale"
-    INTENSITY = 0.085                 # 4 for brightness, 21 gn, 0.07 for po
+    INTENSITY = 3                 # 4 for brightness, 21 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
-    CAM_INDEX = 1      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
-    MANUAL_SPAWNS = False
+    CAM_INDEX = None      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)
+    MANUAL_SPAWNS = True
 
     RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = False
@@ -86,7 +86,7 @@ class ExperimentConfig:
     ADD_AUTOPILOT_VEHICLES = True
 
     FRAMES_TO_SKIP = 0      # 0 -> Every frame is attacked individually
-    EPSILON = 8.0           # 5 -> No effect   # Wor: 8    # TF: 12
+    WOR_EPSILON = 4.0           # 5 -> No effect   # Wor: 8    # TF: 12
 
     # PGD / FGSM attack settings (TFV6 adversarial perturbation)
     # PGD_TARGET: "brake" | "max_speed" | "steer_left" | "steer_right"
@@ -143,7 +143,7 @@ class ExperimentConfig:
         SPEC_POS = [-90, 245, 7]
         SPEC_ROT = [-19, -0, 0]
     if TOWN == "Town05":
-        if LIVE_PERTURBATION_RECORDING_MODE and False:
+        if LIVE_PERTURBATION_RECORDING_MODE and PERTURBATION == "pgd":
             SPAWN_INDEX = 272               # 235
             SPEC_POS = [140, -120, 50]        # [30, 203, 10]
             SPEC_ROT = [-50, -20, 0]         # [-20, -0, 0]
