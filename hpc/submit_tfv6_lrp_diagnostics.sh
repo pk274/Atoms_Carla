@@ -17,8 +17,14 @@
 #   N_FRAMES    number of frames to sample from the loaded runs (default: 8)
 #   CODE_DIR    project root (default: directory of this script's parent)
 #
+# Optional rule-composite overrides (export before calling this script, same
+# convention as PGD_EPSILON for submit_test.sh -- see LRPTFv6Model docstring):
+#   UITB=1        AlphaBeta(2,1) instead of (1,0) for Conv/FFN
+#   ZERO_BIAS=1   exclude bias from the AlphaBeta denominator (AnyLinear only)
+#
 # Example:
 #   bash hpc/submit_tfv6_lrp_diagnostics.sh /ptmp/$USER/atoms_baseline/frames
+#   ZERO_BIAS=1 bash hpc/submit_tfv6_lrp_diagnostics.sh /ptmp/$USER/atoms_baseline/frames /ptmp/$USER/tfv6_lrp_diag/out_zerobias
 
 set -euo pipefail
 
@@ -27,6 +33,8 @@ OUT_DIR="${2:-/ptmp/$USER/tfv6_lrp_diag/out}"
 N_RUNS="${3:-2}"
 N_FRAMES="${4:-8}"
 CODE_DIR="${5:-$(cd "$(dirname "$0")/.." && pwd)}"
+UITB="${UITB:-0}"
+ZERO_BIAS="${ZERO_BIAS:-0}"
 
 mkdir -p "/ptmp/$USER/tfv6_lrp_diag/logs" "$OUT_DIR"
 
@@ -36,11 +44,13 @@ echo "OUT_DIR    : $OUT_DIR"
 echo "N_RUNS     : $N_RUNS"
 echo "N_FRAMES   : $N_FRAMES"
 echo "CODE_DIR   : $CODE_DIR"
+echo "UITB       : $UITB"
+echo "ZERO_BIAS  : $ZERO_BIAS"
 echo ""
 
 JOB_ID=$(sbatch --parsable \
     --chdir="$CODE_DIR" \
-    --export=ALL,CODE_DIR="$CODE_DIR",FRAMES_DIR="$FRAMES_DIR",OUT_DIR="$OUT_DIR",N_RUNS="$N_RUNS",N_FRAMES="$N_FRAMES" \
+    --export=ALL,CODE_DIR="$CODE_DIR",FRAMES_DIR="$FRAMES_DIR",OUT_DIR="$OUT_DIR",N_RUNS="$N_RUNS",N_FRAMES="$N_FRAMES",UITB="$UITB",ZERO_BIAS="$ZERO_BIAS" \
     "$CODE_DIR/hpc/tfv6_lrp_diagnostics_task.sh")
 
 echo "Submitted job: $JOB_ID"

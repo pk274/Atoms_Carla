@@ -747,7 +747,23 @@ class LRPTFv6Model:
     ----------
     backbone_eval      : TransfuserBackbone in .eval() mode
     planning_decoder   : PlanningDecoder in .eval() mode
-    uitb               : use AlphaBeta(2,1) instead of (1,0) for Conv/FFN
+    uitb               : use AlphaBeta(2,1) instead of (1,0) for Conv/FFN.
+                         (2,1) retains some negative-activation relevance
+                         instead of discarding it entirely (pure z+ = (1,0)
+                         clips all negative contributions) -- a candidate
+                         lever against the severe relevance attenuation
+                         documented in design_decisions.md ("TFV6 LRP:
+                         residual/skip-connection conservation"), untested
+                         as of 2026-07-02.
+    zero_bias          : exclude bias terms from the AlphaBeta denominator
+                         for AnyLinear layers (zennit's zero_params='bias'),
+                         matching WoR/LBC's existing composite. TFV6 never
+                         had this; D11 measured target_speed_decoder's bias
+                         absorption at only 1-4%, so this is expected to be
+                         a minor effect, not a fix for the 4-orders-of-
+                         magnitude attenuation on its own. No effect on
+                         Convolution layers (bias=False by ResNet convention,
+                         nothing to zero).
     device             : torch device
     """
 
@@ -756,9 +772,11 @@ class LRPTFv6Model:
         backbone_eval,
         planning_decoder   = None,
         uitb:   bool       = False,
+        zero_bias: bool    = False,
         device: torch.device = None,
     ):
         self.uitb             = uitb
+        self.zero_bias        = zero_bias
         self.alpha, self.beta = (2, 1) if uitb else (1, 0)
         self.device = device or torch.device(
             "cuda" if torch.cuda.is_available() else "cpu"
@@ -818,6 +836,10 @@ class LRPTFv6Model:
         )
 
     def _create_composite(self) -> SpecialFirstLayerMapComposite:
+        # zero_bias only applies to AnyLinear, matching WoR/LBC's composite
+        # exactly (see docstring). Convolution layers use bias=False by
+        # ResNet convention, so there is nothing to zero there regardless.
+        linear_zero_params = 'bias' if self.zero_bias else None
         layer_map = [
             (Activation,      Pass()),
             # BatchNorm2d is folded into preceding Conv by SequentialMergeBatchNorm
@@ -827,7 +849,8 @@ class LRPTFv6Model:
             # AttentionLinear before AnyLinear so it matches first
             (AttentionLinear, Epsilon(epsilon=1e-2)),
             (Convolution,     AlphaBeta(alpha=self.alpha, beta=self.beta)),
-            (AnyLinear,       AlphaBeta(alpha=self.alpha, beta=self.beta)),
+            (AnyLinear,       AlphaBeta(alpha=self.alpha, beta=self.beta,
+                                        zero_params=linear_zero_params)),
         ]
         first_map = [(Convolution, WSquare())]
         return SpecialFirstLayerMapComposite(

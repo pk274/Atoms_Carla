@@ -209,10 +209,16 @@ symmetric for `R_b`) and is applied at every residual junction in the TFV6
 model: ResNet34 `BasicBlock` (both encoders), GPT fusion `Block`, backbone
 `_fuse`, and `TransformerDecoderLayerExplicit`. Full rationale, scope, and
 what was deliberately left untouched (`pos_emb`, `attn_mask`) is documented
-in `docs/design_decisions.md`. Unit-tested by D13 in
-`tfv6_lrp_diagnostics.py`. **Not yet verified against a live model on
-HPC/GPU** — this fix was authored on a machine without CUDA/timm; run the
-full D01–D13 diagnostic suite before trusting new profiles.
+in `docs/design_decisions.md`. Unit-tested by D13 in `tfv6_lrp_diagnostics.py`.
+
+**HPC-verified 2026-07-01** (`hpc/submit_tfv6_lrp_diagnostics.sh`, CPU-only,
+Viper, 8 baseline frames from `/ptmp/paulkull/atoms_baseline/frames`, which
+were noted to be legacy 3-camera format — width mismatch warning fired but
+did not affect the diagnostic itself): **12 PASS, 1 WARN (D10), 0 FAIL.**
+D07 (two-step consistency) and D12 (determinism) both exact-match, D13
+(new formula) passes. See "TFV6 LRP: residual/skip-connection conservation"
+in `docs/design_decisions.md` for the interpretation of the two notable
+changes: D06's amplification ratio and D10's per-node cosine.
 
 **WoR note (out of scope for this fix, per user direction 2026-07-01):** WoR's
 `ResNetCanonizer` usage has the *same* underlying bug for a different reason
@@ -387,10 +393,12 @@ output even from a positive seed.
 ---
 
 Remaining:
-- Issue 8 (residual/skip-connection conservation) fixed 2026-07-01 but **not yet
-  verified against a live model on HPC/GPU** — this environment has no CUDA/timm.
-  Run `TFV6LRPDiagnostics.run_all_tests()` (D01–D13, especially D06 amplification
-  and the new D13) on real frames before trusting profiles produced with this code.
+- Issue 8 (residual/skip-connection conservation) fixed and HPC-verified
+  2026-07-01 (12/13 diagnostics PASS, see note above). **Baseline/test/val
+  ATOMs profiles on disk (`baseline_2.npz`, `test_profiles_2.npy`, etc.) were
+  all computed BEFORE this fix** and should be treated as stale — recompute
+  via the normal HPC baseline/test pipeline before drawing further OOD-AUC
+  conclusions from them.
 - WoR has the same underlying bug (`ResNetCanonizer` isinstance mismatch,
   see Issue 8 note above) but is out of scope per user direction (2026-07-01).
 

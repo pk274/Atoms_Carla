@@ -228,6 +228,21 @@ bash hpc/submit_tfv6_lrp_diagnostics.sh \
     1 1   # N_RUNS=1, N_FRAMES=1
 ```
 
+Optional rule-composite overrides via env vars (same convention as
+`PGD_EPSILON` for `submit_test.sh`) — use different `OUT_DIR`s so runs don't
+overwrite each other:
+
+```bash
+ZERO_BIAS=1 bash hpc/submit_tfv6_lrp_diagnostics.sh \
+    /ptmp/paulkull/atoms_baseline/frames /ptmp/paulkull/tfv6_lrp_diag/out_zerobias
+UITB=1 bash hpc/submit_tfv6_lrp_diagnostics.sh \
+    /ptmp/paulkull/atoms_baseline/frames /ptmp/paulkull/tfv6_lrp_diag/out_uitb
+```
+
+Compare D06's `amplification_ratio_mean`/`CoV` across the default, `ZERO_BIAS=1`,
+and `UITB=1` runs to see whether either meaningfully reduces the relevance
+attenuation documented in `design_decisions.md`.
+
 Monitor: `squeue -u paulkull`, then `tail -f /ptmp/paulkull/tfv6_lrp_diag/logs/diag_<job_id>.out`.
 
 ### Output

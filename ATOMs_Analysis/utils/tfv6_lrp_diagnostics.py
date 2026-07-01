@@ -15,7 +15,7 @@ tests the INTERNAL mathematical properties of LRP at each stage:
   D07  Two-step decomposition        — output→input == separate LRP1+LRP2
   D08  Forced-seed node_rel distinct — forced_brake vs forced_drive are different
   D09  is_brake independence         — is_brake = model argmax, not forced flag
-  D10  Per-node pixel-map cosine     — pairwise cosine sim matrix over selected nodes
+  D10  Per-node pixel-map cosine     — pairwise cosine sim matrix, up to 4 frames (own node selection each)
   D11  Bias fraction in decoder      — how much z+ denominator comes from bias
   D12  LRP output determinism        — same frame → identical maps on repeat call
   D13  LRPResidualAdd formula        — Ratio-Based Relevance Splitting (Otsuki et al. 2024)
@@ -1021,91 +1021,140 @@ class TFV6LRPDiagnostics:
 
     # ------------------------------------------------------------------
     # D10 — Per-node pixel map pairwise cosine similarity matrix
-    # FAIL criterion: min pairwise cosine > 0.9999 (all maps identical)
-    # WARN criterion: mean pairwise cosine > 0.90 (very low diversity)
+    # FAIL criterion: any tested frame has min pairwise cosine > 0.9999
+    #   (all maps identical in that frame -- node_id not reaching backward)
+    # WARN criterion: mean pairwise cosine across all frames > 0.90
     # ------------------------------------------------------------------
 
     def _d10_node_cosines(self, frames) -> TestResult:
         """
-        For the top-K selected F_c nodes (K = min(8, n_selected)), compute
-        all pairwise cosine similarities of their pixel maps.
+        For each of up to 4 frames, select that frame's own top-K F_c nodes
+        (K = min(8, n_selected)) and compute all pairwise cosine similarities
+        of their pixel maps. Reports both the pooled cosine distribution
+        (all frames' pairs together) and the per-frame mean, so a systematic
+        "nodes look alike" effect (consistent across frames -- likely a
+        property of the model/rules) can be distinguished from a one-frame
+        artifact (high variance across per-frame means).
 
-        All-identical maps (cosine ≈ 1.0 for every pair) means node_id is NOT
-        reaching the fc→input backward seed — this is the regression target for
-        Bug #1 (the original code used all-ones seeds regardless of node_id).
+        Originally single-frame (frame 0 only); extended 2026-07-02 after the
+        residual-conservation fix (LRPResidualAdd) raised the question of
+        whether skip-path-dominated relevance flow makes node maps more
+        self-similar as a systematic property, not a one-off. Node selection
+        is re-run per frame (relevant nodes are frame-dependent) rather than
+        reusing frame 0's node_ids.
 
-        Low mean cosine < 0.3 is also notable: it suggests high per-node specialization,
-        which is actually desirable but worth reporting.
+        All-identical maps in any one frame (cosine ≈ 1.0 for every pair)
+        means node_id is NOT reaching the fc→input backward seed there --
+        the original regression target for Bug #1 (all-ones seed regardless
+        of node_id).
+
+        Low mean cosine < 0.3 is also notable: it suggests high per-node
+        specialization, which is actually desirable but worth reporting.
         """
         if frames is None:
             return TestResult("D10_per_node_cosine_matrix", WARN, "No testframes — skipped.")
 
-        wide = _to_tensor(frames["wide_rgb"][0], self.device)
-        spd  = float(frames["speed"][0])
-        data = self._get_data(wide, spd, frames, 0)
-        rgb_x = self.lrp._prepare_input(wide)
+        N = min(len(frames["cmd"]), 4)
+        per_frame_mean: List[float] = []
+        per_frame_min:  List[float] = []
+        per_frame_K:    List[int]   = []
+        all_cosines:    List[float] = []
+        collapsed_frames: List[int] = []
+        skipped_frames:   List[int] = []
 
-        r_nodes, _ = self.lrp._attribute_to_fc(rgb_x, data, False, False)
-        node_ids   = _relevance_filter(r_nodes, 0.9)
+        for i in range(N):
+            wide  = _to_tensor(frames["wide_rgb"][i], self.device)
+            spd   = float(frames["speed"][i])
+            data  = self._get_data(wide, spd, frames, i)
+            rgb_x = self.lrp._prepare_input(wide)
 
-        K = min(8, len(node_ids))
-        if K < 2:
+            r_nodes, _ = self.lrp._attribute_to_fc(rgb_x, data, False, False)
+            node_ids   = _relevance_filter(r_nodes, 0.9)
+
+            K = min(8, len(node_ids))
+            if K < 2:
+                skipped_frames.append(i)
+                continue
+
+            probe_ids = node_ids[:K]
+            maps = []
+            for nid in probe_ids:
+                out, _, _, _ = self.lrp.forward_relevance(wide, narr_rgb=None,
+                                                           beg="fc", end="input", node_id=nid)
+                maps.append(_as_numpy(out).flatten())
+
+            cosines = []
+            for a in range(K):
+                for b in range(a + 1, K):
+                    cosines.append(_cosine(maps[a], maps[b]))
+
+            cos_arr = np.array(cosines)
+            per_frame_mean.append(float(cos_arr.mean()))
+            per_frame_min.append(float(cos_arr.min()))
+            per_frame_K.append(K)
+            all_cosines.extend(cosines)
+            if float(cos_arr.min()) > 0.9999:
+                collapsed_frames.append(i)
+
+        if not per_frame_mean:
             return TestResult("D10_per_node_cosine_matrix", WARN,
-                              f"Only {K} node(s) selected — need ≥ 2 for pairwise comparison.",
-                              {"n_nodes_selected": len(node_ids)})
+                              f"All {N} tested frame(s) had < 2 selected nodes -- "
+                              "cannot compute pairwise comparison.",
+                              {"n_frames_tested": N, "n_frames_skipped": len(skipped_frames)})
 
-        probe_ids = node_ids[:K]
-        maps = []
-        for nid in probe_ids:
-            out, _, _, _ = self.lrp.forward_relevance(wide, narr_rgb=None,
-                                                       beg="fc", end="input", node_id=nid)
-            maps.append(_as_numpy(out).flatten())
+        all_arr        = np.array(all_cosines)
+        frame_mean_arr = np.array(per_frame_mean)
+        n_frames_ok    = len(per_frame_mean)
+        n_pairs_total  = len(all_cosines)
+        mean_cos       = float(all_arr.mean())
+        min_cos        = float(all_arr.min())
+        max_cos        = float(all_arr.max())
+        frame_mean_std = float(frame_mean_arr.std())
 
-        n_pairs = K * (K - 1) // 2
-        cosines = []
-        for i in range(K):
-            for j in range(i + 1, K):
-                cosines.append(_cosine(maps[i], maps[j]))
-
-        cos_arr  = np.array(cosines)
-        min_cos  = float(cos_arr.min())
-        mean_cos = float(cos_arr.mean())
-        max_cos  = float(cos_arr.max())
-        std_cos  = float(cos_arr.std())
-
-        if min_cos > 0.9999:
+        if collapsed_frames:
             status  = FAIL
             summary = (
-                f"ALL {n_pairs} pairs have cosine > 0.9999 — node maps are IDENTICAL. "
-                "node_id is not reaching the backward seed (Bug #1 regression)."
+                f"{len(collapsed_frames)}/{n_frames_ok} frame(s) (indices {collapsed_frames}) "
+                "have ALL pairs cosine > 0.9999 -- node maps are IDENTICAL in at least one "
+                "frame (Bug #1 regression)."
             )
         elif mean_cos > 0.90:
             status  = WARN
             summary = (
-                f"Mean pairwise cosine = {mean_cos:.4f} > 0.90 across {K} nodes. "
-                "Very low per-node diversity — all nodes may be explaining similar features."
+                f"Mean pairwise cosine = {mean_cos:.4f} > 0.90 pooled across {n_frames_ok} "
+                f"frame(s), {n_pairs_total} pairs. Per-frame means range "
+                f"[{frame_mean_arr.min():.4f}, {frame_mean_arr.max():.4f}] "
+                f"(std={frame_mean_std:.4f}) -- "
+                f"{'consistent across frames (systematic)' if frame_mean_std < 0.02 else 'varies notably by frame'}."
             )
         else:
             status  = PASS
             summary = (
-                f"{K} nodes, {n_pairs} pairs: min cos={min_cos:.4f}, "
-                f"mean={mean_cos:.4f}, std={std_cos:.4f}."
+                f"{n_frames_ok} frame(s), {n_pairs_total} pairs: pooled mean cos={mean_cos:.4f}, "
+                f"min={min_cos:.4f}."
             )
 
         return TestResult("D10_per_node_cosine_matrix", status, summary,
                           metrics={
-                              "n_probe_nodes":   K,
-                              "n_pairs":         n_pairs,
-                              "cosine_min":      min_cos,
-                              "cosine_mean":     mean_cos,
-                              "cosine_max":      max_cos,
-                              "cosine_std":      std_cos,
-                              "node_ids_probed": probe_ids[:K],
+                              "n_frames_tested":     n_frames_ok,
+                              "n_frames_skipped":    len(skipped_frames),
+                              "n_frames_collapsed":  len(collapsed_frames),
+                              "n_pairs_total":       n_pairs_total,
+                              "cosine_mean_pooled":  mean_cos,
+                              "cosine_min_pooled":   min_cos,
+                              "cosine_max_pooled":   max_cos,
+                              "per_frame_mean_avg":  float(frame_mean_arr.mean()),
+                              "per_frame_mean_std":  frame_mean_std,
+                              "per_frame_K_mean":    float(np.mean(per_frame_K)),
                           },
-                          per_frame=cos_arr,
+                          per_frame=frame_mean_arr,
                           notes=[
-                              "cosine=1.0 for all pairs → node_id not routed to backward (Bug #1).",
-                              "Low std (< 0.05) → all nodes describe near-identical pixel patterns.",
+                              "cosine=1.0 for ALL pairs in a frame -> node_id not routed to backward (Bug #1).",
+                              "Low per_frame_mean_std (< 0.02) -> node self-similarity is systematic "
+                              "across frames, not a one-frame artifact.",
+                              "High per_frame_mean_std -> similarity varies by frame content -- worth "
+                              "inspecting low-similarity frames (more node-specific evidence available) "
+                              "separately from high-similarity ones (likely skip-path dominated).",
                           ])
 
     # ------------------------------------------------------------------
@@ -1373,10 +1422,21 @@ if __name__ == "__main__":
     parser.add_argument("--n-frames",  type=int, default=8, help="Number of frames to sample.")
     parser.add_argument("--out-dir",   type=str, default="tfv6_diagnostics_out",
                         help="Directory to save the report + per-frame arrays.")
+    parser.add_argument("--uitb", action="store_true",
+                        help="Use AlphaBeta(2,1) instead of (1,0) for Conv/FFN "
+                             "(retains some negative-activation relevance instead "
+                             "of discarding it -- candidate lever against relevance "
+                             "attenuation; see design_decisions.md).")
+    parser.add_argument("--zero-bias", action="store_true",
+                        help="Exclude bias terms from the AlphaBeta denominator for "
+                             "Linear layers (zennit zero_params='bias'), matching "
+                             "WoR/LBC's composite. No effect on Conv layers.")
     args = parser.parse_args()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
+    print(f"uitb (AlphaBeta 2,1): {args.uitb}")
+    print(f"zero_bias:            {args.zero_bias}")
 
     model_dir = _PROJECT_ROOT / "pcla_agents" / "transfuserv6_pretrained" / "visiononly_resnet34"
     with open(model_dir / "config.json") as f:
@@ -1396,7 +1456,8 @@ if __name__ == "__main__":
     model.load_state_dict(state_dict, strict=False)
     model.eval()
 
-    lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
+    lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder,
+                       uitb=args.uitb, zero_bias=args.zero_bias, device=device)
 
     frames_dir = Path(args.frames_dir) if args.frames_dir else Path(conf.BASELINE_DATA_DIR) / "frames"
     print(f"Loading {args.n_runs} run(s) from {frames_dir} ...")

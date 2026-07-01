@@ -327,6 +327,99 @@ Files changed: `ATOMs_Analysis/saliency/lrp_transfuser.py` (new
 `TFv6FullModelForLRP.__init__`, `_fuse`, `TransformerDecoderLayerExplicit.forward`
 updated), `ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py` (new D13).
 
+### HPC verification (2026-07-01) and what the numbers mean
+
+Ran via `hpc/submit_tfv6_lrp_diagnostics.sh` on Viper (CPU-only), 8 baseline
+frames. Result: **12 PASS, 1 WARN (D10), 0 FAIL.** Two numbers changed
+dramatically from the pre-fix documented baseline and are worth interpreting
+rather than just noting as "different":
+
+**D06 (backbone amplification budget) — `Σpixel_rel / Σnode_rel` went from a
+documented ~2×10⁷× (pre-fix, `lrp_todo.md` "Bug C" note) to ~1.07×10⁻⁴×
+(post-fix), stable across 8 frames (`CoV=0.19`, comparable to the pre-fix
+`CoV=0.15`).** This is interpreted as the fix working correctly, not a
+regression: `LRPResidualAdd` is provably exact-conserving at each junction
+(`R_a+R_b=R_z`, unit-tested by D13), so it cannot be *creating* the previous
+inflation — the ~2×10⁷ number could only have come from the old bug
+duplicating (not splitting) relevance at ~50+ junctions, which compounds
+multiplicatively. What's visible now is very likely the *true* behavior of
+z⁺/AlphaBeta LRP propagated through a network this deep (ResNet34 ×2 + 4 GPT
+blocks + 6-layer decoder): these rules are known to lose relevance through
+negative-activation clipping at every layer, and across dozens of layers
+that compounds into severe attenuation. The old duplication bug was masking
+this by continuously re-injecting relevance that should have been split, not
+copied. **Net conclusion: pixel-level LRP2 maps for TFV6 carry roughly four
+orders of magnitude less relevance "mass" than the F_c-level seed they were
+computed from.** This does not by itself invalidate ATOMs profiles (which
+are re-normalized downstream — see `NORMALIZE_BY_PIXEL_COUNT` /
+`get_hierarchical(normalize=True)`), since only the *relative* spatial
+distribution matters for the final profile, not the absolute scale. It does
+mean the SNR of any given pixel map is much smaller than it visually
+appeared to be before, and reinforces that this network's LRP is right at
+the edge of vanishing under z⁺/AlphaBeta.
+
+**D10 (per-node pixel-map diversity) — mean pairwise cosine 0.994 across 8
+probed F_c nodes (WARN, not FAIL: not literally 1.0, so node routing itself
+is not broken — see D10's own FAIL/WARN distinction).** A plausible
+mechanism, consistent with the "shape not just scale" warning above: after
+the first ReLU, every `BasicBlock`'s skip/shortcut value is already
+non-negative and typically larger in magnitude than the AlphaBeta-processed
+conv branch's output. Since `LRPResidualAdd` splits by `|a|`/`|b|`, more
+relevance rides the skip path than the node-specific conv path at every one
+of the ~16 BasicBlocks per encoder — and the skip path carries approximately
+the same signal regardless of which F_c node seeded the LRP2 backward pass.
+That would directly produce more self-similar per-node maps than before.
+Consistent with `pos_frac_mean` also rising (was ~0.993 post-Bug-C,
+pre-residual-fix; now ~0.9998): skip-path values are structurally
+non-negative, so a map dominated by that path skews further toward positive.
+**Caveat:** D10 only ever tests frame 0 regardless of how many frames are
+loaded (`_d10_node_cosines` hardcodes `frames["wide_rgb"][0]`) — this has
+not yet been checked across multiple frames or node subsets.
+
+**Candidate levers against the attenuation (2026-07-02, untested).**
+`LRPTFv6Model` gained two constructor flags, both mirroring options already
+used by WoR/LBC or already partially wired but never exposed for TFV6, so
+they can be A/B-tested via `--uitb`/`--zero-bias` on
+`tfv6_lrp_diagnostics.py` (or `UITB=1`/`ZERO_BIAS=1` on
+`hpc/submit_tfv6_lrp_diagnostics.sh`) without further code changes:
+
+- `zero_bias=True` → `zero_params='bias'` on the `AnyLinear` AlphaBeta rule,
+  matching WoR/LBC's composite (TFV6 never had this — an unintentional
+  inconsistency, not a deliberate choice). Expected impact: **small**. D11
+  already measures `target_speed_decoder`'s bias absorption at only 1-4%,
+  and `Convolution` layers use `bias=False` by ResNet convention (standard
+  practice: bias before BatchNorm is redundant), so this cannot touch the
+  majority of the network at all — it only affects the GPT fusion `mlp`
+  Linears, the PlanningDecoder FFN Linears, and `target_speed_decoder`.
+- `uitb=True` → `AlphaBeta(2,1)` instead of `(1,0)` for `Convolution` *and*
+  `AnyLinear` (existing constructor flag, already used this way for
+  WoR/LBC, just never passed for TFV6). Expected impact: **plausibly
+  larger**. `(1,0)` is pure z⁺ — it fully discards the negative-activation
+  contribution at *every* Conv/Linear layer in the ~50+-layer backbone.
+  `(2,1)` retains some of that (subject to α−β=1 for conservation), which is
+  the more likely dominant lever given AlphaBeta's clipping (not bias) is
+  the standing hypothesis for where the ~4-orders-of-magnitude attenuation
+  actually comes from.
+
+Bigger, riskier options *not* implemented yet, for if neither of the above
+moves D06's ratio meaningfully: ε-rule for Conv/FFN instead of AlphaBeta
+(closer to exact per-layer conservation, but risks reintroducing the
+near-zero-denominator sign-oscillation class of bug already hit once — "Bug
+C" — so would need the same kind of careful ε tuning); zennit's `Gamma` rule
+as a middle ground between z⁺ and signed ε; or a depth-dependent rule mix
+(γ/AlphaBeta(2,1) for early/middle backbone layers, ε/z⁺ only near F_c),
+which is the general guidance in Montavon et al. 2019 ("LRP: An Overview")
+for very deep networks but is a bigger redesign than a constructor flag.
+
+**Practical implication — recompute, don't just trust the old data.** All
+`baseline_{mode}.npz`, `test_profiles_{mode}.npy`, `val_profiles_{mode}.npy`,
+etc. currently on disk were computed *before* this fix, with the previous
+(duplicating) residual handling. Given the scale of the D06/D10 changes,
+these should be treated as stale for any conclusion beyond "the pipeline
+used to run" — re-run the baseline/test/val HPC pipelines with this code
+before drawing new OOD-AUC conclusions, especially before comparing against
+the WOR numbers in `ood_sweep_findings` memory.
+
 ---
 
 ## Bug fix: BaselineDataCollector path

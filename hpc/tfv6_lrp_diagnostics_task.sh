@@ -9,6 +9,13 @@
 #   OUT_DIR      output directory for the report + per-frame arrays
 #   N_RUNS       number of run files to load (default 2)
 #   N_FRAMES     number of frames to sample from the loaded runs (default 8)
+#
+# Optional rule-composite overrides (export before calling submit_*, e.g.
+# `UITB=1 bash hpc/submit_tfv6_lrp_diagnostics.sh ...`, same convention as
+# PGD_EPSILON for submit_test.sh) -- see LRPTFv6Model docstring for what
+# each does:
+#   UITB         1 -> AlphaBeta(2,1) instead of (1,0) for Conv/FFN
+#   ZERO_BIAS    1 -> exclude bias from the AlphaBeta denominator (AnyLinear only)
 
 #SBATCH -J tfv6_lrp_diag
 #SBATCH -o /ptmp/%u/tfv6_lrp_diag/logs/diag_%j.out
@@ -31,11 +38,17 @@ export PYTHONPATH="$CODE_DIR/hpc/stubs:$CODE_DIR:$CODE_DIR/pcla_agents/transfuse
 
 mkdir -p "$OUT_DIR" /ptmp/$USER/tfv6_lrp_diag/logs
 
+EXTRA_FLAGS=()
+[ "${UITB:-0}" = "1" ]      && EXTRA_FLAGS+=(--uitb)
+[ "${ZERO_BIAS:-0}" = "1" ] && EXTRA_FLAGS+=(--zero-bias)
+
 echo "=== TFV6 LRP Diagnostics (D01-D13) ==="
 echo "Frames dir : $FRAMES_DIR"
 echo "Out dir    : $OUT_DIR"
 echo "N_RUNS     : ${N_RUNS:-2}"
 echo "N_FRAMES   : ${N_FRAMES:-8}"
+echo "UITB       : ${UITB:-0}"
+echo "ZERO_BIAS  : ${ZERO_BIAS:-0}"
 echo "Node       : $(hostname)"
 echo "CPUs       : $SLURM_CPUS_PER_TASK"
 date
@@ -44,7 +57,8 @@ srun python3 "$CODE_DIR/ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py" \
     --frames-dir "$FRAMES_DIR" \
     --n-runs     "${N_RUNS:-2}" \
     --n-frames   "${N_FRAMES:-8}" \
-    --out-dir    "$OUT_DIR"
+    --out-dir    "$OUT_DIR" \
+    "${EXTRA_FLAGS[@]}"
 
 echo "Diagnostics finished with exit code $?"
 echo "Report: $OUT_DIR/tfv6_diagnostics_report.txt"
