@@ -18,6 +18,7 @@ tests the INTERNAL mathematical properties of LRP at each stage:
   D10  Per-node pixel-map cosine     — pairwise cosine sim matrix over selected nodes
   D11  Bias fraction in decoder      — how much z+ denominator comes from bias
   D12  LRP output determinism        — same frame → identical maps on repeat call
+  D13  LRPResidualAdd formula        — Ratio-Based Relevance Splitting (Otsuki et al. 2024)
 
 Design principles
 -----------------
@@ -53,6 +54,7 @@ import torch.nn.functional as F
 from ATOMs_Analysis.saliency.lrp_transfuser import (
     LRPSoftmax,
     LRPMatMul,
+    LRPResidualAdd,
     LRPTFv6Model,
 )
 from ATOMs_Analysis.saliency.atoms_carla import _relevance_filter
@@ -159,6 +161,7 @@ class TFV6LRPDiagnostics:
             ("D10_per_node_cosine_matrix",      self._d10_node_cosines),
             ("D11_decoder_bias_fraction",       self._d11_bias_fraction),
             ("D12_lrp_output_determinism",      self._d12_determinism),
+            ("D13_residual_add_formula",        self._d13_residual_add_formula),
         ]
 
         results: Dict[str, TestResult] = {}
@@ -319,6 +322,110 @@ class TFV6LRPDiagnostics:
                           notes=failures + [
                               "R_A = (R/denom)@B^T * A,  R_B = A^T@(R/denom) * B",
                               "Conservation: sum(R_A)+sum(R_B) ≈ sum(R_O) (within 5% due to eps).",
+                          ])
+
+    # ------------------------------------------------------------------
+    # D13 — LRPResidualAdd backward formula (Ratio-Based Relevance Splitting)
+    # FAIL criterion: any grad component off by > 1e-5 vs the reference
+    #   formula, conservation error > 1% outside the eps-dominated regime,
+    #   or the near-cancellation case explodes (max|R| > 10).
+    # Numbered out of sequence (added after D01-D12 already existed) —
+    # grouped here with the other pure-formula unit tests (D01, D02).
+    # ------------------------------------------------------------------
+
+    def _d13_residual_add_formula(self, _frames) -> TestResult:
+        """
+        Otsuki et al. 2024 (arXiv:2407.09115) Ratio-Based Relevance Splitting,
+        applied to residual/skip connections (Eq. 5):
+            z = a + b
+            R_a = R_z * |a| / (|a| + |b| + eps)
+            R_b = R_z * |b| / (|a| + |b| + eps)
+        so that R_a + R_b == R_z (exact conservation, up to eps).
+
+        Includes a near-cancellation case (a ~= -b, large magnitude) where a
+        SIGNED ratio (e.g. zennit's built-in Sum+Norm rule: a/(a+b+eps)) would
+        explode because a+b ~= 0 while |a|+|b| stays large — this is exactly
+        why LRPResidualAdd uses |a|, |b| instead of signed a, b (same
+        rationale as LRPMatMul.EPS above).
+        """
+        failures = []
+        eps = LRPResidualAdd.EPS
+
+        test_cases = [
+            # (a, b, R_z) -- generic mixed-sign, no exactly-zero elements
+            (torch.tensor([2.0, -1.0, 0.5]), torch.tensor([1.0, 1.0, -0.5]), torch.tensor([1.0, 1.0, 1.0])),
+            (torch.randn(4, 4), torch.randn(4, 4), torch.randn(4, 4)),
+            # both branches exactly zero -- fully eps-dominated, must not error/NaN
+            (torch.zeros(3), torch.zeros(3), torch.tensor([1.0, -1.0, 0.5])),
+            # near-cancellation: a ~= -b, large magnitude -> a+b ~= 0 but |a|+|b| >> 0
+            (torch.tensor([1000.0, -500.0]), torch.tensor([-999.999, 500.001]), torch.tensor([1.0, 1.0])),
+        ]
+
+        for ci, (a, b, R_z) in enumerate(test_cases):
+            a_in = a.clone().requires_grad_(True)
+            b_in = b.clone().requires_grad_(True)
+
+            a_abs, b_abs = a.abs(), b.abs()
+            denom   = a_abs + b_abs + eps
+            exp_R_a = R_z * a_abs / denom
+            exp_R_b = R_z * b_abs / denom
+
+            z = LRPResidualAdd.apply(a_in, b_in)
+
+            # Forward must be exactly a+b (relevance-splitting is backward-only).
+            fwd_err = float((z.detach() - (a + b)).abs().max().item())
+            if fwd_err > 1e-6:
+                failures.append(f"case {ci}: forward != a+b, max_err={fwd_err:.2e}")
+
+            z.backward(R_z)
+
+            if a_in.grad is None or b_in.grad is None:
+                failures.append(f"case {ci}: grad is None")
+                continue
+
+            err_a = float((a_in.grad - exp_R_a).abs().max().item())
+            err_b = float((b_in.grad - exp_R_b).abs().max().item())
+            if err_a > 1e-5:
+                failures.append(f"case {ci}: R_a max_err={err_a:.2e} > 1e-5")
+            if err_b > 1e-5:
+                failures.append(f"case {ci}: R_b max_err={err_b:.2e} > 1e-5")
+
+            # Conservation: sum(R_a) + sum(R_b) ~= sum(R_z), skipped when any
+            # element has |a|+|b| ~= 0 (eps-dominated regime intentionally
+            # absorbs relevance there, same convention as D02).
+            denom_min = float(denom.min().item())
+            if denom_min > 100 * eps:
+                sum_in  = float(a_in.grad.sum().item() + b_in.grad.sum().item())
+                sum_out = float(R_z.sum().item())
+                if abs(sum_out) > 1e-8:
+                    cons_err = abs(sum_in - sum_out) / abs(sum_out)
+                    if cons_err > 0.01:
+                        failures.append(
+                            f"case {ci}: conservation error {cons_err:.2%} > 1% "
+                            f"(sum_in={sum_in:.6f}, sum_out={sum_out:.6f})"
+                        )
+
+            # Robustness check on the near-cancellation case: R_a, R_b must
+            # stay bounded (no explosion) even though a+b ~= 0. A signed
+            # ratio (a/(a+b+eps)) would blow up to ~1e6 here.
+            if ci == 3:
+                max_R = float(max(a_in.grad.abs().max().item(), b_in.grad.abs().max().item()))
+                if max_R > 10.0:
+                    failures.append(
+                        f"case {ci}: near-cancellation case exploded, max|R|={max_R:.2e} "
+                        "(expected bounded output since |a|+|b| stays large despite a+b~=0)"
+                    )
+
+        status  = FAIL if failures else PASS
+        summary = (f"All {len(test_cases)} cases match Ratio-Based Splitting (Eq. 5) and conserve."
+                   if not failures else f"{len(failures)} failure(s).")
+        return TestResult("D13_residual_add_formula", status, summary,
+                          metrics={"n_cases": len(test_cases), "n_failures": len(failures)},
+                          notes=failures + [
+                              "R_a = R_z*|a|/(|a|+|b|+eps),  R_b = R_z*|b|/(|a|+|b|+eps).",
+                              "Conservation: sum(R_a)+sum(R_b) ~= sum(R_z) outside eps-dominated regime.",
+                              "Near-cancellation (a~=-b) must stay bounded -- this is why |a|,|b| "
+                              "(not signed a,b) are used in the denominator.",
                           ])
 
     # ------------------------------------------------------------------

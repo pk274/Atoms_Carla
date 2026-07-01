@@ -186,7 +186,146 @@ Without canonization, BatchNorm is not merged into the preceding Conv.
 introduce small relevance-conservation errors.  Acceptable for the thesis;
 proper canonization would eliminate this.
 
-Residual additions in ResNet and GPT are handled automatically by autograd.
+**Update (2026-07-01): the BatchNorm gap above was closed** — `_create_composite`
+now passes `canonizers=[SequentialMergeBatchNorm()]` (a generic, type-agnostic
+canonizer that matches Conv/Linear→BatchNorm pairs by structural adjacency, not
+by ResNet-specific class, so it works for timm's `BasicBlock` without adaptation;
+see `docs/lrp_todo.md` Issue 7).
+
+**The claim "residual additions in ResNet and GPT are handled automatically by
+autograd" above was WRONG and has been retracted** — see the dedicated entry
+below ("TFV6 LRP: residual/skip-connection conservation").  "Handled by
+autograd" was true only in the sense that autograd computes *something*; that
+something silently duplicates relevance at every residual junction rather than
+conserving it, since `d(a+b)/da = d(a+b)/db = 1`.
+
+---
+
+## TFV6 LRP: residual/skip-connection conservation (2026-07-01)
+
+**Problem, found while reviewing Otsuki et al. 2024 ("Layer-Wise Relevance
+Propagation with Conservation Property for ResNet", arXiv:2407.09115) against
+this codebase.** Every `+` in this model that joins a skip/residual branch
+with a computed branch — the ResNet34 `BasicBlock` skip connections (image
+*and* lidar encoders), the GPT fusion blocks' two residual streams, the
+backbone's cross-modal fuse (`image_features + img_out`), and the
+PlanningDecoder's self-attn/cross-attn/FFN residuals — was a raw tensor `+`,
+never intercepted by any LRP rule. Standard autograd differentiates `z = a+b`
+as `dz/da = dz/db = 1`, so the *full* upstream relevance is copied to *both*
+branches instead of being split between them. With ~50+ such junctions
+between the input and F_c, none of them conserved relevance, and the
+duplication compounds across every one.
+
+This is exactly the failure mode Otsuki et al. formalize and fix for plain
+ResNets (their "Relevance Splitting" at the point where a skip connection
+reconverges with its residual block). Their result: fixing it doesn't just
+restore the conservation *property* — it materially changes attribution
+*quality* (Insertion/Deletion/ID score in their Table 1/2), because the
+duplication factor is not spatially uniform (it depends on how many
+skip-hops vs. conv-hops a given feature's path takes), so it distorts the
+*shape* of the map, not just its scale. Since ATOMs' whole premise is that
+profile *shape* carries the OOD signal, this was a real confound, not a
+cosmetic one.
+
+**Also found while investigating:** WoR's `lrp_analysis.py` uses
+`zennit.torchvision.ResNetCanonizer`, whose docstring implies it "handles
+BasicBlock skip connections" — but `ResNetCanonizer` matches via
+`isinstance(module, torchvision.models.resnet.BasicBlock)`, and WoR's
+backbone (`pcla_agents/wor/common/resnet.py`) defines its **own** standalone
+`BasicBlock`/`Bottleneck` classes (not subclassing torchvision's), so the
+isinstance check silently fails and the canonizer is a no-op there. WoR is
+out of scope for this fix (per user direction, 2026-07-01) but the same class
+of bug is worth remembering if WoR is revisited.
+
+**Fix — `LRPResidualAdd`** (`ATOMs_Analysis/saliency/lrp_transfuser.py`): a
+`torch.autograd.Function` implementing the paper's **Ratio-Based Relevance
+Splitting** (Eq. 5) directly, rather than routing through zennit's
+`Sum`+`Norm`/`Epsilon` machinery:
+```
+forward(a, b)  = a + b                              # unchanged forward value
+backward(R)    = (R * |a| / (|a|+|b|+eps),
+                   R * |b| / (|a|+|b|+eps))          # R_a + R_b == R
+```
+
+**Why absolute value, not zennit's signed `Norm` rule (`a/(a+b+eps)`):**
+zennit's own `ResNetCanonizer` pairs its `Sum` wrapping with the `Norm` rule
+in `layer_map_base()`, which uses the *signed* forward value `z=a+b` as the
+denominator. That collapses when `a` and `b` are similar magnitude but
+opposite sign (`a+b ≈ 0` while `|a|+|b| ≫ 0`) — division by a near-zero
+signed denominator explodes. This is the exact same failure class already
+hit once in this file: `LRPMatMul.EPS` uses `2*O + eps*sign(O)` for the same
+reason, and `docs/lrp_todo.md` "Bug C" documents a real ~1e14× explosion from
+a near-zero ε-rule denominator. Using `|a|+|b|+eps` in the denominator can
+only be small when *both* branches are near zero — never from sign
+cancellation — so it inherits none of that instability. Confirmed by
+diagnostic D13 (`tfv6_lrp_diagnostics.py`), which includes a
+near-cancellation case (`a≈-b`, large magnitude) that a signed ratio would
+blow up on (~1e6×) but `LRPResidualAdd` keeps bounded (~0.5).
+
+**Scope of the fix — every residual junction, not just ResNet Bottlenecks.**
+The paper only discusses literal ResNet Bottleneck/BasicBlock modules, but
+Ratio-Based Splitting is architecture-agnostic: given any `z = a+b`, split by
+`|a|`/`|b|` regardless of what the branches represent. Applied at:
+1. **ResNet34 `BasicBlock`** (`_basic_block_forward_explicit`, both
+   `image_encoder` and `lidar_encoder` — both are `resnet34`). timm's
+   `BasicBlock.forward` is reimplemented faithfully (conv1→bn1→drop_block→
+   act1→aa→conv2→bn2→se?→drop_path?→**add**→act2) with only the add
+   replaced, matching timm's actual source (fetched from
+   `timm/models/resnet.py`, `timm>=1.0.0` per `hpc/requirements_hpc.txt`).
+2. **GPT fusion `Block`** (`_gpt_block_forward_explicit`): both
+   `x + self.attn(...)` and `x + self.mlp(...)`.
+3. **Backbone cross-modal fuse** (`TFv6FullModelForLRP._fuse`):
+   `image_features + img_out`, `lidar_features + lid_out`.
+4. **PlanningDecoder** (`TransformerDecoderLayerExplicit.forward`): the
+   self-attn, cross-attn, and FFN residual adds (3 per layer × 6 layers).
+
+**Deliberately left untouched — `pos_emb + token_embeddings` (GPT) and
+`scores + attn_mask` (MultiheadAttentionExplicit).** These are not two
+*competing* computed branches; one side is a fixed parameter (positional
+embedding) or a constant/unused mask (never non-None in this codebase's call
+sites), analogous to a Linear layer's bias — under z+/AlphaBeta, biases
+already don't "compete" for relevance the way a genuine input branch does.
+Splitting relevance there would misattribute mass to a dead-end that has no
+path back to the input pixels anyway (irrelevant for `d(output)/d(rgb_x)`,
+since autograd only traverses the subgraph needed for the requested input).
+
+**Why `image_encoder`/`lidar_encoder` are now deep-copied.** They previously
+aliased the live driving-agent backbone (`self.image_encoder =
+backbone.image_encoder`, "shared, read-only" per the old comment). Patching
+`BasicBlock.forward` in place would have changed inference for the live
+agent, not just LRP. They are now `copy.deepcopy`d in
+`TFv6FullModelForLRP.__init__` before patching — consistent with
+`transformers` and `planning_decoder`, which were already deep-copied for
+the same reason. The patch only changes *backward* behavior
+(`LRPResidualAdd.forward` still returns `a+b` unchanged), so
+`get_backbone_features()` and other no-grad forward-only paths through the
+copies remain numerically identical to going through the original backbone.
+
+**Guard against a silent no-op repeat of the WoR bug.**
+`_patch_resnet_basic_blocks` returns the number of blocks it patched, and
+`TFv6FullModelForLRP.__init__` asserts this is `> 0` for both encoders. A
+future timm version renaming/restructuring `BasicBlock` would fail loudly
+here instead of silently reproducing exactly the isinstance-mismatch bug
+found in WoR's `ResNetCanonizer` usage above. The same function also raises
+if it finds any `Bottleneck` block (resnet50+), since that has a different
+forward structure not yet covered.
+
+**Verification.** D13 (`tfv6_lrp_diagnostics.py`) unit-tests the
+`LRPResidualAdd` formula and conservation with no model required. The
+existing D06 diagnostic ("backbone amplification budget", `Σpixel_rel /
+Σnode_rel`) should be re-run on the HPC after this change — it was
+previously documented (`docs/lrp_todo.md` "Bug C" note) as showing a stable
+but large (~2×10⁷×) amplification attributed to residual connections; this
+fix is expected to reduce that substantially. Not yet confirmed against a
+live model/GPU (this change was authored and reviewed on a machine without
+CUDA/timm installed) — run `TFV6LRPDiagnostics.run_all_tests()` (D01–D13) on
+HPC before trusting new baseline/test profiles produced with this code.
+
+Files changed: `ATOMs_Analysis/saliency/lrp_transfuser.py` (new
+`LRPResidualAdd`, `_basic_block_forward_explicit`,
+`_patch_resnet_basic_blocks`, `_gpt_block_forward_explicit`;
+`TFv6FullModelForLRP.__init__`, `_fuse`, `TransformerDecoderLayerExplicit.forward`
+updated), `ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py` (new D13).
 
 ---
 

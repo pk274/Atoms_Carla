@@ -197,9 +197,10 @@ def load_gmm(mode: int) -> tuple[np.ndarray, np.ndarray]:
         raise FileNotFoundError(f"GMM not found: {path}")
     gmm   = np.load(path, allow_pickle=True)
     means = gmm["means"].astype(np.float64)           # (K, D)
-    covs  = gmm["covariances"].astype(np.float64)     # (K, D, D)
-    ridge = float(gmm["ridge"])
+    covs  = gmm["covariances"].astype(np.float64)     # (K, D, D) — shrinkage already applied at fit time
     D     = means.shape[1]
+    # Small ridge for numerical stability only, matching DistanceComputer.compute_mahalanobis default.
+    ridge = 1e-6
     inv_covs = np.stack([inv(c + ridge * np.eye(D)) for c in covs])  # (K, D, D)
     return means, inv_covs
 

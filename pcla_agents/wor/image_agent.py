@@ -209,13 +209,13 @@ class ImageAgent(AutonomousAgent):
         #FSGM Injection
         if conf.PERTURBATION == "fgsm" and timestamp >= conf.INJECTION_TIME:
                 wide_rgbs_, _narr_rgb = self.pm.fgsm_attack(self.image_model, wide_rgbs_, _narr_rgb,
-                                                cmd_value, target="steer_right", epsilon=conf.EPSILON, apply_to_narrow=False)
+                                                cmd_value, target="steer_right", epsilon=conf.WOR_EPSILON, apply_to_narrow=False)
                 rgb = wide_rgbs_.detach().cpu().squeeze(0).permute(1, 2, 0).numpy()
                 rgb = rgb.clip(0, 255).astype(np.uint8)
                 rgb = rgb[..., ::-1]  # only if needed (BGR → RGB)
         elif conf.PERTURBATION == "pgd" and timestamp >= conf.INJECTION_TIME:
                 wide_rgbs_, _narr_rgb = self.pm.pgd_attack(self.image_model, wide_rgbs_, _narr_rgb,
-                                                cmd_value, target="max_steer", epsilon=conf.EPSILON, apply_to_narrow=False)
+                                                cmd_value, target="max_steer", epsilon=conf.WOR_EPSILON, apply_to_narrow=False)
                 rgb = wide_rgbs_.detach().cpu().squeeze(0).permute(1, 2, 0).numpy()
                 rgb = rgb.clip(0, 255).astype(np.uint8)
                 rgb = rgb[..., ::-1]  # only if needed (BGR → RGB)

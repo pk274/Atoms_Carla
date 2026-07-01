@@ -178,21 +178,47 @@ directly — it needs adaptation.
 
 ---
 
-## Design Issue 8 — LOW: Residual connections handled by autograd
+## Design Issue 8 — RESOLVED (2026-07-01): Residual connections handled by autograd
 
-**File:** `transfuser_backbone.py:389-391`, `Block.forward`
+**File (original problem sites):** `transfuser_backbone.py:389-391` (`Block.forward`),
+plus (found not to be limited to GPT blocks — see below) the ResNet34
+`BasicBlock` skip connections in both `image_encoder` and `lidar_encoder`,
+the backbone's cross-modal `_fuse`, and the PlanningDecoder's self-attn/
+cross-attn/FFN residuals.
 
 ```python
 x = x + self.attn(self.ln1(x))
 x = x + self.mlp(self.ln2(x))
 ```
 
-**Problem:** For perfect LRP conservation, relevance at a residual addition
-should be distributed proportionally between the skip path and the computation
-path (ε-rule on the sum).  Standard autograd does chain-rule gradient instead.
+**Original assessment (superseded):** "Widely accepted simplification in LRP
+literature; no clean zennit fix without implementing a custom rule for
+elementwise addition." This turned out to be too pessimistic — Otsuki et al.
+2024 (arXiv:2407.09115) formalize exactly this problem for ResNet and provide
+a fix (Relevance Splitting) that generalizes cleanly to any two-branch
+additive junction, not just literal ResNet Bottlenecks. It also turned out to
+be a bigger problem than "LOW" suggested: since duplication is not spatially
+uniform, it distorts attribution *shape*, not just scale — see
+`docs/design_decisions.md` "TFV6 LRP: residual/skip-connection conservation"
+for the full analysis and why the "amplification cancels in ATOMs
+normalization" framing implicit in Issue 7 below was optimistic.
 
-**Status:** Widely accepted simplification in LRP literature; no clean zennit
-fix without implementing a custom rule for elementwise addition.
+**Fix:** `LRPResidualAdd` (`torch.autograd.Function` in `lrp_transfuser.py`)
+implements Ratio-Based Relevance Splitting (`R_a = R*|a|/(|a|+|b|+eps)`,
+symmetric for `R_b`) and is applied at every residual junction in the TFV6
+model: ResNet34 `BasicBlock` (both encoders), GPT fusion `Block`, backbone
+`_fuse`, and `TransformerDecoderLayerExplicit`. Full rationale, scope, and
+what was deliberately left untouched (`pos_emb`, `attn_mask`) is documented
+in `docs/design_decisions.md`. Unit-tested by D13 in
+`tfv6_lrp_diagnostics.py`. **Not yet verified against a live model on
+HPC/GPU** — this fix was authored on a machine without CUDA/timm; run the
+full D01–D13 diagnostic suite before trusting new profiles.
+
+**WoR note (out of scope for this fix, per user direction 2026-07-01):** WoR's
+`ResNetCanonizer` usage has the *same* underlying bug for a different reason
+— its `isinstance` check never matches WoR's standalone `BasicBlock`/
+`Bottleneck` classes in `pcla_agents/wor/common/resnet.py`, so the canonizer
+silently no-ops. Worth revisiting if WoR work resumes.
 
 ---
 
@@ -224,6 +250,7 @@ and Bug 4 (normalised node weights).
 7. **Bug B** — negative node weights corrupt ATOMs `_hierarchical` (found 2026-05-28) ✅ DONE
 8. **Issue 7** — BatchNorm canonization ✅ DONE (2026-05-28)
 9. **Bug C** — ε=1e-6 for AttentionLinear caused relevance explosion and sign oscillation ✅ DONE (2026-05-28)
+10. **Issue 8** — residual/skip connections duplicated relevance instead of conserving it ✅ DONE (2026-07-01, not yet HPC-verified)
 
 **Bug C details:** ε=1e-6 in the ε-rule for Q/K/V/proj linear layers caused near-zero denominators
 (LayerNorm outputs have near-zero pre-activation sums in some neurons), producing ~10¹⁴× amplification
@@ -232,6 +259,17 @@ negative), CoV=2.67 (frame-to-frame profiles were incomparable noise). Fix: ε=1
 amplification ~2×10⁷ (residual connections, systematic and cancels in ATOMs normalization),
 pos_frac=0.993, CoV=0.15. ε=1e-2 is the dominant source of improvement; BN canonization reduced
 amplification by an additional ~100×.
+
+**Note on "cancels in ATOMs normalization" above (added 2026-07-01):** this was
+the working assumption before Issue 8 was understood in detail. It's only
+strictly true if the ~2×10⁷× duplication factor is spatially/channel-uniform.
+Otsuki et al.'s own ablation (their Table 2 / Fig. 6) shows fixing exactly
+this kind of bug changes attribution *shape* (background dispersion vs.
+object focus), not just scale — implying the duplication factor plausibly
+varies with how many skip-hops vs. conv-hops a pixel's path takes. Re-run D06
+after the Issue 8 fix and compare against this ~2×10⁷ baseline to check
+whether the amplification magnitude *also* drops, which would confirm it was
+not purely a harmless uniform scalar.
 
 ---
 
@@ -349,7 +387,12 @@ output even from a positive seed.
 ---
 
 Remaining:
-- Nothing blocking. Issue 7 resolved 2026-05-28.
+- Issue 8 (residual/skip-connection conservation) fixed 2026-07-01 but **not yet
+  verified against a live model on HPC/GPU** — this environment has no CUDA/timm.
+  Run `TFV6LRPDiagnostics.run_all_tests()` (D01–D13, especially D06 amplification
+  and the new D13) on real frames before trusting profiles produced with this code.
+- WoR has the same underlying bug (`ResNetCanonizer` isinstance mismatch,
+  see Issue 8 note above) but is out of scope per user direction (2026-07-01).
 
 ---
 

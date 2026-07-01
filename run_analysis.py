@@ -708,7 +708,7 @@ if conf.REAPPLY_PERTURBATIONS or not _labeled_npz.exists():
             PerturbationEntry(fraction=0.20, perturbation="gaussian_noise",   intensity=conf.NOISE_INTENSITY),
             PerturbationEntry(fraction=0.20, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
             PerturbationEntry(fraction=0.2,  perturbation="camera_loss",      intensity=0),
-            PerturbationEntry(fraction=0.2,  perturbation="pgd",              intensity=conf.EPSILON, fgsm_target="max_steer"),
+            PerturbationEntry(fraction=0.2,  perturbation="pgd",              intensity=conf.WOR_EPSILON, fgsm_target="max_steer"),
         ])
 
     applier = PerturbationApplier(pm, model)

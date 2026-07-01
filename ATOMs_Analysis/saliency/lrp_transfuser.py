@@ -38,6 +38,17 @@ Planning decoder:
     MultiheadAttentionExplicit replaces nn.MultiheadAttention.
     Both use LRPSoftmax and LRPMatMul for AttnLRP-compliant backward.
 
+Residual/skip connections (ResNet34 backbone, GPT fusion, PlanningDecoder):
+    Every `+` in this model (BasicBlock skip connections, GPT block residual
+    streams, backbone cross-modal fusion, decoder self/cross-attn + FFN
+    residuals) is replaced with LRPResidualAdd, which implements Ratio-Based
+    Relevance Splitting (Otsuki et al. 2024, arXiv:2407.09115) instead of
+    raw autograd. Without this, `d(a+b)/da = d(a+b)/db = 1` sends the FULL
+    upstream relevance to BOTH branches at every residual junction — with
+    ~50+ such junctions in this model, relevance is duplicated rather than
+    conserved throughout. See design_decisions.md for the analysis and why
+    an absolute-value ratio (not zennit's signed `Norm` rule) is used.
+
 See design_decisions.md for rationale.
 """
 
@@ -48,6 +59,8 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from timm.models.resnet import BasicBlock as TimmBasicBlock, Bottleneck as TimmBottleneck
 
 from zennit.rules import Pass, WSquare, AlphaBeta, Epsilon
 from zennit.types import Convolution, Activation
@@ -110,6 +123,55 @@ class LRPMatMul(torch.autograd.Function):
         R_A = torch.matmul(scaled_R, B.transpose(-2, -1)) * A
         R_B = torch.matmul(A.transpose(-2, -1), scaled_R) * B
         return R_A, R_B
+
+
+# ---------------------------------------------------------------------------
+# Residual/skip-connection relevance splitting (Otsuki et al. 2024)
+# ---------------------------------------------------------------------------
+
+class LRPResidualAdd(torch.autograd.Function):
+    """
+    Ratio-Based Relevance Splitting for residual/skip connections.
+
+    Otsuki et al. 2024, "Layer-Wise Relevance Propagation with Conservation
+    Property for ResNet" (arXiv:2407.09115), Eq. 5.  Plain autograd through
+    z = a + b sends the FULL upstream relevance to BOTH a and b (since
+    dz/da = dz/db = 1), silently duplicating relevance at every residual
+    junction instead of splitting it.  This model has ~50+ such junctions
+    (ResNet34 image/lidar encoders, GPT cross-modal fusion, backbone fusion,
+    PlanningDecoder self/cross-attn + FFN residuals) — left unguarded, none
+    of them conserve relevance, and the duplication compounds across every
+    one of them.
+
+    This Function splits relevance in proportion to each branch's absolute
+    forward contribution:
+        R_a = R_z * |a| / (|a| + |b| + eps)
+        R_b = R_z * |b| / (|a| + |b| + eps)
+    so that R_a + R_b == R_z (exact conservation, up to the eps stabilizer).
+
+    Absolute value (not signed, unlike zennit's built-in `Sum` + `Norm` rule
+    pairing, which zennit's own ResNetCanonizer uses for torchvision ResNets)
+    avoids denominator collapse when a and b are similar magnitude but
+    opposite sign (a+b ~ 0 while |a|+|b| >> 0) — the same failure mode
+    LRPMatMul.EPS guards against above, and the same class of instability
+    documented in docs/lrp_todo.md "Bug C" (near-zero ε-rule denominators
+    causing ~1e14x amplification with sign oscillation).
+    """
+    EPS = 1e-6
+
+    @staticmethod
+    def forward(ctx, a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(a, b)
+        return a + b
+
+    @staticmethod
+    def backward(ctx, R: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        a, b = ctx.saved_tensors
+        a_abs, b_abs = a.abs(), b.abs()
+        denom = a_abs + b_abs + LRPResidualAdd.EPS
+        R_a = R * a_abs / denom
+        R_b = R * b_abs / denom
+        return R_a, R_b
 
 
 # ---------------------------------------------------------------------------
@@ -332,16 +394,16 @@ class TransformerDecoderLayerExplicit(nn.Module):
         # Self-attention
         tgt2, _ = self.self_attn(tgt, tgt, tgt, attn_mask=tgt_mask,
                                  key_padding_mask=tgt_key_padding_mask)
-        tgt = self.norm1(tgt + tgt2)
+        tgt = self.norm1(LRPResidualAdd.apply(tgt, tgt2))
 
         # Cross-attention
         tgt2, _ = self.cross_attn(tgt, memory, memory, attn_mask=memory_mask,
                                    key_padding_mask=memory_key_padding_mask)
-        tgt = self.norm2(tgt + tgt2)
+        tgt = self.norm2(LRPResidualAdd.apply(tgt, tgt2))
 
         # FFN
         tgt2 = self.linear2(self.activation(self.linear1(tgt)))
-        tgt  = self.norm3(tgt + tgt2)
+        tgt  = self.norm3(LRPResidualAdd.apply(tgt, tgt2))
         return tgt
 
 
@@ -358,6 +420,86 @@ class NormalizeImageNet(nn.Module):
         mean = self.MEAN.to(x.device, dtype=x.dtype)
         std  = self.STD.to(x.device,  dtype=x.dtype)
         return (x / 255.0 - mean) / std
+
+
+# ---------------------------------------------------------------------------
+# Residual-block patching helpers (ResNet34 encoders + GPT fusion blocks)
+# ---------------------------------------------------------------------------
+
+def _basic_block_forward_explicit(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Drop-in replacement for timm.models.resnet.BasicBlock.forward with the
+    residual add routed through LRPResidualAdd instead of the raw
+    `x += shortcut`. Mirrors timm's own forward (timm/models/resnet.py)
+    exactly except for that one line — if a future timm version changes the
+    BasicBlock forward structure, update this to match.
+    """
+    shortcut = x
+
+    x = self.conv1(x)
+    x = self.bn1(x)
+    x = self.drop_block(x)
+    x = self.act1(x)
+    x = self.aa(x)
+
+    x = self.conv2(x)
+    x = self.bn2(x)
+
+    if self.se is not None:
+        x = self.se(x)
+    if self.drop_path is not None:
+        x = self.drop_path(x)
+
+    if self.downsample is not None:
+        shortcut = self.downsample(shortcut)
+
+    x = LRPResidualAdd.apply(x, shortcut)
+    x = self.act2(x)
+    return x
+
+
+def _patch_resnet_basic_blocks(module: nn.Module) -> int:
+    """
+    Monkey-patch every timm ResNet BasicBlock inside `module` in place so its
+    residual add uses LRPResidualAdd. `module` must be a private deep copy
+    (never the live driving-agent backbone), since this mutates instance
+    `.forward` bindings and would otherwise change inference outside of LRP.
+
+    Raises if any Bottleneck block is found (resnet50+): those have a
+    different forward structure and are not covered by this function.
+
+    Returns the number of BasicBlocks patched, so callers can assert the
+    patch actually found something — silently matching zero blocks (e.g.
+    from a class/version mismatch) would reproduce exactly the WoR
+    ResNetCanonizer bug this fix is meant to avoid (see design_decisions.md).
+    """
+    n_patched = 0
+    n_bottleneck = 0
+    for m in module.modules():
+        if isinstance(m, TimmBasicBlock):
+            m.forward = _basic_block_forward_explicit.__get__(m, type(m))
+            n_patched += 1
+        elif isinstance(m, TimmBottleneck):
+            n_bottleneck += 1
+    if n_bottleneck > 0:
+        raise NotImplementedError(
+            f"{n_bottleneck} timm Bottleneck block(s) found (e.g. resnet50+); "
+            "_patch_resnet_basic_blocks only handles BasicBlock (resnet18/34). "
+            "Extend it to cover Bottleneck before switching to a deeper backbone."
+        )
+    return n_patched
+
+
+def _gpt_block_forward_explicit(self, x: torch.Tensor) -> torch.Tensor:
+    """
+    Drop-in replacement for transfuser_backbone.Block.forward with both
+    residual adds routed through LRPResidualAdd instead of raw `+`.
+    self.attn must already be a SelfAttentionExplicit (AttnLRP-aware) —
+    this is assigned by the caller before binding this forward.
+    """
+    x = LRPResidualAdd.apply(x, self.attn(self.ln1(x)))
+    x = LRPResidualAdd.apply(x, self.mlp(self.ln2(x)))
+    return x
 
 
 # ---------------------------------------------------------------------------
@@ -388,24 +530,46 @@ class TFv6FullModelForLRP(nn.Module):
 
         cfg = backbone.config
 
-        # --- Backbone components (shared, read-only) ---
-        self.config              = cfg
-        self.image_encoder       = backbone.image_encoder
-        self.lidar_encoder       = backbone.lidar_encoder
-        self.lidar_channel_to_img= backbone.lidar_channel_to_img
-        self.img_channel_to_lidar= backbone.img_channel_to_lidar
-        self.avgpool_img         = backbone.avgpool_img
-        self.avgpool_lidar       = backbone.avgpool_lidar
+        # --- Backbone components ---
+        self.config               = cfg
+        self.lidar_channel_to_img = backbone.lidar_channel_to_img
+        self.img_channel_to_lidar = backbone.img_channel_to_lidar
+        self.avgpool_img          = backbone.avgpool_img
+        self.avgpool_lidar        = backbone.avgpool_lidar
         # NormalizeImageNet instead of fn.normalize_imagenet: the functional
         # version uses x.clone() + in-place channel writes, which create
         # CopySlices autograd nodes that break zennit hook pairing.
-        self.normalize           = NormalizeImageNet()
+        self.normalize            = NormalizeImageNet()
+
+        # image_encoder / lidar_encoder are deep-copied — NOT shared with the
+        # live driving-agent backbone — because their BasicBlock residual
+        # connections are monkey-patched below to route through
+        # LRPResidualAdd instead of raw `+=`; mutating the live model's
+        # forward would change inference outside of LRP. The patch only
+        # changes backward/relevance, not forward values (LRPResidualAdd.
+        # forward returns a+b unchanged), so get_backbone_features() and other
+        # no-grad forward-only paths through these copies stay numerically
+        # identical to going through the original backbone.
+        self.image_encoder = copy.deepcopy(backbone.image_encoder)
+        self.lidar_encoder = copy.deepcopy(backbone.lidar_encoder)
+        n_img_blocks = _patch_resnet_basic_blocks(self.image_encoder)
+        n_lid_blocks = _patch_resnet_basic_blocks(self.lidar_encoder)
+        assert n_img_blocks > 0, (
+            "image_encoder: no timm BasicBlock found to patch for "
+            "LRPResidualAdd — did the backbone architecture change from resnet34?"
+        )
+        assert n_lid_blocks > 0, (
+            "lidar_encoder: no timm BasicBlock found to patch for "
+            "LRPResidualAdd — did the backbone architecture change from resnet34?"
+        )
 
         # Deep-copy transformers → replace SelfAttention with explicit
+        # attention, and patch the block-level residual adds.
         self.transformers = copy.deepcopy(backbone.transformers)
         for gpt in self.transformers:
             for block in gpt.blocks:
                 block.attn = SelfAttentionExplicit.from_module(block.attn)
+                block.forward = _gpt_block_forward_explicit.__get__(block, type(block))
 
         # --- Planning decoder components (deep-copied) ---
         pd = copy.deepcopy(planning_decoder)
@@ -475,7 +639,10 @@ class TFv6FullModelForLRP(nn.Module):
         lid_out = F.interpolate(lid_out, size=lidar_features.shape[2:],
                                 mode="bilinear", align_corners=False)
 
-        return image_features + img_out, lidar_features + lid_out
+        return (
+            LRPResidualAdd.apply(image_features, img_out),
+            LRPResidualAdd.apply(lidar_features, lid_out),
+        )
 
     def _run_backbone(
         self, rgb: torch.Tensor
