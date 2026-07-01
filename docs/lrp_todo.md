@@ -226,6 +226,22 @@ changes: D06's amplification ratio and D10's per-node cosine.
 `Bottleneck` classes in `pcla_agents/wor/common/resnet.py`, so the canonizer
 silently no-ops. Worth revisiting if WoR work resumes.
 
+**Attenuation follow-up, tested and closed (2026-07-02):** `uitb=True` and
+`zero_bias=True` (both pre-existing `LRPTFv6Model` constructor flags,
+`--uitb`/`--zero-bias` on `tfv6_lrp_diagnostics.py`) were A/B-tested against
+the ~4-orders-of-magnitude D06 attenuation revealed by the fix above.
+**Verdict: `uitb` rejected** — its abs-value D06 ratio (added specifically
+to settle this, see D06 in `tfv6_lrp_diagnostics.py`) is *lower* than
+default's (6.56e-5 vs 1.03e-4), and it collapses D08 brake/drive
+distinctiveness from ~0.95 to ~0.25 cosine. `zero_bias` is harmless but
+negligible (D05 conservation → exactly 1.0, no measurable D06/D08/D10
+effect) — safe to enable, doesn't move the needle. Full numbers and
+reasoning in `docs/design_decisions.md` ("Verdict (2026-07-02,
+HPC-verified)"). The remaining attenuation is treated as a genuine property
+of AlphaBeta/z⁺ at this depth, not a bug; ε-rule/Gamma/depth-dependent
+mixing remain untested and are deferred pending an actual OOD-AUC
+regression, not chased pre-emptively.
+
 ---
 
 ## Design Issue 9 — LOW: `_give_element_selectivity` normalises by non-zero pixels

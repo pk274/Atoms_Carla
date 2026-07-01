@@ -411,6 +411,60 @@ as a middle ground between z⁺ and signed ε; or a depth-dependent rule mix
 which is the general guidance in Montavon et al. 2019 ("LRP: An Overview")
 for very deep networks but is a bigger redesign than a constructor flag.
 
+**Verdict (2026-07-02, HPC-verified): neither flag fixes the attenuation —
+`uitb` is actively counterproductive.** Ran the diagnostics (with the abs-
+value D06 ratio added, see below) on the same 8 frames for `default`,
+`zero_bias=True`, and `uitb=True`:
+
+| Config    | signed ratio | abs ratio | pos_frac | D08 brake/drive cosine |
+|-----------|--------------|-----------|----------|-------------------------|
+| default   | 1.03e-4      | 1.03e-4   | 0.9998   | ~0.95 (baseline)        |
+| zero_bias | ~unchanged   | ~unchanged| ~unchanged | ~unchanged            |
+| uitb      | 1.98e-5      | 6.56e-5   | 0.6469   | dropped to ~0.25        |
+
+`zero_bias` behaved exactly as predicted from its scope (§ above, ≤ a
+handful of Linear layers): D05 conservation goes to exactly 1.0000, D06/D08/
+D10 essentially unchanged. Safe to enable for AttnLRP-standard rigor (bias
+exclusion is what WoR/LBC already does), but it was never going to be — and
+isn't — a fix for the attenuation.
+
+`uitb`'s signed ratio (1.98e-5) initially looked *worse* than default's
+1.03e-4. Adding the abs-value ratio (`Σ|pixel_rel| / |Σnode_rel|`, immune to
+sign cancellation) resolved the ambiguity: uitb's abs ratio is 6.56e-5 —
+still lower than default's 1.03e-4, not higher. So correcting for the fact
+that `pos_frac` collapsed from 0.9998 to 0.647 (i.e. `AlphaBeta(2,1)` lets
+much more negative relevance survive to the pixel layer, which is what
+shrank the signed number), the *true magnitude* reaching the pixel layer is
+not better under `uitb` — it's roughly 1.6× worse, not better. It also comes
+with two real costs beyond the raw ratio: pixel maps are now ~35%
+negative-mass (closer to a cancellation-noisy saliency map than a clean
+attention map), and D08's brake-vs-drive map distinctiveness collapsed from
+~0.95 to ~0.25 cosine — the extra negative-branch relevance swamps the very
+seed-dependent signal ATOMs needs to tell forced-brake and forced-drive
+attention apart. **Conclusion: reject `uitb=True` for TFV6; keep
+`alpha=1, beta=0` (pure z⁺) as the default.** `zero_bias=True` can be
+adopted independently since it is free and harmless, but it is not doing any
+of the load-bearing work here.
+
+D10's node self-similarity (~0.994-0.997, confirmed stable across 4 frames)
+is unmoved by either flag, ruling out AlphaBeta parameterization as its
+cause — further evidence for the skip-path-dominance mechanism already
+hypothesized (`LRPResidualAdd` splits by raw `|a|`/`|b|` magnitude, not by
+which branch carries F_c-node-specific information, so the structurally
+larger post-ReLU identity/skip branch wins regardless of the conv branch's
+rule). That is a `LRPResidualAdd` question, not a composite-tuning one, and
+is out of scope for this experiment.
+
+The remaining ~1e-4 abs-ratio attenuation therefore looks like a genuine,
+rule-choice-insensitive property of AlphaBeta/z⁺ propagated through a
+network this deep, not fixable by either flag tested. Given `default`'s abs
+ratio is stable (CoV 0.15), nearly pure-positive (pos_frac 0.9998), and
+doesn't hurt D08 discriminability, the practical recommendation is to *not*
+chase the bigger options (ε-rule, Gamma, depth-dependent mixing) blind —
+recompute baseline/test/val profiles with the current fixed code first and
+re-run the OOD-AUC sweep, and only pursue further rule redesign if that run
+shows a regression traceable to pixel-level signal-to-noise.
+
 **Practical implication — recompute, don't just trust the old data.** All
 `baseline_{mode}.npz`, `test_profiles_{mode}.npy`, `val_profiles_{mode}.npy`,
 etc. currently on disk were computed *before* this fix, with the previous
