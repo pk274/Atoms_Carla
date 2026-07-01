@@ -202,6 +202,42 @@ other perturbations from 25 %→20 %, so their AUCs will shift slightly on re-ru
 
 ---
 
+## TFV6 LRP diagnostics (D01-D13) — one-off SLURM job
+
+`ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py` runs a full forward+backward
+pass through the real TFV6 model (ResNet34 ×2 streams + 4 GPT fusion blocks +
+6-layer PlanningDecoder) on CPU, once per test. This is real compute — **do
+not run it directly on a login node**; submit it like every other pipeline
+here.
+
+### Submit (on Viper)
+
+```bash
+cd /u/paulkull/pcla
+git pull
+bash hpc/submit_tfv6_lrp_diagnostics.sh /ptmp/paulkull/atoms_baseline/frames
+```
+
+Optional positional args: `[OUT_DIR] [N_RUNS] [N_FRAMES] [CODE_DIR]`, e.g. to
+use fewer frames for a quicker smoke test:
+
+```bash
+bash hpc/submit_tfv6_lrp_diagnostics.sh \
+    /ptmp/paulkull/atoms_baseline/frames \
+    /ptmp/paulkull/tfv6_lrp_diag/out \
+    1 1   # N_RUNS=1, N_FRAMES=1
+```
+
+Monitor: `squeue -u paulkull`, then `tail -f /ptmp/paulkull/tfv6_lrp_diag/logs/diag_<job_id>.out`.
+
+### Output
+
+`tfv6_diagnostics_report.txt` + `diag_*_per_frame.npy` in `OUT_DIR` (default
+`/ptmp/$USER/tfv6_lrp_diag/out`). Download with the `scp -J` pattern above, or
+`cat` the report directly on Viper.
+
+---
+
 ## Full val-set pipeline
 
 The val set is used exclusively for hyperparameter selection (k-NN k, GMM-kNN k).

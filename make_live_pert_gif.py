@@ -736,7 +736,7 @@ def main() -> None:
 
     # ---- save GIF ----
     duration_ms = max(40, int(1000 / args.fps))   # minimum 40 ms (25 fps cap)
-    print(f"[gif] Saving GIF → {args.output}  ({duration_ms} ms/frame)")
+    print(f"[gif] Saving GIF -> {args.output}  ({duration_ms} ms/frame)")
 
     quant_frames[0].save(
         args.output,
@@ -748,7 +748,7 @@ def main() -> None:
     )
 
     size_mb = args.output.stat().st_size / 1e6
-    print(f"[gif] Done!  {n_frames} frames  |  {size_mb:.1f} MB  →  {args.output}")
+    print(f"[gif] Done!  {n_frames} frames  |  {size_mb:.1f} MB  -> {args.output}")
 
 
 if __name__ == "__main__":
