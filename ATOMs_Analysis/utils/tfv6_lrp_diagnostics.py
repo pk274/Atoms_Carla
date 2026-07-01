@@ -35,21 +35,39 @@ Usage
     diag   = TFV6LRPDiagnostics(lrp_instance)
     report = diag.run_all_tests(testframes)
     diag.print_report(report)
+
+Or standalone, against the real checkpoint + real frames (see the
+`if __name__ == "__main__":` block at the end of this file):
+    python -m ATOMs_Analysis.utils.tfv6_lrp_diagnostics
+    python ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py --n-runs 3 --n-frames 12
 """
 
 from __future__ import annotations
 
+import sys
 import time
 import traceback
 import types
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+# Allow `python ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py` to work directly:
+# running a script (as opposed to `python -m`) only puts the script's own
+# directory on sys.path, not the project root, so the absolute
+# `ATOMs_Analysis.*` imports below would otherwise fail with
+# "ModuleNotFoundError: No module named 'ATOMs_Analysis'". No-op if the
+# project root is already importable (e.g. when imported normally from
+# another script run from the project root).
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from ATOMs_Analysis.saliency.lrp_transfuser import (
     LRPSoftmax,
@@ -1317,3 +1335,84 @@ class TFV6LRPDiagnostics:
             if r.per_frame is not None:
                 np.save(os.path.join(out_dir, f"diag_{name}_per_frame.npy"), r.per_frame)
         print(f"Diagnostics report saved to {out_dir}")
+
+
+# ---------------------------------------------------------------------------
+# Standalone CLI entry point
+# ---------------------------------------------------------------------------
+#
+# Loads the real TFV6 checkpoint + a handful of real frames and runs the full
+# D01-D13 suite. Mirrors the TFV6 model-loading block in run_analysis.py
+# Step 1. Deferred (function-local) imports here are intentional: they pull in
+# `lead.*` (needs pcla_agents/transfuserv6 on sys.path) and CARLA-adjacent
+# config, which normal importers of TFV6LRPDiagnostics (e.g. an already-loaded
+# LRPTFv6Model instance) do not need.
+#
+# Usage (from the project root, pcla venv active):
+#   python -m ATOMs_Analysis.utils.tfv6_lrp_diagnostics
+#   python ATOMs_Analysis/utils/tfv6_lrp_diagnostics.py --n-runs 3 --n-frames 12
+if __name__ == "__main__":
+    import argparse
+    import json
+
+    sys.path.insert(0, str(_PROJECT_ROOT / "pcla_agents" / "transfuserv6"))
+
+    from lead.tfv6.tfv6 import TFv6
+    from lead.training.config_training import TrainingConfig
+
+    from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
+    from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader
+
+    parser = argparse.ArgumentParser(
+        description="Run the TFV6 LRP diagnostic suite (D01-D13) against real checkpoint + frames."
+    )
+    parser.add_argument("--frames-dir", type=str, default=None,
+                        help="Directory of run_*.npz frame files "
+                             "(default: conf.BASELINE_DATA_DIR/frames).")
+    parser.add_argument("--n-runs",    type=int, default=2, help="Number of run files to load.")
+    parser.add_argument("--n-frames",  type=int, default=8, help="Number of frames to sample.")
+    parser.add_argument("--out-dir",   type=str, default="tfv6_diagnostics_out",
+                        help="Directory to save the report + per-frame arrays.")
+    args = parser.parse_args()
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+
+    model_dir = _PROJECT_ROOT / "pcla_agents" / "transfuserv6_pretrained" / "visiononly_resnet34"
+    with open(model_dir / "config.json") as f:
+        training_config = TrainingConfig(json.load(f))
+    model = TFv6(device, training_config)
+
+    ckpt_files = sorted(model_dir.glob("model*.pth"))
+    if not ckpt_files:
+        raise FileNotFoundError(f"No model*.pth checkpoint found in {model_dir}")
+    print(f"Loading checkpoint: {ckpt_files[0]}")
+    state_dict = torch.load(ckpt_files[0], map_location=device, weights_only=True)
+    current_state = model.state_dict()
+    for k, v in list(state_dict.items()):
+        if k in current_state and current_state[k].shape != v.shape:
+            print(f"  Dropping mismatched weight: {k}")
+            state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+
+    lrp = LRPTFv6Model(backbone_eval=model.backbone, planning_decoder=model.planning_decoder, device=device)
+
+    frames_dir = Path(args.frames_dir) if args.frames_dir else Path(conf.BASELINE_DATA_DIR) / "frames"
+    print(f"Loading {args.n_runs} run(s) from {frames_dir} ...")
+    raw = BaselineDataLoader.load_all_runs(frames_dir, max_runs=args.n_runs)
+
+    n_available = len(raw["cmd"])
+    n = min(args.n_frames, n_available)
+    idx = np.linspace(0, n_available - 1, n).astype(int)
+    testframes = {
+        "wide_rgb": raw["wide_rgb"][idx],
+        "cmd":      raw["cmd"][idx],
+        "speed":    raw["speed"][idx],
+    }
+    print(f"Using {n}/{n_available} loaded frames.")
+
+    diag   = TFV6LRPDiagnostics(lrp, device=device)
+    report = diag.run_all_tests(testframes)
+    diag.print_report(report)
+    diag.save_report(report, args.out_dir)
