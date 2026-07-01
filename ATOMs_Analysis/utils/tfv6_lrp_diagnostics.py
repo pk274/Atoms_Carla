@@ -11,7 +11,7 @@ tests the INTERNAL mathematical properties of LRP at each stage:
   D03  _make_speed_seed correctness  — unit test, no model needed
   D04  LiDAR gradient isolation      — no grad path through lidar
   D05  LRP1 conservation             — z+ through target_speed_decoder
-  D06  Backbone amplification budget — pixel_sum vs node_sum
+  D06  Backbone amplification budget — pixel_sum vs node_sum (signed AND abs-value ratio)
   D07  Two-step decomposition        — output→input == separate LRP1+LRP2
   D08  Forced-seed node_rel distinct — forced_brake vs forced_drive are different
   D09  is_brake independence         — is_brake = model argmax, not forced flag
@@ -724,6 +724,17 @@ class TFV6LRPDiagnostics:
         consistent (even if large) amplification; a wildly varying ratio indicates
         numerical instability.
 
+        Also reports an ABSOLUTE-value ratio, Σ|pixel_rel| / |Σ node_rel|. The
+        signed ratio conflates two distinct effects: true magnitude loss (values
+        genuinely shrinking through the backbone) and sign cancellation (positive
+        and negative regions offsetting in the sum without either actually
+        vanishing). This matters concretely when comparing rule choices: e.g.
+        AlphaBeta(2,1) (uitb=True) surfaces much more negative relevance than
+        pure z+ (pos_frac drops sharply), which shrinks the SIGNED ratio even if
+        the underlying magnitude is not more attenuated -- only the absolute
+        ratio can tell those two apart. Added 2026-07-02 after exactly this
+        ambiguity came up comparing uitb=True against the default composite.
+
         Additionally: positive fraction of pixel_rel is reported.
         With AttnLRP, pixel maps are signed; positive fraction > 0.45 is expected.
         """
@@ -731,7 +742,7 @@ class TFV6LRPDiagnostics:
             return TestResult("D06_backbone_amplification", WARN, "No testframes — skipped.")
 
         N = min(len(frames["cmd"]), 8)
-        ratios, pos_fracs, node_totals, pixel_totals = [], [], [], []
+        ratios, abs_ratios, pos_fracs, node_totals, pixel_totals, pixel_abs_totals = [], [], [], [], [], []
         failures = []
 
         for i in range(N):
@@ -757,11 +768,13 @@ class TFV6LRPDiagnostics:
 
             node_totals.append(node_sum)
             pixel_totals.append(pixel_signed)
+            pixel_abs_totals.append(pixel_abs)
             pos_fracs.append(pos_frac)
 
             if abs(node_sum) > 1e-8:
                 ratio = pixel_signed / node_sum
                 ratios.append(ratio)
+                abs_ratios.append(pixel_abs / abs(node_sum))
                 if abs(ratio) > 50:
                     failures.append(
                         f"frame {i}: amplification ratio={ratio:.1f} (|pixel_sum/node_sum| > 50). "
@@ -772,14 +785,16 @@ class TFV6LRPDiagnostics:
             return TestResult("D06_backbone_amplification", WARN,
                               "All frames had near-zero node_rel — cannot compute ratio.")
 
-        r_arr  = np.array(ratios)
-        cov    = float(r_arr.std() / (abs(r_arr.mean()) + 1e-12))
-        pf_arr = np.array(pos_fracs)
+        r_arr   = np.array(ratios)
+        abs_arr = np.array(abs_ratios)
+        cov     = float(r_arr.std() / (abs(r_arr.mean()) + 1e-12))
+        abs_cov = float(abs_arr.std() / (abs_arr.mean() + 1e-12))
+        pf_arr  = np.array(pos_fracs)
 
         status = FAIL if failures else (WARN if cov > 1.0 else PASS)
         summary = (
-            f"Backbone amplification: mean ratio={r_arr.mean():.3f}, "
-            f"CoV={cov:.3f}, pos_frac={pf_arr.mean():.3f}."
+            f"Backbone amplification: signed ratio mean={r_arr.mean():.3g} (CoV={cov:.3f}), "
+            f"abs ratio mean={abs_arr.mean():.3g} (CoV={abs_cov:.3f}), pos_frac={pf_arr.mean():.3f}."
             if not failures else failures[0]
         )
 
@@ -789,14 +804,23 @@ class TFV6LRPDiagnostics:
                               "amplification_ratio_std":  float(r_arr.std()),
                               "amplification_ratio_max":  float(np.abs(r_arr).max()),
                               "amplification_cov":        float(cov),
+                              "abs_amplification_ratio_mean": float(abs_arr.mean()),
+                              "abs_amplification_ratio_std":  float(abs_arr.std()),
+                              "abs_amplification_cov":        float(abs_cov),
                               "node_rel_sum_mean":        float(np.mean(node_totals)),
                               "pixel_rel_sum_mean":       float(np.mean(pixel_totals)),
+                              "pixel_rel_abs_sum_mean":   float(np.mean(pixel_abs_totals)),
                               "pos_frac_mean":            float(pf_arr.mean()),
                               "n_frames": N,
                           },
                           per_frame=r_arr,
                           notes=failures + [
-                              "ratio = Σ pixel_rel / Σ node_rel  (signed).",
+                              "signed ratio = Σ pixel_rel / Σ node_rel  (can shrink from sign "
+                              "cancellation, not just magnitude loss).",
+                              "abs ratio = Σ|pixel_rel| / |Σ node_rel|  (magnitude only, not "
+                              "confounded by sign cancellation).",
+                              "If abs ratio >> signed ratio, most of the apparent 'attenuation' in "
+                              "the signed number is internal positive/negative cancellation.",
                               "ratio near 1 → conservative backbone.",
                               "ratio >> 1 → ε-rule / BatchNorm Pass is amplifying.",
                               "High CoV (> 1.0) → numerically unstable across frames.",

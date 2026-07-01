@@ -10,6 +10,15 @@ Viper is not reachable from off-campus without the **MPCDF VPN**.
 Connect to the VPN first, then all SSH/tunnel commands below will work.  
 Gate server: `gate1.mpcdf.mpg.de` — only reachable once VPN is active.
 
+### Basic connection
+
+```bash
+ssh -m hmac-sha2-256-etm@openssh.com paulkull@gate1.mpcdf.mpg.de
+```
+
+This is the plain command to open a shell on the gate host (no tunnel, no jump to Viper).
+You'll be prompted for your password + OTP.
+
 ---
 
 ## Downloading files from Viper (SCP via jump host)
