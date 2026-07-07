@@ -61,7 +61,14 @@ from pathlib import Path
 #   3. pcla_agents/transfuserv6 → the agent's internal `lead` package resolves
 #                                 (it uses absolute `import lead.…` internally).
 # Must precede the TFV6 imports done inside load_model().
-_ROOT = Path(__file__).resolve().parent
+# Find the project root by walking up from this file until we hit the directory
+# that contains pcla_agents/ and hpc/ — robust to the script living in a
+# subfolder (e.g. "helpful scripts/") rather than at the repo root.
+_here = Path(__file__).resolve()
+_ROOT = next(
+    (p for p in _here.parents if (p / "pcla_agents").is_dir() and (p / "hpc").is_dir()),
+    _here.parent,
+)
 sys.path.insert(0, str(_ROOT / "pcla_agents" / "transfuserv6"))
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "hpc" / "stubs"))

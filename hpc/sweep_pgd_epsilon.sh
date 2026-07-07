@@ -64,7 +64,7 @@ echo "Criterion   : p_brake > $BRAKE_THRESHOLD, target >= $SUCCESS_TARGET"
 echo "Out stem    : $OUT"
 date
 
-srun python3 "$CODE_DIR/sweep_pgd_epsilon.py" \
+srun python3 "$CODE_DIR/helpful scripts/sweep_pgd_epsilon.py" \
     --model-dir       "$MODEL_DIR"          \
     --frames-dir      "$FRAMES_DIR"         \
     --n-frames        "$N_FRAMES"           \
