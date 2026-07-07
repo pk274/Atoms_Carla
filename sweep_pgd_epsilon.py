@@ -52,10 +52,19 @@ import sys
 import time
 from pathlib import Path
 
-# Add transfuserv6 to sys.path so its internal `lead` package resolves (mirrors
-# run_analysis.py / hpc/compute_test_chunk.py) — must precede the TFV6 imports
-# done inside load_model().
-sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
+# sys.path setup — mirrors hpc/compute_mdx_features.py so this runs on the
+# cluster (no CARLA install, incompatible beartype) exactly like the HPC jobs.
+# Order matters (each insert(0,...) prepends, so the LAST insert wins):
+#   1. hpc/stubs               → stub carla/beartype shadow the missing/broken
+#                                cluster installs (must be highest priority).
+#   2. project root            → pcla_agents, ATOMs_Analysis importable.
+#   3. pcla_agents/transfuserv6 → the agent's internal `lead` package resolves
+#                                 (it uses absolute `import lead.…` internally).
+# Must precede the TFV6 imports done inside load_model().
+_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(_ROOT / "pcla_agents" / "transfuserv6"))
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "hpc" / "stubs"))
 
 import numpy as np
 import torch
