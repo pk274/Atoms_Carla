@@ -24,6 +24,18 @@ Each npz contains (all shape [N, ...]):
     speed        : [N]           float32
     is_brake     : [N]           int8
     frame_idx    : [N]           int32
+    target_point          : [N, 2]  float32   ego-frame current TP (meters)
+    target_point_previous : [N, 2]  float32   ego-frame previous TP
+    target_point_next     : [N, 2]  float32   ego-frame next TP
+
+Target points replicate the TRAINING dataloader recipe exactly
+(carla_dataset.py: pos_global + theta, next/previous_target_points_3.25
+keys with duplicate-merge, no augmentation — the clean rgb/ stream has
+perturbation = 0).  When TP extraction succeeds, cmd is likewise taken from
+next_commands_3.25 (the filtered list's first entry) to match what the model
+saw during training; the unsuffixed next_commands list reflects a different
+route-planner pop state and can genuinely differ.  All-zero TPs mean the
+meta lacked the suffixed keys (legacy fallback).
 
 narr_rgb / seg_red_narr are intentionally omitted — TFV6 is wide-only
 (WIDE_ONLY_PROFILE = True).  BaselineDataLoader handles missing narr keys
@@ -88,6 +100,69 @@ def _convert_command(raw) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Target-point extraction (mirrors the LEAD training dataloader)
+# ---------------------------------------------------------------------------
+
+# Must equal TrainingConfig.tp_pop_distance — selects which precomputed
+# route-planner pop state the meta keys are read from.
+TP_POP_DISTANCE = 3.25
+
+_ZERO_TP = np.zeros(2, dtype=np.float32)
+
+
+def _inverse_conversion_2d(point: np.ndarray, translation: np.ndarray, yaw: float) -> np.ndarray:
+    """World → ego-frame 2D transform (copy of lead common_utils.inverse_conversion_2d)."""
+    rot = np.array([[np.cos(yaw), -np.sin(yaw)], [np.sin(yaw), np.cos(yaw)]])
+    return rot.T @ (point - translation)
+
+
+def _extract_target_points(meta: dict) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
+    """
+    Reproduce the training dataloader's target-point construction
+    (carla_dataset.py, use_noisy_tp=False path, augmentation zeroed):
+    duplicate-merge the next-TP list at TP_POP_DISTANCE, pick
+    previous/current/next, transform into the ego frame via pos_global + theta.
+
+    Returns (tp, tp_previous, tp_next, raw_cmd) — raw_cmd is the 1-based
+    RoadOption of the filtered list's first entry (what training used as
+    data["command"]) — or None when the meta lacks the required keys.
+    """
+    try:
+        ego_yaw = float(meta["theta"])
+        ego_pos = np.array(meta["pos_global"][:2], dtype=np.float64)
+        next_tp_list  = meta[f"next_target_points_{TP_POP_DISTANCE}"]
+        next_cmd_list = meta[f"next_commands_{TP_POP_DISTANCE}"]
+        prev_tp_list  = meta[f"previous_target_points_{TP_POP_DISTANCE}"]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    # Merge consecutive duplicate target points (training dataloader behavior)
+    filtered_tp: list = []
+    filtered_cmd: list = []
+    for pt, c in zip(next_tp_list, next_cmd_list):
+        if len(next_tp_list) == 2 or not filtered_tp or not np.allclose(pt[:2], filtered_tp[-1][:2]):
+            filtered_tp.append(pt)
+            filtered_cmd.append(c)
+    if len(filtered_tp) < 2:
+        return None
+
+    def to_ego(point) -> np.ndarray:
+        p = _inverse_conversion_2d(np.array(point[:2], dtype=np.float64), ego_pos, ego_yaw)
+        return p.astype(np.float32)
+
+    if len(filtered_tp) > 2:
+        tp_prev = to_ego(filtered_tp[0])
+        tp      = to_ego(filtered_tp[1])
+        tp_next = to_ego(filtered_tp[2])
+    else:
+        tp      = to_ego(filtered_tp[1])
+        tp_next = tp.copy()
+        tp_prev = to_ego(prev_tp_list[-1]) if len(prev_tp_list) > 0 else to_ego(filtered_tp[0])
+
+    return tp, tp_prev, tp_next, int(filtered_cmd[0])
+
+
+# ---------------------------------------------------------------------------
 # Town detection
 # ---------------------------------------------------------------------------
 _KNOWN_TOWNS = ["Town01", "Town02", "Town03", "Town04", "Town05",
@@ -144,10 +219,13 @@ def list_frame_indices(route_dir: Path) -> List[int]:
 
 def load_frame(
     route_dir: Path, frame_idx: int
-) -> Optional[Tuple[np.ndarray, np.ndarray, int, float, bool]]:
+) -> Optional[Tuple[np.ndarray, np.ndarray, int, float, bool,
+                    np.ndarray, np.ndarray, np.ndarray]]:
     """
-    Load one frame.  Returns (wide_rgb, seg_red_wide, cmd, speed, is_brake)
-    or None if any file is missing or unreadable.
+    Load one frame.  Returns
+    (wide_rgb, seg_red_wide, cmd, speed, is_brake, tp, tp_previous, tp_next)
+    or None if any file is missing or unreadable.  Target points are ego-frame
+    float32 [2]; all-zero when the meta lacks the pop-distance-suffixed keys.
 
     RGB shape: (384, conf.N_CAMERAS * 384, 3).
     """
@@ -188,10 +266,16 @@ def load_frame(
 
     speed    = float(meta.get("speed", 0.0))
     is_brake = bool(meta.get("brake", False))
-    raw_cmd  = meta.get("next_commands", [4])[0]   # list of upcoming RoadOption ints
-    cmd      = _convert_command(raw_cmd)
 
-    return wide_rgb, seg_red_wide, cmd, speed, is_brake
+    tp_result = _extract_target_points(meta)
+    if tp_result is not None:
+        tp, tp_prev, tp_next, raw_cmd = tp_result
+    else:
+        tp, tp_prev, tp_next = _ZERO_TP.copy(), _ZERO_TP.copy(), _ZERO_TP.copy()
+        raw_cmd = meta.get("next_commands", [4])[0]   # legacy fallback
+    cmd = _convert_command(raw_cmd)
+
+    return wide_rgb, seg_red_wide, cmd, speed, is_brake, tp, tp_prev, tp_next
 
 
 # ---------------------------------------------------------------------------
@@ -309,18 +393,22 @@ def _write_plan(
         for route_dir, frame_indices in route_frame_pairs:
 
             wide_rgbs, segs, cmds, speeds, brakes, fidxs = [], [], [], [], [], []
+            tps, tps_prev, tps_next = [], [], []
 
             for fidx in frame_indices:
                 result = load_frame(route_dir, fidx)
                 if result is None:
                     continue
-                w, s, c, sp, b = result
+                w, s, c, sp, b, tp, tp_p, tp_n = result
                 wide_rgbs.append(w)
                 segs.append(s)
                 cmds.append(c)
                 speeds.append(sp)
                 brakes.append(b)
                 fidxs.append(fidx)
+                tps.append(tp)
+                tps_prev.append(tp_p)
+                tps_next.append(tp_n)
 
             if not wide_rgbs:
                 LOG.warning("No frames loaded from %s — skipping", route_dir)
@@ -337,6 +425,9 @@ def _write_plan(
                 speed        = np.array(speeds,      dtype=np.float32),
                 is_brake     = np.array(brakes,      dtype=np.int8),
                 frame_idx    = np.array(fidxs,       dtype=np.int32),
+                target_point          = np.stack(tps,      axis=0).astype(np.float32),
+                target_point_previous = np.stack(tps_prev, axis=0).astype(np.float32),
+                target_point_next     = np.stack(tps_next, axis=0).astype(np.float32),
                 # narr_rgb / seg_red_narr intentionally absent (TFV6 wide-only)
             )
 

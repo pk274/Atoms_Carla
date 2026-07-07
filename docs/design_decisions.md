@@ -987,3 +987,162 @@ how they measure distance to the assigned cluster's mean.
   `compute_gmm_euclidean` / `compute_gmm_jsd` updated to pass `gmm.covariances_` and
   `conf.MAHAL_RIDGE`.
 - `compute_gmm_distance` (Mahalanobis-GMM) was already correct; no change.
+
+## Brake-counterfactual profile block — `ADD_BRAKE_SEEDS` (2026-07-02)
+
+**Problem.** The default LRP seed is `softmax(speed_logits)` — every ATOMs
+profile answers "what determines how fast I should go?".  For clean driving
+the honest answer is the road corridor and the lead vehicle, so relevance
+almost never reaches lateral/rare classes (Pedestrian, Biker, StopSign ≈ 0 in
+the baseline bar chart).  Constant profile dimensions carry no OOD signal, so
+the detector effectively works with far fewer than 10 dimensions.
+
+**Decision.** Add a second profile block from a *counterfactual* seed:
+one-hot at speed bin 0 (0 m/s = stop), backpropagated output→input via the
+existing stable two-step scheme (`forced_brake=True` in `forward_relevance`,
+Decision E infrastructure).  Interpretation: **the evidence the model
+currently sees in favor of stopping** — a standard class-conditional
+attribution (in classification XAI, explaining a non-predicted class is
+routine).  A perturbation corrupts the model's evidence landscape for *all*
+actions, not only the chosen one; monitoring the inhibitory evidence widens
+the observable decision spectrum without touching the LRP rules.  Note the
+PGD attack targets exactly this logit (`PGD_TARGET="brake"`), so the brake
+block is the attribution of the attacked output.
+
+**Mechanics.**
+- `ATOMsCarla` gains `profile_dim = num_classes × n_blocks` and
+  `profile_names` (`class_names` + `Brake:*`).  The brake pass runs after the
+  mode-specific default computation in *every* `MODE_ANALYSIS` — the
+  counterfactual is defined at the output level, so it always uses
+  output→input regardless of mode.
+- **Block-wise normalization:** each block is normalized to sum `1/n_blocks`
+  (`_normalize_profile`), so the full profile still sums to 1 (valid input
+  for JSD/Wasserstein) and neither block's raw LRP magnitude can drown the
+  other.  Detectors are dimension-agnostic and need no changes.
+- **Cost:** +1 full LRP backward per frame (≈ one forward).  Offset by a
+  same-commit optimization: the mode-2 `PLOT_COMPARATIVE_REL` forced passes
+  are *provably identical* to the default map for TFV6 (fc seeds cannot
+  depend on the output — Decision E), so they are now mirrored instead of
+  recomputed.  Net mode-2 cost went from 3 backward passes per frame to 2
+  while gaining the brake block.  Runtime stays a small constant multiple of
+  a single inference — compatible with online monitoring.
+- The brake pass also populates `saliency_data_wide_brake` with a genuinely
+  brake-seeded map (the old mode-2 mirror could not differ from the default),
+  making the comparative visualization meaningful in mode 2.
+  `plot_saliency_examples.py` saves a `_brake.png` per sampled frame.
+
+**Validation hook.** The LEAD metas contain per-frame hazard flags
+(`walker_hazard`, `vehicle_hazard`, `light_hazard`, `stop_sign_hazard`) —
+free ground truth to check that brake-seeded relevance concentrates on the
+hazard class on hazard frames.
+
+## Real target-point conditioning — `USE_REAL_TARGET_POINTS` (2026-07-02)
+
+**Problem.** `_make_minimal_data` zeroed all three target-point tokens, but
+the deployed TFV6 (leaderboard mode) conditions on current/previous/next TP
+(`use_tp`, `use_previous_tp`, `use_next_tp` all True).  Offline attributions
+therefore ran with degenerate "target at ego position" route conditioning.
+
+**Decision.** The LEAD meta pickles turn out to contain the full
+route-planner state per pop distance.  `migrate_lead_to_baseline.py` now
+reproduces the **training dataloader recipe exactly** (`carla_dataset.py`):
+keys `next/previous_target_points_3.25` (`TP_POP_DISTANCE = 3.25` ==
+`TrainingConfig.tp_pop_distance`), duplicate-merge, prev/current/next
+indexing, ego transform via `inverse_conversion_2d(point, pos_global[:2],
+theta)`.  No TP augmentation — the clean `rgb/` stream has perturbation 0
+(`carla_dataset.py:127`).  Verified by re-projecting the extracted ego-frame
+TP back to world coordinates: exact match with the raw meta entry.
+
+- npz schema gains `target_point/target_point_previous/target_point_next
+  [N,2] float32`; the whole pipeline (BaselineDataLoader, PerturbationApplier,
+  prep_test.py, all HPC chunk scripts, run_analysis step 9) passes them
+  through to `_make_minimal_data`.  The PGD attack in `compute_test_chunk.py`
+  now also crafts under the same TP conditioning as the profile pass.
+- **cmd source fix:** when TP extraction succeeds, `cmd` comes from the
+  filtered `next_commands_3.25` list (training-faithful).  The unsuffixed
+  `next_commands` reflects a different pop state and can genuinely differ
+  (measured: RIGHT vs LANEFOLLOW at a junction frame).
+- Old npz without TP keys fall back to zeros with a one-time warning.
+- First single-frame measurement (junction frame, real model): the
+  speed-seeded profile changed only marginally vs zero TPs (L1 ≈ 3e-4) — the
+  conditioning fix is about correctness/deployment-faithfulness; its OOD-AUC
+  impact is an open empirical question.
+
+## Waypoint-head seeding + seed-invariance of TFV6 LRP maps (2026-07-02)
+
+**Proposal (user).** Instead of the output-level brake counterfactual, seed at
+the waypoint head's F_c equivalent — the waypoint query tokens
+([N_wp=8, 256], penultimate before the per-token `wp_decoder` Linear) — with
+the same positive-activation rule as mode 2 uses for `speed_query`.  Faithful
+to mode 2, one extra backward per frame.  Implemented as
+`conf.ADD_WAYPOINT_SEEDS` (`_attribute_wp_to_input`, `beg="wp_fc"`;
+`TFv6FullModelForLRP.forward(_return_wp_queries=True)` exposes the tokens).
+
+**Measurement — the proposal's premise fails empirically.**  On 4 clean
+frames from the example route (incl. junction/turn frames, real checkpoints,
+real TP conditioning), the wp-seeded pixel map is near-identical to the
+default speed-seeded map: **pixel cosine 0.994–0.998, class-profile cosine
+≥ 0.9995**.  A follow-up prototype tested the *decision-direction* variant —
+seeding the lateral coordinate (index 1; steering uses
+`arctan2(aim[1], aim[0])`, `closed_loop_inference.py:162`) of the predicted
+waypoints through `wp_decoder`, weighted by the prediction (Decision-D
+analogue).  Even on a turning frame with pred. lateral displacement up to
+3.9 m: **cosine(speed map, lateral-decision map) ≥ 0.997**.  The earlier
+brake-counterfactual block shows the same signature (its class profile
+matched the default to 3 decimals on the test frame).
+
+**Conclusion: TFV6 LRP pixel maps are effectively seed-invariant at the
+planning-decoder level.**  Any seed placed at or behind the decoder queries
+(brake one-hot, wp activations, lateral decision direction) yields the same
+input attribution up to a scale.  Plausible mechanism: all query tokens read
+the same BEV context through 6 shared cross-attention layers, and the map's
+spatial structure is dominated by the shared backbone path (cf. the strong
+D06 attenuation); the seed only re-weights a 256-dim bottleneck whose
+influence on the pixel-level *shape* has washed out by the input.  This is
+the transformer analogue of the WoR GAP-collapse finding ("per-FC-node pixel
+maps are identical").
+
+**Consequences.**
+- `ADD_BRAKE_SEEDS` and `ADD_WAYPOINT_SEEDS` both default to **False** — a
+  second decoder-seeded block is a redundant copy of the first and would
+  waste an HPC recompute (and degrade covariance conditioning with duplicate
+  dimensions).  The implementations stay in the codebase, flag-gated, for
+  A/B or thesis illustration.
+- The single-backward "fused seed" idea (seed speed_query + wp_queries in one
+  `grad_outputs`) is answered by linearity: one backward returns the *sum* of
+  the per-seed maps, which — given seed-invariance — equals the default map
+  up to scale anyway.
+- **Thesis note:** this is a reportable negative result — it bounds what
+  multi-seed ATOMs extensions can achieve for this architecture and
+  motivates enrichment along *other* axes (e.g. spatial/per-camera splitting
+  of the one map, or profile normalization variants), which do not require
+  a second backward pass.
+
+---
+
+## Heat Quantization (Otsuki et al. 2024, Sec. 4.4) — deliberately not applied (2026-07-07)
+
+**What it is.** After computing the channel-wise-summed relevance map `α_R`,
+the paper quantizes it into `Q=8` bins (Eq. 8: `α = min + floor((α_R - min) /
+((max - min)/Q)) * Q`) to get the final attribution map `α`. Motivation
+stated in the paper: raw `α_R` "tends to excessively concentrate on
+irrelevant regions," and quantizing spreads attribution more evenly —
+explicitly a visualization/qualitative-explanation aid (their Sec. 5 evaluates
+it via Insertion/Deletion and human-facing heatmaps).
+
+**Decision: not implemented in this codebase.** `atoms_carla.py` feeds the
+continuous, normalized pixel relevance map (`wide_r / norm_w`, i.e.
+`saliency_data_wide_default`) straight into `_hierarchical`'s per-class pixel
+sums — no binning step anywhere in `lrp_transfuser.py` or `atoms_carla.py`.
+
+**Why.** ATOMs profiles are a *quantitative* signal (per-class relevance mass
+feeding Mahalanobis/GMM/k-NN OOD detectors), not a *qualitative* heatmap for
+human viewing. Heat Quantization would discretize the continuous relevance
+values into only 8 levels before the per-class sum, throwing away exactly the
+fine-grained magnitude differences the downstream statistical detectors rely
+on to separate baseline vs. perturbed profile clouds — it solves a problem
+(visually concentrated heatmaps) that this pipeline doesn't have, at the cost
+of a problem (reduced signal resolution) that it can't afford. Revisit only if
+a future qualitative-visualization deliverable (e.g. thesis figures showing
+raw pixel heatmaps rather than class-level bar charts) needs the same "spread
+out the hotspot" effect Otsuki et al. were targeting.

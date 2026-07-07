@@ -675,6 +675,7 @@ class TFv6FullModelForLRP(nn.Module):
         rgb:         torch.Tensor,
         data:        dict,
         _return_wps: bool = False,
+        _return_wp_queries: bool = False,
     ) -> torch.Tensor:
         """
         Args:
@@ -685,10 +686,17 @@ class TFv6FullModelForLRP(nn.Module):
                           predicted future waypoints [B, N_wp, 2].  Used only by
                           get_planning_action_and_features for MDX-v2; all other
                           callers leave this at False.
+            _return_wp_queries : if True, also return the raw waypoint query
+                          tokens [B, N_wp, 256] — the waypoint head's F_c
+                          analogue (penultimate layer before the per-token
+                          wp_decoder Linear).  Used by _attribute_wp_to_input
+                          for the ADD_WAYPOINT_SEEDS profile block.
         Returns:
             speed_query : [B, 256] — the F_c node space
             (optionally, when _return_wps=True and wp_decoder is present)
             (speed_query, waypoints) where waypoints is [B, N_wp, 2]
+            (optionally, when _return_wp_queries=True)
+            (speed_query, wp_queries) where wp_queries is [B, N_wp, 256]
         """
         bev_features, _ = self._run_backbone(rgb)
 
@@ -707,6 +715,10 @@ class TFv6FullModelForLRP(nn.Module):
         )
 
         speed_query = queries[:, self._speed_query_idx]   # [B, 256]
+
+        if _return_wp_queries:
+            wp_queries = queries[:, self._wp_start : self._speed_query_idx]
+            return speed_query, wp_queries                # [B, N_wp, 256]
 
         if _return_wps and self.wp_decoder is not None:
             wp_queries = queries[:, self._wp_start : self._speed_query_idx]
@@ -820,19 +832,24 @@ class LRPTFv6Model:
         spd:      float                  = None,
         cmd:      Optional[int]          = None,
         data:     Optional[dict]         = None,
+        target_points: Optional[dict]    = None,
     ) -> None:
         """
         Store the per-frame status dict for use in forward_relevance.
 
         For TFV6 with Option B, data must contain the keys that
         PlanningContextEncoder expects (speed, command, target_point, …).
-        If data is None, a minimal dict is built from spd and cmd.  Pass
-        cmd (integer 0–5) so the command token is a valid one-hot rather
-        than an all-zero vector, which would distort LRP attributions.
+        If data is None, a minimal dict is built from spd, cmd and (when
+        given) target_points.  Pass cmd (integer 0–5) so the command token
+        is a valid one-hot rather than an all-zero vector, and target_points
+        (dict with 'target_point'/'target_point_previous'/'target_point_next'
+        in ego-frame meters) so route conditioning matches deployment.
         """
         assert not self.full_model.training, "model must be in eval() mode"
         self._data_cache = data if data is not None else _make_minimal_data(
-            spd or 0.0, self.device, cmd=cmd if cmd is not None else 3
+            spd or 0.0, self.device,
+            cmd=cmd if cmd is not None else 3,
+            target_points=target_points,
         )
 
     def _create_composite(self) -> SpecialFirstLayerMapComposite:
@@ -925,6 +942,12 @@ class LRPTFv6Model:
             else:
                 wide_rel = self._attribute_backbone(rgb_x, data, self._one_hot_node(node_id))
             # is_brake requires a forward pass; skip it for fc→input to avoid cost.
+            return wide_rel, None, 1.0, False
+
+        elif beg == "wp_fc" and end == "input":
+            # Waypoint-head mode-2 analogue: seed positive activations of the
+            # waypoint query tokens (the wp head's F_c), backprop to pixels.
+            wide_rel = self._attribute_wp_to_input(rgb_x, data)
             return wide_rel, None, 1.0, False
 
         elif beg == "output" and end == "input":
@@ -1031,6 +1054,35 @@ class LRPTFv6Model:
                 seed        = speed_query.clamp(min=0).detach()
                 (rgb_rel,)  = torch.autograd.grad(
                     outputs      = speed_query,
+                    inputs       = [rgb_x],
+                    grad_outputs = seed,
+                )
+        return rgb_rel.detach().cpu()   # [1, 3, H, W]
+
+    def _attribute_wp_to_input(self, rgb_x: torch.Tensor, data: dict) -> torch.Tensor:
+        """
+        Waypoint-head layer-level LRP (conf.ADD_WAYPOINT_SEEDS): the exact
+        mode-2 analogue of _attribute_fc_to_input, applied to the waypoint
+        head.  The waypoint query tokens [B, N_wp, 256] are the head's F_c
+        equivalent — wp_decoder is a single per-token Linear(256→2), so these
+        tokens are the penultimate representation of the lateral/spatial
+        decision, exactly as speed_query is for the longitudinal one.
+
+        Seed: positive activations of all N_wp tokens at once (clamp(min=0)),
+        backpropagated to pixels in one pass — same seeding rule, same
+        composite, same cost as the default mode-2 pass.
+        """
+        if self.full_model._wp_start >= self.full_model._speed_query_idx:
+            raise RuntimeError(
+                "ADD_WAYPOINT_SEEDS requires waypoint query tokens "
+                "(predict_temporal_spatial_waypoints=True in the model config)."
+            )
+        with torch.enable_grad():
+            with self.composite.context(self.full_model):
+                _, wp_queries = self.full_model(rgb_x, data, _return_wp_queries=True)
+                seed          = wp_queries.clamp(min=0).detach()
+                (rgb_rel,)    = torch.autograd.grad(
+                    outputs      = wp_queries,
                     inputs       = [rgb_x],
                     grad_outputs = seed,
                 )
@@ -1238,7 +1290,12 @@ class LRPTFv6Model:
 # Utilities
 # ---------------------------------------------------------------------------
 
-def _make_minimal_data(spd: float, device: torch.device, cmd: int = 3) -> dict:
+def _make_minimal_data(
+    spd: float,
+    device: torch.device,
+    cmd: int = 3,
+    target_points: Optional[dict] = None,
+) -> dict:
     """
     Build a minimal data dict for PlanningContextEncoder when real frame
     data is not available.
@@ -1246,16 +1303,29 @@ def _make_minimal_data(spd: float, device: torch.device, cmd: int = 3) -> dict:
     cmd : navigation command integer (0–5, CARLA leaderboard one-hot index).
           Defaults to 3 (FOLLOW_LANE).  Converted to a one-hot vector of
           length 6 so the command token carries a valid directional signal.
-          target_point and acceleration remain zero — these are secondary
-          conditioning inputs that require data not stored in the npz.
+
+    target_points : optional dict with keys 'target_point',
+          'target_point_previous', 'target_point_next', each a length-2
+          array-like in ego-frame meters (same convention as the training
+          dataloader / sensor agent).  When None, TPs are zero — degenerate
+          route conditioning; the deployed model uses three TP tokens, so
+          pass real values whenever the npz provides them
+          (conf.USE_REAL_TARGET_POINTS).
     """
     cmd_vec = torch.zeros(1, 6, dtype=torch.float32, device=device)
     cmd_vec[0, max(0, min(cmd, 5))] = 1.0
+
+    def _tp(key: str) -> torch.Tensor:
+        if target_points is not None and target_points.get(key) is not None:
+            vals = [float(v) for v in target_points[key]][:2]
+            return torch.tensor([vals], dtype=torch.float32, device=device)
+        return torch.zeros(1, 2, dtype=torch.float32, device=device)
+
     return {
         "speed":              torch.tensor([[spd]], dtype=torch.float32, device=device),
         "command":            cmd_vec,
-        "target_point":       torch.zeros(1, 2, dtype=torch.float32, device=device),
-        "target_point_previous": torch.zeros(1, 2, dtype=torch.float32, device=device),
-        "target_point_next":  torch.zeros(1, 2, dtype=torch.float32, device=device),
+        "target_point":       _tp("target_point"),
+        "target_point_previous": _tp("target_point_previous"),
+        "target_point_next":  _tp("target_point_next"),
         "acceleration":       torch.zeros(1, 1, dtype=torch.float32, device=device),
     }

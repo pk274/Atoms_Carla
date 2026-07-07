@@ -107,6 +107,40 @@ class ExperimentConfig:
     # work without modification.
     WIDE_ONLY_PROFILE = True
 
+    # Profile-block flags.  Each enabled block appends num_classes dims to every
+    # ATOMs profile (TFV6: 10 per block) at the cost of one extra LRP backward
+    # pass per frame.  Blocks are normalized to sum 1/n_blocks each, so the full
+    # profile always sums to 1 (valid distribution for JSD/Wasserstein).
+    # Block order: default | brake (if on) | waypoint (if on).
+    # NOTE: baseline/test/val profiles must be recomputed after toggling either.
+    #
+    # *** Both DEFAULT OFF after measurement (2026-07-02): for TFV6, every
+    # decoder-level seed tested (brake one-hot, wp-query activations, lateral
+    # waypoint decision) produces a pixel map with cosine >= 0.994 to the
+    # default speed-seeded map — the extra blocks are redundant copies.  See
+    # "Seed-invariance of TFV6 LRP maps" in docs/design_decisions.md. ***
+
+    # Brake-counterfactual block: one-hot seed at speed bin 0, output→input LRP
+    # ("what evidence does the model see in favor of stopping?").  Output-level
+    # seed — mode-3 flavored regardless of MODE_ANALYSIS.
+    ADD_BRAKE_SEEDS = False
+
+    # Waypoint-head block: positive-activation seed at the waypoint query tokens
+    # ([N_wp, 256] — the wp head's F_c analogue, penultimate before the per-token
+    # wp_decoder Linear), backprop to pixels.  The exact mode-2 analogue of the
+    # default speed_query seed, applied to the lateral/spatial decision head.
+    # TFV6 only.
+    ADD_WAYPOINT_SEEDS = False
+
+    # If True, feed the model real target-point conditioning (current/previous/
+    # next TP, ego frame) from the frame npz instead of zeros.  Requires frames
+    # migrated with a version of migrate_lead_to_baseline.py that stores the
+    # target_point* keys (2026-07-02+); older npz files fall back to zeros with
+    # a one-time warning.  The deployed TFV6 uses three TP tokens
+    # (use_tp/use_previous_tp/use_next_tp), so zeroed TPs mean degenerate route
+    # conditioning that shifts attributions relative to the live agent.
+    USE_REAL_TARGET_POINTS = True
+
     # If True, the per-class relevance in _give_element_selectivity is divided by
     # the number of active (non-zero relevance) pixels, giving mean relevance per
     # pixel (as described in Beylier et al.).  If False (default), the raw sum of

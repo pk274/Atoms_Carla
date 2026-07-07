@@ -850,7 +850,7 @@ class MDXDetector(BaseDetector):
         ridge:             float = 1e-6,
         alpha:             float = 0.05,
         calibration_split: float = 0.2,
-        bin_strategy:      str   = "equal-width",
+        bin_strategy:      str   = "quantile",
     ):
         super().__init__()
         self.n_pca_components = n_pca_components
@@ -887,12 +887,12 @@ class MDXDetector(BaseDetector):
     ) -> None:
         """Derive bin edges from the range of training actions.
 
-        With bin_strategy="equal-width" (default, preserves original behaviour):
-            edges are evenly spaced between min and max.
-        With bin_strategy="quantile":
+        With bin_strategy="quantile" (default):
             edges are placed at quantiles of the empirical distribution, so each
             bin contains approximately the same number of training samples.
             Constant dimensions (e.g. steer always 0) collapse to a single bin.
+        With bin_strategy="equal-width" (legacy):
+            edges are evenly spaced between min and max.
         """
         def _edges(v: np.ndarray, nb: int) -> np.ndarray:
             v = np.asarray(v, float)
@@ -900,7 +900,7 @@ class MDXDetector(BaseDetector):
                 e = np.unique(np.quantile(v, np.linspace(0.0, 1.0, nb + 1)))
                 if e.size < 2:              # constant dimension — single bin
                     e = np.array([v.min() - 1e-6, v.max() + 1e-6])
-            else:                           # "equal-width" — legacy default
+            else:                           # "equal-width" — legacy
                 e = np.linspace(v.min(), v.max(), nb + 1)
             e[0] -= 1e-6; e[-1] += 1e-6
             return e

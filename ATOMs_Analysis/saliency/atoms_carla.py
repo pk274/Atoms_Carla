@@ -38,6 +38,7 @@ only the following aspects differ by necessity:
 
 from __future__ import annotations
 
+import warnings
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -148,6 +149,40 @@ def _relevance_filter(r: torch.Tensor, p: float) -> List[int]:
 # ---------------------------------------------------------------------------
 # Helper: segmentation image → binary masks
 # ---------------------------------------------------------------------------
+
+_warned_missing_tp = False
+
+
+def extract_target_points(data: Dict[str, np.ndarray], i: int) -> Optional[dict]:
+    """
+    Build the per-frame target_points dict for ATOMsCarla.process_frame from
+    a loaded frames dict / npz (keys target_point, target_point_previous,
+    target_point_next, each [N, 2] float32, ego-frame meters).
+
+    Returns None when conf.USE_REAL_TARGET_POINTS is False or the arrays are
+    absent (npz migrated before 2026-07-02) — the model then falls back to
+    zero TP conditioning as before, with a one-time warning.
+    """
+    if not getattr(conf, "USE_REAL_TARGET_POINTS", False):
+        return None
+    keys = ("target_point", "target_point_previous", "target_point_next")
+    try:
+        missing = any(k not in data or data[k] is None for k in keys)
+    except TypeError:
+        missing = True
+    if missing:
+        global _warned_missing_tp
+        if not _warned_missing_tp:
+            warnings.warn(
+                "USE_REAL_TARGET_POINTS=True but the frame data has no "
+                "target_point keys — falling back to zero TP conditioning. "
+                "Re-run migrate_lead_to_baseline.py to store real target points.",
+                UserWarning, stacklevel=2,
+            )
+            _warned_missing_tp = True
+        return None
+    return {k: np.asarray(data[k][i], dtype=np.float32) for k in keys}
+
 
 def seg_to_masks(seg_red: np.ndarray, class_ids: List[int]) -> torch.Tensor:
     """
@@ -260,6 +295,36 @@ class ATOMsCarla:
         self.class_names = [_class_map.get(c, f"Class_{c}") for c in self.class_ids]
         self.num_classes = len(self.class_ids)
 
+        # Profile layout — block "default": mode-specific default-seed attention
+        # (one entry per class); optional named blocks appended in fixed order:
+        #   "brake" (conf.ADD_BRAKE_SEEDS)    — brake counterfactual, one-hot at
+        #                                       speed bin 0, output→input.
+        #   "wp"    (conf.ADD_WAYPOINT_SEEDS) — waypoint-head mode-2 analogue,
+        #                                       positive-activation seed at the
+        #                                       waypoint query tokens, wp_fc→input.
+        # Each block is normalized to sum 1/n_blocks so the full profile remains
+        # a distribution.
+        self._block_names = ["default"]
+        if conf.ADD_BRAKE_SEEDS:
+            self._block_names.append("brake")
+        if conf.ADD_WAYPOINT_SEEDS:
+            self._block_names.append("wp")
+        self.n_blocks     = len(self._block_names)
+        self.profile_dim  = self.num_classes * self.n_blocks
+        _prefix = {"default": "", "brake": "Brake:", "wp": "WP:"}
+        self.profile_names = [
+            f"{_prefix[b]}{n}" for b in self._block_names for n in self.class_names
+        ]
+        self._block_offset = {
+            b: i * self.num_classes for i, b in enumerate(self._block_names)
+        }
+
+        if conf.ADD_WAYPOINT_SEEDS and not hasattr(lrp_model, "_data_cache"):
+            raise ValueError(
+                "ADD_WAYPOINT_SEEDS is TFV6-only (needs the PlanningDecoder "
+                "waypoint query tokens) — set the flag to False for WoR."
+            )
+
         # Dispatch table — mirrors reference ATOMs
         self._compute_sub = {
             1: self._compute_node_level,
@@ -268,7 +333,7 @@ class ATOMsCarla:
         }.get(mode_analysis, self._compute_node_level)
 
         # Runtime state (reset between episodes)
-        self._hierarchical: np.ndarray   = np.zeros(self.num_classes, dtype=np.float64)
+        self._hierarchical: np.ndarray   = np.zeros(self.profile_dim, dtype=np.float64)
         self._frame_series: List         = []   # list of np.ndarray [num_classes]
         self._frame_cmds:   List[int]    = []
         self._n_frames:     int          = 0
@@ -279,6 +344,7 @@ class ATOMsCarla:
         self.saliency_data_narr_brake = None
         self.saliency_data_wide_drive = None     # forced drive seed (PLOT_COMPARATIVE_REL only)
         self.saliency_data_narr_drive = None
+        self.saliency_data_wide_wp = None        # waypoint-head seed (ADD_WAYPOINT_SEEDS only)
 
         self._frame_brake: List[bool] = []
         self._last_is_brake: bool = False
@@ -299,6 +365,7 @@ class ATOMsCarla:
         cmd:       Optional[int]   = None,
         spd:       Optional[float] = None,
         data:      Optional[dict]  = None,
+        target_points: Optional[dict] = None,
     ) -> np.ndarray:
         if cmd is None:
             cmd = self.default_cmd
@@ -310,8 +377,11 @@ class ATOMsCarla:
             self.lrp.update_context(wide_rgb, narr_rgb, spd, data=data)
         elif hasattr(self.lrp, '_data_cache'):
             # TFV6 without full data dict — pass cmd so the command token is
-            # a valid one-hot (not all-zeros), reducing conditioning distortion.
-            self.lrp.update_context(wide_rgb, narr_rgb, spd, cmd=cmd)
+            # a valid one-hot (not all-zeros) and target_points (when the npz
+            # provides them, see extract_target_points) so route conditioning
+            # matches deployment.
+            self.lrp.update_context(wide_rgb, narr_rgb, spd, cmd=cmd,
+                                    target_points=target_points)
         else:
             self.lrp.update_context(wide_rgb, narr_rgb, spd)
 
@@ -324,6 +394,11 @@ class ATOMsCarla:
 
         self._compute_sub(wide_rgb, narr_rgb, cmd)
 
+        if conf.ADD_BRAKE_SEEDS:
+            self._add_brake_seed_block(wide_rgb, narr_rgb, cmd)
+        if conf.ADD_WAYPOINT_SEEDS:
+            self._add_wp_seed_block(wide_rgb, narr_rgb, cmd)
+
         contribution = self._hierarchical - prev
         self._frame_series.append(contribution.copy())
         self._frame_cmds.append(cmd)
@@ -331,8 +406,96 @@ class ATOMsCarla:
         self._frame_wide_frac.append(self._last_wide_frac)
         self._n_frames += 1
 
-        total = contribution.sum()
-        return contribution / (total + 1e-12)
+        return self._normalize_profile(contribution)
+
+    def _normalize_profile(self, v: np.ndarray) -> np.ndarray:
+        """
+        Normalize a profile vector block-wise: each seed block sums to
+        1/n_blocks, so the full profile sums to 1 (a valid distribution for
+        JSD/Wasserstein detectors) while the blocks' relative internal
+        structure is preserved independently of the raw LRP magnitude of
+        either seed.
+        """
+        C   = self.num_classes
+        out = np.empty(len(v), dtype=np.float64)
+        n_blocks = max(1, len(v) // C)
+        for b in range(n_blocks):
+            blk = v[b * C:(b + 1) * C]
+            out[b * C:(b + 1) * C] = blk / ((blk.sum() + 1e-12) * n_blocks)
+        return out
+
+    def _add_brake_seed_block(
+        self, wide_rgb: torch.Tensor, narr_rgb: torch.Tensor, cmd: int
+    ) -> None:
+        """
+        Brake-counterfactual profile block (conf.ADD_BRAKE_SEEDS).
+
+        One extra output→input LRP pass seeded one-hot at speed bin 0 — the
+        model's perceived evidence *for stopping* — intersected with the same
+        segmentation masks and accumulated into the second half of
+        _hierarchical.  Runs identically in all analysis modes: the
+        counterfactual is defined at the output level, so it always uses the
+        output→input path regardless of mode_analysis.
+
+        Cost: one full LRP backward per frame (≈ one forward pass).
+        """
+        is_brake_default  = self._last_is_brake
+        wide_frac_default = self._last_wide_frac
+
+        wide_r, narr_r, wide_frac, _ = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg="output", end="input", cmd=cmd, spd=self._current_spd,
+            forced_brake=True,
+        )
+        off = self._block_offset["brake"]
+        self._hierarchical[off:off + self.num_classes] += np.asarray(
+            self._give_element_selectivity(wide_r, narr_r), dtype=np.float64
+        )
+
+        # Store for visualization — this map is genuinely brake-seeded, unlike
+        # the mode-2 mirror (fc seeds cannot depend on the output distribution).
+        norm_w = wide_frac if wide_frac is not None else 1.0
+        self.saliency_data_wide_brake = wide_r / norm_w
+        self.saliency_data_narr_brake = (
+            narr_r / (1 - norm_w) if narr_r is not None else None
+        )
+
+        # The default pass determines the frame's is_brake / wide_frac metadata.
+        self._last_is_brake  = is_brake_default
+        self._last_wide_frac = wide_frac_default
+
+    def _add_wp_seed_block(
+        self, wide_rgb: torch.Tensor, narr_rgb: torch.Tensor, cmd: int
+    ) -> None:
+        """
+        Waypoint-head profile block (conf.ADD_WAYPOINT_SEEDS).
+
+        One extra wp_fc→input LRP pass seeded with the positive activations of
+        the waypoint query tokens — the exact mode-2 analogue applied to the
+        lateral/spatial decision head (the wp query tokens are the penultimate
+        layer before wp_decoder, as speed_query is before target_speed_decoder).
+        Answers "what built the waypoint decision representation?" and thereby
+        captures steering-relevant attention the speed seed never reaches.
+
+        Cost: one full LRP backward per frame (same as the default mode-2 pass).
+        """
+        is_brake_default  = self._last_is_brake
+        wide_frac_default = self._last_wide_frac
+
+        wide_r, narr_r, wide_frac, _ = self.lrp.forward_relevance(
+            wide_rgb, narr_rgb=narr_rgb,
+            beg="wp_fc", end="input", cmd=cmd, spd=self._current_spd,
+        )
+        off = self._block_offset["wp"]
+        self._hierarchical[off:off + self.num_classes] += np.asarray(
+            self._give_element_selectivity(wide_r, narr_r), dtype=np.float64
+        )
+
+        norm_w = wide_frac if wide_frac is not None else 1.0
+        self.saliency_data_wide_wp = wide_r / norm_w
+
+        self._last_is_brake  = is_brake_default
+        self._last_wide_frac = wide_frac_default
 
     def get_hierarchical(self, normalize: bool = True) -> np.ndarray:
         """
@@ -340,15 +503,16 @@ class ATOMsCarla:
 
         Parameters
         ----------
-        normalize : If True (default), returns attention normalized to sum 1.
+        normalize : If True (default), returns attention normalized block-wise
+                    to sum 1 overall (each seed block sums to 1/n_blocks).
 
         Returns
         -------
-        np.ndarray [num_classes]
+        np.ndarray [profile_dim]  (= num_classes × n_blocks)
         """
         h = self._hierarchical.copy()
         if normalize:
-            h = h / (h.sum() + 1e-12)
+            h = self._normalize_profile(h)
         return h
 
     def get_series_df(self, normalize_rows: bool = True) -> pd.DataFrame:
@@ -364,16 +528,14 @@ class ATOMsCarla:
                          (relative attention within each frame).
         """
         if not self._frame_series:
-            return pd.DataFrame(columns=self.class_names + ["cmd"])
+            return pd.DataFrame(columns=self.profile_names + ["cmd"])
 
-        arr = np.stack(self._frame_series, axis=0)   # [T, C]
+        arr = np.stack(self._frame_series, axis=0)   # [T, profile_dim]
 
         if normalize_rows:
-            row_sums = arr.sum(axis=1, keepdims=True)
-            row_sums = np.where(row_sums == 0, 1e-12, row_sums)
-            arr = arr / row_sums
+            arr = np.stack([self._normalize_profile(row) for row in arr], axis=0)
 
-        df = pd.DataFrame(arr, columns=self.class_names)
+        df = pd.DataFrame(arr, columns=self.profile_names)
         df["cmd"] = self._frame_cmds
         df["wide_frac"] = self._frame_wide_frac
         return df
@@ -391,10 +553,10 @@ class ATOMsCarla:
         df = self.get_series_df(normalize_rows=True)
         if df.empty:
             return df
-        return df.groupby("cmd")[self.class_names].mean()
+        return df.groupby("cmd")[self.profile_names].mean()
 
     def reset(self):
-        self._hierarchical       = np.zeros(self.num_classes, dtype=np.float64)
+        self._hierarchical       = np.zeros(self.profile_dim, dtype=np.float64)
         self._frame_series       = []
         self._frame_cmds         = []
         self._frame_brake:  List[bool]  = []
@@ -433,7 +595,9 @@ class ATOMsCarla:
             # Taking abs preserves the non-negativity of ATOMs attention
             # profiles, consistent with how _relevance_filter selects nodes.
             node_w = abs(r_nodes[node_id].item())
-            self._hierarchical += np.asarray(R_sum, dtype=np.float64) * node_w
+            self._hierarchical[:self.num_classes] += (
+                np.asarray(R_sum, dtype=np.float64) * node_w
+            )
         self._last_is_brake = is_brake_lrp1
 
         if lrp2_cache:
@@ -447,7 +611,7 @@ class ATOMsCarla:
         wide_r, narr_r = self._saliency_map(
             wide_rgb, narr_rgb, beg="fc", end="input", cmd=cmd
         )
-        self._hierarchical += np.asarray(
+        self._hierarchical[:self.num_classes] += np.asarray(
             self._give_element_selectivity(wide_r, narr_r), dtype=np.float64
         )
 
@@ -457,7 +621,7 @@ class ATOMsCarla:
         wide_r, narr_r = self._saliency_map(
             wide_rgb, narr_rgb, beg="output", end="input", cmd=cmd
         )
-        self._hierarchical += np.asarray(
+        self._hierarchical[:self.num_classes] += np.asarray(
             self._give_element_selectivity(wide_r, narr_r), dtype=np.float64
         )
 
@@ -601,23 +765,34 @@ class ATOMsCarla:
             self.saliency_data_narr_drive = self.saliency_data_narr_default
 
         if conf.PLOT_COMPARATIVE_REL:
-            # Compute forced maps for visualization only — does NOT feed _hierarchical.
-            wide_r_b, narr_r_b, wide_frac_b, _ = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg=beg, end=end, cmd=cmd, spd=self._current_spd,
-                forced_brake=True
-            )
-            wide_r_d, narr_r_d, wide_frac_d, _ = self.lrp.forward_relevance(
-                wide_rgb, narr_rgb=narr_rgb,
-                beg=beg, end=end, cmd=cmd, spd=self._current_spd,
-                forced_drive=True
-            )
-            norm_b = wide_frac_b if wide_frac_b is not None else 1.0
-            norm_d = wide_frac_d if wide_frac_d is not None else 1.0
-            self.saliency_data_wide_brake = wide_r_b / norm_b
-            self.saliency_data_narr_brake = narr_r_b / (1 - norm_b) if narr_r_b is not None else None
-            self.saliency_data_wide_drive = wide_r_d / norm_d
-            self.saliency_data_narr_drive = narr_r_d / (1 - norm_d) if narr_r_d is not None else None
+            if beg == "fc" and hasattr(self.lrp, "_data_cache"):
+                # TFV6 fc-seeded maps cannot depend on the output distribution
+                # (Decision E): a forced_brake/drive pass returns the default
+                # map exactly.  Mirror it instead of recomputing — saves two
+                # backward passes per frame.  The genuinely brake-seeded map is
+                # set by _add_brake_seed_block when conf.ADD_BRAKE_SEEDS is on.
+                self.saliency_data_wide_brake = self.saliency_data_wide_default
+                self.saliency_data_narr_brake = self.saliency_data_narr_default
+                self.saliency_data_wide_drive = self.saliency_data_wide_default
+                self.saliency_data_narr_drive = self.saliency_data_narr_default
+            else:
+                # Compute forced maps for visualization only — does NOT feed _hierarchical.
+                wide_r_b, narr_r_b, wide_frac_b, _ = self.lrp.forward_relevance(
+                    wide_rgb, narr_rgb=narr_rgb,
+                    beg=beg, end=end, cmd=cmd, spd=self._current_spd,
+                    forced_brake=True
+                )
+                wide_r_d, narr_r_d, wide_frac_d, _ = self.lrp.forward_relevance(
+                    wide_rgb, narr_rgb=narr_rgb,
+                    beg=beg, end=end, cmd=cmd, spd=self._current_spd,
+                    forced_drive=True
+                )
+                norm_b = wide_frac_b if wide_frac_b is not None else 1.0
+                norm_d = wide_frac_d if wide_frac_d is not None else 1.0
+                self.saliency_data_wide_brake = wide_r_b / norm_b
+                self.saliency_data_narr_brake = narr_r_b / (1 - norm_b) if narr_r_b is not None else None
+                self.saliency_data_wide_drive = wide_r_d / norm_d
+                self.saliency_data_narr_drive = narr_r_d / (1 - norm_d) if narr_r_d is not None else None
 
         return wide_r, narr_r
 

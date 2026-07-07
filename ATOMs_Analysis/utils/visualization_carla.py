@@ -123,6 +123,9 @@ def visualize_relevance(relevance, rgb_image=None, alpha=None, save_path: Option
     else:
         cmap = vc.SALIENCY_CMAP_ALT
 
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
     if rgb_image is None:
         plt.imshow(heatmap, cmap=cmap)
         plt.colorbar(); plt.axis('off')
@@ -160,6 +163,9 @@ def visualize_comparative_relevance(relevance, rgb_image=None, alpha=None, save_
     heatmap = rel.sum(dim=0).numpy()    # [H, W]
     cmap = vc.SALIENCY_CMAP_DIVERGING
     vmax = np.abs(heatmap).max() + 1e-12
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
     if rgb_image is None:
         plt.imshow(heatmap, cmap=cmap, vmin=-vmax, vmax=vmax)
@@ -244,6 +250,7 @@ def visualize_segmentation(
 
     plt.tight_layout()
     if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
         print(f"[Visualizer] Saved image to {save_path}")
     else:

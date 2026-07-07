@@ -52,7 +52,7 @@ import numpy as np
 import torch
 
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
-from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
 from ATOMs_Analysis.saliency.lrp_analysis import LRPCameraModel
 from ATOMs_Analysis.utils.visualization_carla import visualize_relevance, visualize_segmentation, visualize_comparative_relevance
 
@@ -329,6 +329,9 @@ class BaselineDataLoader:
             "is_brake":      data["is_brake"],
             "frame_idx":     data["frame_idx"],
             "run_id":        np.zeros(n, dtype=np.int32),
+            "target_point":          data["target_point"]          if "target_point"          in data else None,
+            "target_point_previous": data["target_point_previous"] if "target_point_previous" in data else None,
+            "target_point_next":     data["target_point_next"]     if "target_point_next"     in data else None,
         }
 
     @staticmethod
@@ -374,6 +377,9 @@ class BaselineDataLoader:
                 "is_brake":     d["is_brake"],
                 "frame_idx":    d["frame_idx"],
                 "run_id":       np.full(n, run_id, dtype=np.int32),
+                "target_point":          d["target_point"]          if "target_point"          in d else None,
+                "target_point_previous": d["target_point_previous"] if "target_point_previous" in d else None,
+                "target_point_next":     d["target_point_next"]     if "target_point_next"     in d else None,
             })
             print(f"  Loaded run {run_id:03d}: {n} frames ← {fpath.name}")
 
@@ -512,10 +518,15 @@ class BaselineComputer:
             cmd  = int(data["cmd"][i])
             spd = float(data["speed"][i])
 
-            # data= is intentionally omitted: .npz files lack target_point/acceleration.
-            # _make_minimal_data (called inside process_frame) provides all required keys
-            # from cmd and spd, which is equivalent for vision-only/LTF mode.
-            frame_att = self.atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)   # [num_classes]
+            # data= is intentionally omitted: _make_minimal_data (called inside
+            # process_frame) builds the conditioning dict from cmd, spd and — when
+            # the npz provides them (conf.USE_REAL_TARGET_POINTS) — real target
+            # points, matching the deployed model's route conditioning.
+            tps = extract_target_points(data, i)
+            frame_att = self.atoms.process_frame(
+                wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd,
+                target_points=tps,
+            )   # [profile_dim]
             attention_series.append(frame_att)
 
             if i % conf.PLOT_INTERVAL == 0 and conf.PLOT_SEG_AND_REL:
@@ -574,6 +585,9 @@ class BaselineComputer:
             cov         = cov.astype(np.float32),
             class_ids   = np.array(self.atoms.class_ids,   dtype=np.int32),
             class_names = np.array(self.atoms.class_names, dtype=object),
+            # Full profile column names (== class_names, plus "Brake:*" block
+            # when conf.ADD_BRAKE_SEEDS) — series.shape[1] == len(profile_names).
+            profile_names = np.array(self.atoms.profile_names, dtype=object),
             cmd_filter  = np.array([cmd_filter if cmd_filter is not None else -1]),
             n_frames    = np.array([n_frames]),
         )

@@ -448,3 +448,18 @@ difference map will be all-zero).  For WoR the forced flags do affect the LRP2
 seed (different action head seeds), so comparative maps are meaningful there.
 The contrastive is most useful for TFV6 in mode 3 (beg="output", end="input"),
 where brake and drive seeds produce genuinely different pixel maps.
+
+**Follow-up (2026-07-02):** multi-seed profile blocks were implemented
+(`conf.ADD_BRAKE_SEEDS` — brake counterfactual, output→input;
+`conf.ADD_WAYPOINT_SEEDS` — waypoint-query activation seed, wp_fc→input) but
+then **measured to be redundant**: every decoder-level seed tested (brake
+one-hot, wp activations, lateral waypoint decision direction) produces a
+pixel map with cosine ≥ 0.994 to the default speed-seeded map, even on
+turning frames.  TFV6 LRP maps are effectively **seed-invariant at the
+planning-decoder level** — the transformer analogue of the WoR GAP-collapse
+finding.  Both flags default False; the code stays for A/B.  Mode 2 also now
+mirrors the fc-seeded comparative passes instead of recomputing them
+(provably identical → 1 backward pass/frame in the default config, down
+from 3).  `conf.USE_REAL_TARGET_POINTS` fixes the zeroed TP conditioning
+noted in CLAUDE.md.  See `docs/design_decisions.md` ("Seed-invariance of
+TFV6 LRP maps", "Real target-point conditioning").

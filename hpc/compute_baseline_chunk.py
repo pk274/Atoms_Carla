@@ -50,6 +50,9 @@ def load_run_npz(filepath: Path) -> dict:
         "cmd":          data["cmd"],
         "speed":        data["speed"],
         "frame_idx":    data["frame_idx"],
+        "target_point":          data["target_point"]          if "target_point"          in data else None,
+        "target_point_previous": data["target_point_previous"] if "target_point_previous" in data else None,
+        "target_point_next":     data["target_point_next"]     if "target_point_next"     in data else None,
     }
 
 
@@ -123,7 +126,7 @@ def main() -> None:
         lrp = build_tfv6_lrp(args.model_dir, device)
 
     # --- ATOMs ---
-    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
     from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
 
     class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
@@ -160,7 +163,9 @@ def main() -> None:
         cmd      = int(data["cmd"][i])
         spd      = float(data["speed"][i])
 
-        frame_att = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+        tps = extract_target_points(data, i)
+        frame_att = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd,
+                                        target_points=tps)
         attention_series.append(frame_att)
 
         if args.agent == "WOR":
@@ -211,6 +216,7 @@ def main() -> None:
         mdx_actions        = mdx_actions,
         class_ids          = np.array(atoms.class_ids,   dtype=np.int32),
         class_names        = np.array(atoms.class_names, dtype=object),
+        profile_names      = np.array(atoms.profile_names, dtype=object),
     )
 
     elapsed = time.time() - t0

@@ -67,7 +67,7 @@ def load_all_runs(frames_dir: Path) -> dict:
     for run_id, fp in enumerate(files):
         d = np.load(fp, allow_pickle=False)
         n = d["wide_rgb"].shape[0]
-        parts.append({
+        part = {
             "wide_rgb":     d["wide_rgb"],
             "seg_red_wide": d["seg_red_wide"],
             "cmd":          d["cmd"],
@@ -76,7 +76,13 @@ def load_all_runs(frames_dir: Path) -> dict:
                             else np.zeros(n, dtype=np.int8),
             "frame_idx":    d["frame_idx"],
             "run_id":       np.full(n, run_id, dtype=np.int32),
-        })
+        }
+        # Target-point conditioning (present in npz migrated 2026-07-02+);
+        # zeros for older frames so concatenation stays consistent.
+        for tp_key in ("target_point", "target_point_previous", "target_point_next"):
+            part[tp_key] = (d[tp_key] if tp_key in d
+                            else np.zeros((n, 2), dtype=np.float32))
+        parts.append(part)
         print(f"  {fp.name}: {n} frames")
 
     return {k: np.concatenate([p[k] for p in parts], axis=0) for k in parts[0]}
@@ -165,6 +171,10 @@ def main() -> None:
         label        = labels,
         perturbation = pert_names,
         intensity    = intensities,
+        # TP conditioning is always clean — perturbations touch pixels only.
+        target_point          = raw["target_point"],
+        target_point_previous = raw["target_point_previous"],
+        target_point_next     = raw["target_point_next"],
     )
 
     # Write frame count so submit_test.sh can size the array job if needed

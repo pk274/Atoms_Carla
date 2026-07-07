@@ -58,7 +58,7 @@ _cli, _ = _ap.parse_known_args()
 # Project imports — adjust paths to match your project layout
 # ---------------------------------------------------------------------------
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf   # global config
-from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
 
 # Agent-specific LRP imports (loaded conditionally in Step 1 to avoid hard deps)
 if conf.AGENT == "TFV6":
@@ -240,7 +240,16 @@ baseline_series  = baseline_data["series"].astype(np.float64)   # [N, C]
 baseline_mean    = baseline_data["mean"].astype(np.float64)      # [C]
 baseline_cov     = baseline_data["cov"].astype(np.float64)       # [C, C]
 
-print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]} classes")
+if baseline_series.shape[1] != atoms.profile_dim:
+    raise ValueError(
+        f"Cached {baseline_npz.name} has profile dim {baseline_series.shape[1]} but the "
+        f"current config expects {atoms.profile_dim} "
+        f"(ADD_BRAKE_SEEDS={conf.ADD_BRAKE_SEEDS}, ADD_WAYPOINT_SEEDS={conf.ADD_WAYPOINT_SEEDS} "
+        f"→ {atoms.n_blocks}×{atoms.num_classes}). "
+        f"Recompute the baseline (RECOMPUTE_BASELINE=True / HPC pipeline) or flip the flags."
+    )
+
+print(f"  Baseline: {baseline_series.shape[0]} frames, {baseline_series.shape[1]} profile dims")
 print()
 
 # ===========================================================================
@@ -521,10 +530,10 @@ print("[Step 7] Visualizing baseline attention profiles...")
 # Large bars for Vehicle, RoadLine, Road are expected for a healthy agent.
 fig_bar = plot_attention_bar(
     attention   = baseline_mean,
-    class_names = atoms.class_names,
+    class_names = atoms.profile_names,
     title       = "Baseline Mean Attention (all classes)",
     error       = baseline_series.std(axis=0),   # std as error bars
-    top_k       = 15,    # <<< show top 15 classes; set None for all 23
+    top_k       = 15,    # <<< show top 15 profile dims; set None for all
 )
 save_figure(fig_bar, dirs["attention"] / "baseline_attention_bar.png")
 
@@ -546,7 +555,7 @@ for k in range(N_COMPONENTS):
 
 fig_cluster_bar = plot_attention_comparison(
     attention_dict = cluster_attention,
-    class_names    = atoms.class_names,
+    class_names    = atoms.profile_names,
     top_k          = 10,       # <<< show top-10 classes by max attention across clusters
     title          = f"Mean Attention per GMM Cluster (K={N_COMPONENTS})",
     colors         = cluster_colors,   # link bar colors to PCA/t-SNE cluster scatter
@@ -558,7 +567,7 @@ save_figure(fig_cluster_bar, dirs["attention"] / "attention_by_cluster.png")
 # the PCA scatter without any post-processing rescaling.
 figs_per_cluster = plot_attention_bars_separate(
     attention_dict = cluster_attention,
-    class_names    = atoms.class_names,
+    class_names    = atoms.profile_names,
     top_k          = 10,
     colors         = cluster_colors,
     min_dict       = cluster_min,
@@ -589,7 +598,7 @@ for cmd_id in np.unique(raw_baseline["cmd"]):
 if len(cmd_attention) > 1:
     fig_cmd = plot_attention_comparison(
         attention_dict = cmd_attention,
-        class_names    = atoms.class_names,
+        class_names    = atoms.profile_names,
         top_k          = 10,
         title          = "Mean Attention by Navigation Command",
     )
@@ -619,7 +628,7 @@ for k in range(N_COMPONENTS):
 run_ids = raw_baseline["run_id"][:len(baseline_series)]
 fig_pca_run = plot_pca_baseline(
     baseline_series = baseline_series,
-    class_names     = atoms.class_names,
+    class_names     = atoms.profile_names,
     color_by        = run_ids,
     color_label     = "Run ID",
     title           = "Baseline ATOMs — PCA (coloured by run)",
@@ -649,7 +658,7 @@ tsne_baseline = fit_tsne(baseline_series)
 
 fig_tsne_run = plot_tsne_baseline(
     baseline_series = baseline_series,
-    class_names     = atoms.class_names,
+    class_names     = atoms.profile_names,
     color_by        = run_ids,
     color_label     = "Run ID",
     title           = "Baseline ATOMs — t-SNE (coloured by run)",
@@ -752,7 +761,7 @@ if conf.RECOMPUTE_TEST_ATOMS:
     atoms.reset()   # clear any accumulated state from baseline computation
 
     n_test                 = test_data["wide_rgb"].shape[0]
-    test_profiles          = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+    test_profiles          = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
     test_logits_all        = [] if action_logits_available  else None
     test_speed_logits_list = [] if speed_logits_available   else None
 
@@ -767,7 +776,11 @@ if conf.RECOMPUTE_TEST_ATOMS:
         seg_narr = test_data["seg_red_narr"][i]                             if has_seg_narr_test else None
         cmd      = int(test_data["cmd"][i])
 
-        profile = atoms.process_frame(wide, narrow, seg_wide, seg_narr, cmd=cmd)
+        profile = atoms.process_frame(
+            wide, narrow, seg_wide, seg_narr, cmd=cmd,
+            spd=float(test_data["speed"][i]),
+            target_points=extract_target_points(test_data, i),
+        )
         test_profiles[i] = profile
 
         # Action logits for PEOC entropy detector (WoR only).
@@ -837,6 +850,15 @@ else:
             f"test_profiles_{_mode}.npy has {len(test_profiles)} frames but "
             f"test_labeled.npz has {len(test_labels)} frames — they are out of sync. "
             f"Set RECOMPUTE_TEST_ATOMS=True to regenerate test_profiles_{_mode}.npy."
+        )
+
+    if test_profiles.shape[1] != atoms.profile_dim:
+        raise RuntimeError(
+            f"test_profiles_{_mode}.npy has profile dim {test_profiles.shape[1]} but the "
+            f"current config expects {atoms.profile_dim} "
+            f"(ADD_BRAKE_SEEDS={conf.ADD_BRAKE_SEEDS}, "
+            f"ADD_WAYPOINT_SEEDS={conf.ADD_WAYPOINT_SEEDS}). Recompute the test profiles "
+            f"or flip the flags."
         )
 
     # Alignment guard (docs/code_review.md §3.3): a same-length but reordered or
@@ -913,6 +935,14 @@ if _val_profiles_path.exists() and _val_labeled_path.exists():
     val_data     = LabeledTestLoader.load_val()
     val_profiles = np.load(_val_profiles_path)
     val_labels   = val_data["label"].astype(np.int32)
+    if val_profiles.shape[1] != atoms.profile_dim:
+        raise RuntimeError(
+            f"val_profiles_{_mode}.npy has profile dim {val_profiles.shape[1]} but the "
+            f"current config expects {atoms.profile_dim} "
+            f"(ADD_BRAKE_SEEDS={conf.ADD_BRAKE_SEEDS}, "
+            f"ADD_WAYPOINT_SEEDS={conf.ADD_WAYPOINT_SEEDS}). Recompute the val profiles "
+            f"or flip the flags."
+        )
     _has_val     = True
     print(f"[Step 9.5] Val set loaded: {len(val_profiles)} profiles, "
           f"{int(val_labels.sum())} perturbed. k-NN k will be selected on val AUC.\n")

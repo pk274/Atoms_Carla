@@ -62,6 +62,7 @@ def main() -> None:
     actions_parts  = []
     class_ids      = None
     class_names    = None
+    profile_names  = None
     has_mdx        = True   # set False if any partial is missing backbone_features
 
     for f in partial_files:
@@ -70,6 +71,8 @@ def main() -> None:
         if class_ids is None:
             class_ids   = part["class_ids"]
             class_names = part["class_names"]
+            profile_names = (part["profile_names"]
+                             if "profile_names" in part else class_names)
         if "backbone_features" in part and "mdx_actions" in part:
             backbone_parts.append(part["backbone_features"])
             actions_parts.append(part["mdx_actions"])
@@ -93,6 +96,7 @@ def main() -> None:
         cov         = cov.astype(np.float32),
         class_ids   = class_ids,
         class_names = class_names,
+        profile_names = profile_names,
         cmd_filter  = np.array([-1], dtype=np.int32),
         n_frames    = np.array([len(series)], dtype=np.int32),
     )

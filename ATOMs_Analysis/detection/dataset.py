@@ -398,6 +398,11 @@ class PerturbationApplier:
         if has_narr:
             save_kwargs["narr_rgb"]     = out_narr
             save_kwargs["seg_red_narr"] = raw["seg_red_narr"]
+        # Target-point conditioning is always clean (perturbations touch pixels
+        # only) — pass it through so profile computation can condition the model.
+        for _tp_key in ("target_point", "target_point_previous", "target_point_next"):
+            if raw.get(_tp_key) is not None:
+                save_kwargs[_tp_key] = raw[_tp_key]
         np.savez_compressed(self._out_path, **save_kwargs)
 
         n_perturbed = int(labels.sum())
@@ -573,6 +578,9 @@ def _load_all_runs(
             "run_id":       np.full(n, run_id, dtype=np.int32),
             "is_perturbed": d["is_perturbed"] if "is_perturbed" in d
                             else np.zeros(n, dtype=np.int8),
+            "target_point":          d["target_point"]          if "target_point"          in d else None,
+            "target_point_previous": d["target_point_previous"] if "target_point_previous" in d else None,
+            "target_point_next":     d["target_point_next"]     if "target_point_next"     in d else None,
         })
 
     def _concat(key):

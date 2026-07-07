@@ -132,7 +132,7 @@ def main() -> None:
     else:
         lrp = build_tfv6_lrp(args.model_dir, device)
 
-    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
     from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
 
     class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
@@ -162,7 +162,9 @@ def main() -> None:
         cmd      = int(data["cmd"][i])
         spd      = float(data["speed"][i])
 
-        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+        tps     = extract_target_points(data, i)
+        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd,
+                                      target_points=tps)
         profiles.append(profile)
 
         if args.agent == "WOR":
@@ -192,6 +194,7 @@ def main() -> None:
         chunk_end   = np.array([chunk_end],   dtype=np.int32),
         class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
         class_names = np.array(atoms.class_names, dtype=object),
+        profile_names = np.array(atoms.profile_names, dtype=object),
         **{logit_key: peoc_logits_arr},
     )
 

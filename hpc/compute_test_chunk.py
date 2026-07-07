@@ -144,7 +144,7 @@ def main() -> None:
     else:
         lrp, tfv6_model = build_tfv6_lrp(args.model_dir, device)
 
-    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla
+    from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
     from ATOMs_Analysis.utils.visualization_carla import TFV6_CLASSES, CARLA_CLASSES
 
     class_map = CARLA_CLASSES if args.agent == "WOR" else TFV6_CLASSES
@@ -187,6 +187,7 @@ def main() -> None:
         seg_narr = data["seg_red_narr"][i]                           if has_seg_narr else None
         cmd      = int(data["cmd"][i])
         spd      = float(data["speed"][i])
+        tps      = extract_target_points(data, i)
 
         # Craft the PGD attack on this frame's RGB (replaces the clean pixels that
         # prep_test.py wrote).  Both the ATOMs profile and the PEOC logits below
@@ -195,7 +196,8 @@ def main() -> None:
             eps = float(data["intensity"][i]) if "intensity" in data else 0.0
             if eps <= 0.0:
                 eps = args.pgd_epsilon
-            pgd_data = {**_make_minimal_data(spd, device, cmd=cmd),
+            # Attack under the same TP conditioning the profile pass uses.
+            pgd_data = {**_make_minimal_data(spd, device, cmd=cmd, target_points=tps),
                         "rgb": wide.to(device)}
             # visiononly_resnet34 has carla_leaderboard_mode=True (from its carla_root),
             # so radar_detection=True and radar_detector is instantiated.  The checkpoint
@@ -216,7 +218,8 @@ def main() -> None:
             )
             wide = adv_rgb.detach().cpu().float()
 
-        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
+        profile = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd,
+                                      target_points=tps)
         profiles.append(profile)
 
         # PEOC logits (no LRP backward — cheap)
@@ -247,6 +250,7 @@ def main() -> None:
         chunk_end   = np.array([chunk_end],   dtype=np.int32),
         class_ids   = np.array(atoms.class_ids,   dtype=np.int32),
         class_names = np.array(atoms.class_names, dtype=object),
+        profile_names = np.array(atoms.profile_names, dtype=object),
         **{logit_key: peoc_logits_arr},
     )
 

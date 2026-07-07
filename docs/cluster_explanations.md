@@ -106,12 +106,12 @@ command for you to run.
 # bash hpc/collect_results.sh <pipeline> <agent> <mode> [pert] [options]
 #   pipeline : baseline | test | live_pert
 #   agent    : tfv6 | wor
-#   mode     : 1 | 2
+#   mode     : 1 | 2  (2 is standard, matching atoms_config.py's MODE_ANALYSIS)
 #   pert     : required for live_pert (e.g. pgd)
 
 cd /u/$USER/pcla
-bash hpc/collect_results.sh test tfv6 1          # stage TFV6 test profiles+logits, mode 1
-bash hpc/collect_results.sh test tfv6 2          # …and mode 2
+bash hpc/collect_results.sh test tfv6 2          # stage TFV6 test profiles+logits, mode 2 (standard)
+bash hpc/collect_results.sh test tfv6 1          # …and mode 1, if also needed
 git commit -m "add TFV6 test results from HPC"   # (the script prints this line for you)
 git push
 ```
@@ -128,8 +128,8 @@ reported and exit non-zero, so a half-finished gather won't silently stage a par
 ### Manual fallback
 
 ```bash
-cp /ptmp/$USER/atoms_baseline/partials/baseline_1.npz /u/$USER/pcla/data/TFV6/baseline_data/baseline_1.npz
-cd /u/$USER/pcla && git add -f data/TFV6/baseline_data/baseline_1.npz && git commit -m "…" && git push
+cp /ptmp/$USER/atoms_baseline_alt/partials/baseline_2.npz /u/$USER/pcla/data/TFV6/baseline_data_alt/baseline_2.npz
+cd /u/$USER/pcla && git add -f data/TFV6/baseline_data_alt/baseline_2.npz && git commit -m "…" && git push
 ```
 
 GitHub has a 100 MB per-file hard limit — only use git for computed outputs
@@ -137,26 +137,42 @@ GitHub has a 100 MB per-file hard limit — only use git for computed outputs
 
 ---
 
+## TFV6 data split: alternative (default)
+
+`atoms_config.py` defaults to `EXPERIMENT_VARIANT = "alternative"` — the same-distribution
+split (all towns pooled, random route-level split into baseline/test/val, OOD signal from
+perturbations only) rather than the original Town05-held-out split. The baseline/test/val
+TFV6 paths below (local `*_data_alt/` dirs, remote `/ptmp/.../atoms_*_alt` work dirs, and
+`collect_results.sh ... --alt`) assume this default. To use the legacy Town05-held-out split
+instead, set `EXPERIMENT_VARIANT = "original"` locally and drop `_alt`/`--alt` from every
+path and command below. WoR has no alt split — its pipelines (further down) are unaffected.
+The live-perturbation pipeline is also unaffected — it's a single recorded dataset, not
+resampled per split, so it has no `_alt` variant either.
+
+---
+
 ## Full test-set pipeline
 
 ### 1. Upload test frames (see above)
 
-Source: `data/TFV6/test_data/frames/`  
-Destination on Viper: `/ptmp/paulkull/atoms_test/frames/`
+Source: `data/TFV6/test_data_alt/frames/` (or `test_data/frames/` for the legacy
+Town05-held-out split)  
+Destination on Viper: `/ptmp/paulkull/atoms_test_alt/frames/`
 
 ### 2. Submit all jobs in one command (on Viper)
 
-Pass the desired `MODE_ANALYSIS` (1 or 2) as the last argument. Run once per mode to produce both:
+Pass the desired `MODE_ANALYSIS` (1 or 2; **2 is standard**, matching `atoms_config.py`) as
+the last argument. Run once per mode if you need both:
 
 ```bash
 cd /u/paulkull/pcla
 git pull
 bash hpc/submit_test.sh \
-    /ptmp/paulkull/atoms_test/frames \
-    /ptmp/paulkull/atoms_test \
+    /ptmp/paulkull/atoms_test_alt/frames \
+    /ptmp/paulkull/atoms_test_alt \
     /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
-    "" "" 1   # MODE_ANALYSIS=1  (args 4=CODE_DIR, 5=CHUNK_SIZE left as defaults)
-bash hpc/submit_test.sh ... 2   # MODE_ANALYSIS=2
+    "" "" 2   # MODE_ANALYSIS=2 (standard, args 4=CODE_DIR, 5=CHUNK_SIZE left as defaults)
+bash hpc/submit_test.sh ... 1   # MODE_ANALYSIS=1, if also needed
 ```
 
 This chains three SLURM jobs automatically:
@@ -178,13 +194,13 @@ Monitor: `squeue -u paulkull`
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh test tfv6 1
-bash hpc/collect_results.sh test tfv6 2     # if both modes were computed
+bash hpc/collect_results.sh test tfv6 2 --alt
+bash hpc/collect_results.sh test tfv6 1 --alt     # if mode 1 was also computed
 git commit -m "add TFV6 test results from HPC"
 git push
 ```
 
-Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`, and set `MODE_ANALYSIS` to whichever mode you want to analyse.
+Then locally: `git pull`, set `RECOMPUTE_TEST_ATOMS = False` in `atoms_config.py`, and set `MODE_ANALYSIS` to whichever mode you want to analyse (`2` is standard). (Drop `--alt` above only if you deliberately ran the legacy Town05-held-out split.)
 
 `test_speed_logits_{MODE}.npy` is automatically used by `run_analysis.py` for PEOC scoring — no config flag needed.
 
@@ -194,15 +210,15 @@ The 5-way mix (incl. `pgd`) is new. `submit_test.sh` **skips prep if `test_label
 exists**, so to pick up the PGD frames you must delete the stale labelled set and partials first:
 
 ```bash
-rm -f  /ptmp/$USER/atoms_test/test_labeled.npz      # force prep to rebuild with the 5-way PGD mix
-rm -rf /ptmp/$USER/atoms_test/partials              # old profiles are stale (mix changed)
+rm -f  /ptmp/$USER/atoms_test_alt/test_labeled.npz      # force prep to rebuild with the 5-way PGD mix
+rm -rf /ptmp/$USER/atoms_test_alt/partials              # old profiles are stale (mix changed)
 bash hpc/submit_test.sh \
-    /ptmp/$USER/atoms_test/frames \
-    /ptmp/$USER/atoms_test \
+    /ptmp/$USER/atoms_test_alt/frames \
+    /ptmp/$USER/atoms_test_alt \
     /u/$USER/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
-    "" "" 1                                          # then repeat with trailing 2 for mode 2
+    "" "" 2                                          # then repeat with trailing 1 if mode 1 is also needed
 # after both gathers finish:
-bash hpc/collect_results.sh test tfv6 1 && bash hpc/collect_results.sh test tfv6 2
+bash hpc/collect_results.sh test tfv6 2 --alt && bash hpc/collect_results.sh test tfv6 1 --alt
 ```
 
 Override the attack with `PGD_TARGET` / `PGD_EPSILON` / `PGD_STEPS` (defaults `brake` /
@@ -224,7 +240,7 @@ here.
 ```bash
 cd /u/paulkull/pcla
 git pull
-bash hpc/submit_tfv6_lrp_diagnostics.sh /ptmp/paulkull/atoms_baseline/frames
+bash hpc/submit_tfv6_lrp_diagnostics.sh /ptmp/paulkull/atoms_baseline_alt/frames
 ```
 
 Optional positional args: `[OUT_DIR] [N_RUNS] [N_FRAMES] [CODE_DIR]`, e.g. to
@@ -232,7 +248,7 @@ use fewer frames for a quicker smoke test:
 
 ```bash
 bash hpc/submit_tfv6_lrp_diagnostics.sh \
-    /ptmp/paulkull/atoms_baseline/frames \
+    /ptmp/paulkull/atoms_baseline_alt/frames \
     /ptmp/paulkull/tfv6_lrp_diag/out \
     1 1   # N_RUNS=1, N_FRAMES=1
 ```
@@ -243,9 +259,9 @@ overwrite each other:
 
 ```bash
 ZERO_BIAS=1 bash hpc/submit_tfv6_lrp_diagnostics.sh \
-    /ptmp/paulkull/atoms_baseline/frames /ptmp/paulkull/tfv6_lrp_diag/out_zerobias
+    /ptmp/paulkull/atoms_baseline_alt/frames /ptmp/paulkull/tfv6_lrp_diag/out_zerobias
 UITB=1 bash hpc/submit_tfv6_lrp_diagnostics.sh \
-    /ptmp/paulkull/atoms_baseline/frames /ptmp/paulkull/tfv6_lrp_diag/out_uitb
+    /ptmp/paulkull/atoms_baseline_alt/frames /ptmp/paulkull/tfv6_lrp_diag/out_uitb
 ```
 
 Compare D06's `amplification_ratio_mean`/`CoV` across the default, `ZERO_BIAS=1`,
@@ -265,13 +281,15 @@ Monitor: `squeue -u paulkull`, then `tail -f /ptmp/paulkull/tfv6_lrp_diag/logs/d
 ## Full val-set pipeline
 
 The val set is used exclusively for hyperparameter selection (k-NN k, GMM-kNN k).
-Val frames must come from routes **not** present in `test_data/frames/` — guaranteed by
+Val frames must come from routes **not** present in `test_data_alt/frames/` (or
+`test_data/frames/` for the legacy split) — guaranteed by
 `migrate_lead_to_baseline.py --mode valset`.
 
 ### 1. Upload val frames (see above)
 
-Source: `data/TFV6/val_data/frames/` (or `val_data_alt/frames/` for the alt split)
-Destination on Viper: `/ptmp/paulkull/atoms_val/frames/`
+Source: `data/TFV6/val_data_alt/frames/` (or `val_data/frames/` for the legacy
+Town05-held-out split)  
+Destination on Viper: `/ptmp/paulkull/atoms_val_alt/frames/`
 
 Use the same HTTP tunnel method, pointing Terminal 1 at the val frames directory.
 
@@ -281,8 +299,8 @@ Use the same HTTP tunnel method, pointing Terminal 1 at the val frames directory
 cd /u/paulkull/pcla
 git pull
 bash hpc/submit_val.sh \
-    /ptmp/paulkull/atoms_val/frames \
-    /ptmp/paulkull/atoms_val \
+    /ptmp/paulkull/atoms_val_alt/frames \
+    /ptmp/paulkull/atoms_val_alt \
     /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
     "" "" 2   # CODE_DIR, CHUNK_SIZE (defaults), MODE_ANALYSIS
 ```
@@ -298,17 +316,17 @@ Monitor: `squeue -u paulkull`
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh val tfv6 2          # original split
-# OR for the alternative split:
-bash hpc/collect_results.sh val tfv6 2 --alt    # → val_data_alt/
+bash hpc/collect_results.sh val tfv6 2 --alt    # alt split (default) → val_data_alt/
+# OR for the legacy Town05-held-out split:
+bash hpc/collect_results.sh val tfv6 2          # → val_data/
 git commit -m "add TFV6 val results from HPC"
 git push
 ```
 
 `collect_results.sh val` copies three files:
-- `val_labeled.npz` → `data/TFV6/val_data[_alt]/`
-- `val_profiles_{MODE}.npy` → `data/TFV6/val_data[_alt]/attention/`
-- `val_speed_logits_{MODE}.npy` → `data/TFV6/val_data[_alt]/attention/`
+- `val_labeled.npz` → `data/TFV6/val_data_alt/` (or `val_data/` without `--alt`)
+- `val_profiles_{MODE}.npy` → `data/TFV6/val_data_alt/attention/`
+- `val_speed_logits_{MODE}.npy` → `data/TFV6/val_data_alt/attention/`
 
 Then locally: `git pull` and run `run_analysis.py` — it auto-detects both files and selects k on val AUC instead of test AUC (no data leakage).
 
@@ -318,22 +336,24 @@ Then locally: `git pull` and run `run_analysis.py` — it auto-detects both file
 
 ### 1. Upload baseline frames
 
-Source: `data/TFV6/baseline_data/frames/`  
-Destination on Viper: `/ptmp/paulkull/atoms_baseline/frames/`
+Source: `data/TFV6/baseline_data_alt/frames/` (or `baseline_data/frames/` for the
+legacy Town05-held-out split)  
+Destination on Viper: `/ptmp/paulkull/atoms_baseline_alt/frames/`
 
-Use the same HTTP tunnel method, pointing Terminal 1 at `data\TFV6\baseline_data\frames`.
+Use the same HTTP tunnel method, pointing Terminal 1 at `data\TFV6\baseline_data_alt\frames`.
 
 ### 2. Submit (on Viper)
 
-Pass `MODE_ANALYSIS` (1 or 2) as the 5th argument. Run once per mode:
+Pass `MODE_ANALYSIS` (1 or 2; **2 is standard**) as the 5th argument. Run once per mode
+if you need both:
 
 ```bash
 bash hpc/submit_baseline.sh \
-    /ptmp/paulkull/atoms_baseline/frames \
-    /ptmp/paulkull/atoms_baseline/partials \
+    /ptmp/paulkull/atoms_baseline_alt/frames \
+    /ptmp/paulkull/atoms_baseline_alt/partials \
     /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
-    "" 1   # 4th arg=CODE_DIR (default), 5th=MODE_ANALYSIS
-bash hpc/submit_baseline.sh ... "" 2   # mode 2
+    "" 2   # 4th arg=CODE_DIR (default), 5th=MODE_ANALYSIS (standard)
+bash hpc/submit_baseline.sh ... "" 1   # mode 1, if also needed
 ```
 
 Each array task extracts ATOMs profiles + 512-dim backbone features.  
@@ -343,8 +363,8 @@ The gather step writes `baseline_{MODE}.npz` (in `partials/`) and `mdx_features.
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh baseline tfv6 1
-bash hpc/collect_results.sh baseline tfv6 2     # mdx_features.npz is shared; re-copying is harmless
+bash hpc/collect_results.sh baseline tfv6 2 --alt
+bash hpc/collect_results.sh baseline tfv6 1 --alt     # mdx_features.npz is shared; re-copying is harmless
 git commit -m "add TFV6 baseline results from HPC"
 git push
 ```
@@ -357,7 +377,9 @@ Then locally: `git pull`, set `RECOMPUTE_BASELINE = False` in `atoms_config.py`,
 
 Live-perturbation data is recorded in CARLA with `LIVE_PERTURBATION_RECORDING_MODE = True`.
 The frames are already perturbed at collection time, so no offline perturbation step is
-needed — the HPC pipeline is just concatenation + ATOMs.
+needed — the HPC pipeline is just concatenation + ATOMs. There is no alt-split variant of
+this data (it's a single recorded set, not resampled per split) — no `_alt` paths or `--alt`
+flag apply here.
 
 ### 1. Upload live-pert frames
 
@@ -377,8 +399,8 @@ bash hpc/submit_live_pert.sh \
     /ptmp/paulkull/atoms_live_pert/frames \
     /ptmp/paulkull/atoms_live_pert \
     /u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34 \
-    pgd "" "" 1   # args 5=CODE_DIR, 6=CHUNK_SIZE (defaults), 7=MODE_ANALYSIS
-bash hpc/submit_live_pert.sh ... pgd "" "" 2   # mode 2
+    pgd "" "" 2   # args 5=CODE_DIR, 6=CHUNK_SIZE (defaults), 7=MODE_ANALYSIS
+bash hpc/submit_live_pert.sh ... pgd "" "" 1   # mode 1, if also needed
 ```
 
 This chains three SLURM jobs automatically:
@@ -392,8 +414,8 @@ Monitor: `squeue -u paulkull`
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh live_pert tfv6 1 pgd
-bash hpc/collect_results.sh live_pert tfv6 2 pgd     # mode 2
+bash hpc/collect_results.sh live_pert tfv6 2 pgd
+bash hpc/collect_results.sh live_pert tfv6 1 pgd     # mode 1, if also needed
 git commit -m "add TFV6 live_pert pgd results from HPC"
 git push
 ```
@@ -403,6 +425,10 @@ Replace `pgd` with whichever perturbation was recorded. Then locally: `git pull`
 ---
 
 ## WoR HPC pipelines
+
+WoR has no alternative split — its data always lives under the plain (non-`_alt`)
+`data/WOR/*_data/` directories and `/ptmp/.../atoms_wor_*` work dirs, with no `--alt`
+flag needed on `collect_results.sh`.
 
 WoR uses the same SLURM infrastructure as TFV6, but with dedicated scripts that handle
 the narrow camera (`narr_rgb`) and the 28-dim joint action logits for PEOC.
@@ -449,7 +475,8 @@ Use the same HTTP tunnel method, pointing Terminal 1 at `data\WOR\baseline_data\
 
 #### 2. Submit (on Viper)
 
-Pass `MODE_ANALYSIS` (1 or 2) as the 5th argument. Run once per mode:
+Pass `MODE_ANALYSIS` (1 or 2; **2 is standard**) as the 5th argument. Run once per mode
+if you need both:
 
 ```bash
 cd /u/paulkull/pcla
@@ -458,8 +485,8 @@ bash hpc/submit_baseline_wor.sh \
     /ptmp/paulkull/atoms_wor_baseline/frames \
     /ptmp/paulkull/atoms_wor_baseline/partials \
     /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
-    "" 1   # 4th=CODE_DIR (default), 5th=MODE_ANALYSIS
-bash hpc/submit_baseline_wor.sh ... "" 2   # mode 2
+    "" 2   # 4th=CODE_DIR (default), 5th=MODE_ANALYSIS (standard)
+bash hpc/submit_baseline_wor.sh ... "" 1   # mode 1, if also needed
 ```
 
 Chains two SLURM jobs automatically:
@@ -470,8 +497,8 @@ Chains two SLURM jobs automatically:
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh baseline wor 1
 bash hpc/collect_results.sh baseline wor 2
+bash hpc/collect_results.sh baseline wor 1
 git commit -m "add WOR baseline results from HPC"
 git push
 ```
@@ -497,8 +524,8 @@ bash hpc/submit_test_wor.sh \
     /ptmp/paulkull/atoms_wor_test/frames \
     /ptmp/paulkull/atoms_wor_test \
     /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
-    "" "" 1   # 4th=CODE_DIR, 5th=CHUNK_SIZE (defaults), 6th=MODE_ANALYSIS
-bash hpc/submit_test_wor.sh ... "" "" 2   # mode 2
+    "" "" 2   # 4th=CODE_DIR, 5th=CHUNK_SIZE (defaults), 6th=MODE_ANALYSIS (2 is standard)
+bash hpc/submit_test_wor.sh ... "" "" 1   # mode 1, if also needed
 ```
 
 Chains three SLURM jobs automatically:
@@ -512,8 +539,8 @@ Monitor: `squeue -u paulkull`
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh test wor 1
 bash hpc/collect_results.sh test wor 2
+bash hpc/collect_results.sh test wor 1
 git commit -m "add WOR test results from HPC"
 git push
 ```
@@ -546,8 +573,8 @@ bash hpc/submit_live_pert_wor.sh \
     /ptmp/paulkull/atoms_wor_live_pert/frames \
     /ptmp/paulkull/atoms_wor_live_pert \
     /u/paulkull/pcla/pcla_agents/wor_pretrained/leaderboard_weights \
-    pgd "" "" 1   # 5th=CODE_DIR, 6th=CHUNK_SIZE (defaults), 7th=MODE_ANALYSIS
-bash hpc/submit_live_pert_wor.sh ... pgd "" "" 2   # mode 2
+    pgd "" "" 2   # 5th=CODE_DIR, 6th=CHUNK_SIZE (defaults), 7th=MODE_ANALYSIS (2 is standard)
+bash hpc/submit_live_pert_wor.sh ... pgd "" "" 1   # mode 1, if also needed
 ```
 
 Chains three SLURM jobs automatically:
@@ -561,8 +588,8 @@ Monitor: `squeue -u paulkull`
 
 ```bash
 cd /u/$USER/pcla
-bash hpc/collect_results.sh live_pert wor 1 pgd
 bash hpc/collect_results.sh live_pert wor 2 pgd
+bash hpc/collect_results.sh live_pert wor 1 pgd
 git commit -m "add WOR live_pert pgd results from HPC"
 git push
 ```

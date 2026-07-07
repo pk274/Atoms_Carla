@@ -47,7 +47,7 @@ For TFV6, CARLA's grouped semantic segmentation (10 classes, `save_grouped_seman
 - When `PLOT_COMPARATIVE_REL=False`, brake/drive slots mirror the default map.
 
 ### OOD Detection Strategy
-1. Collect clean baseline driving frames; compute one ATOMs profile per frame. Dimensionality is agent-dependent: 29 for WOR (full `CARLA_CLASSES`, tags 0–28) and 10 for TFV6 (grouped `TFV6_CLASSES`). (Earlier docs said "23-dim"; that was a stale CARLA tag count.)
+1. Collect clean baseline driving frames; compute one ATOMs profile per frame. Dimensionality is agent-dependent: 29 for WOR (full `CARLA_CLASSES`, tags 0–28) and 10 for TFV6 (grouped `TFV6_CLASSES`). (Earlier docs said "23-dim"; that was a stale CARLA tag count.) Optional extra profile blocks exist behind `conf.ADD_BRAKE_SEEDS` (brake-counterfactual seed, output→input) and `conf.ADD_WAYPOINT_SEEDS` (waypoint-query activation seed, `wp_fc`→input) — each adds `num_classes` dims and one backward pass, blocks normalized to sum 1/n_blocks. **Both default False:** measured 2026-07-02, every decoder-level seed produces a pixel map with cosine ≥ 0.994 to the default speed-seeded map — TFV6 LRP maps are effectively seed-invariant at the planning-decoder level, so extra blocks are redundant copies (see "Seed-invariance of TFV6 LRP maps" in `docs/design_decisions.md`). Use `atoms.profile_dim` / `atoms.profile_names`, not `atoms.num_classes` / `class_names`, for profile array shapes and labels; `run_analysis.py` fails loudly on a dim mismatch with cached profiles.
 2. Fit a statistical model (Gaussian or GMM) on the baseline profile cloud.
 3. At test time, score each frame's profile by its distance from the baseline distribution.
 4. High distance → OOD flag. Evaluated against ground-truth perturbation labels via ROC / AUC.
@@ -77,7 +77,7 @@ The main entry point. Runs end-to-end and produces all figures and JSON results 
 | 11 | Per-perturbation breakdown: evaluate each detector separately on each perturbation type |
 | 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/`. `summary.json` includes `__val_auc_gmm_avg__` when val set is present; `sweep_clusters.py` copies this per-K. `summarize_results.py` reads it to produce a **val-set K selection recommendation** (Section 3 of SUMMARY.md). |
 
-Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`. GMM cluster count K is overridden at runtime by the `--gmm-k` CLI arg (passed automatically by `sweep_clusters.py`). PGD settings: `PGD_TARGET="brake"`, `PGD_EPSILON=4.0`, `PGD_N_STEPS=5` — must stay in sync with `hpc/prep_test.py` (ε) and `hpc/array_test_task.sh` (target, steps).
+Key flags in `atoms_config.py` that control re-computation: `RECOMPUTE_BASELINE`, `RECOMPUTE_MDX_BASELINE`, `RECOMPUTE_MDX_V2_BASELINE`, `REAPPLY_PERTURBATIONS`, `RECOMPUTE_TEST_ATOMS`. Profile-enrichment flags (2026-07-02): `ADD_BRAKE_SEEDS` / `ADD_WAYPOINT_SEEDS` (extra profile blocks, +1 backward/frame each — **both default False after the seed-invariance measurement**, see `docs/design_decisions.md`) and `USE_REAL_TARGET_POINTS` (real TP conditioning from npz, default True). All require recomputing profiles when toggled. GMM cluster count K is overridden at runtime by the `--gmm-k` CLI arg (passed automatically by `sweep_clusters.py`). PGD settings: `PGD_TARGET="brake"`, `PGD_EPSILON=4.0`, `PGD_N_STEPS=5` — must stay in sync with `hpc/prep_test.py` (ε) and `hpc/array_test_task.sh` (target, steps).
 
 ---
 
@@ -109,7 +109,7 @@ ATOMs_Analysis/
 
 ### Key design notes
 - `atoms_config.py` is the single source of truth for all paths and hyperparameters. Edit it rather than hardcoding values in scripts.
-- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd, spd, data)` is the per-frame API; call `atoms.reset()` between datasets. For TFV6, `process_frame` is called without `data=`; `_make_minimal_data` rebuilds the conditioning dict from `cmd`/`spd`. The command one-hot is built from `cmd` (round-trips exactly with the agent's stored `cmd = argmax(command)`), but `target_point` and `acceleration` are zero — route conditioning is therefore absent, which can shift attributions relative to the live agent.
+- `ATOMsCarla.process_frame(wide, narr, seg_wide, seg_narr, cmd, spd, data, target_points)` is the per-frame API; call `atoms.reset()` between datasets. For TFV6, `process_frame` is called without `data=`; `_make_minimal_data` rebuilds the conditioning dict from `cmd`/`spd`/`target_points`. With `conf.USE_REAL_TARGET_POINTS = True` (default since 2026-07-02) the three TP tokens (current/previous/next, ego frame) come from the npz via `extract_target_points(data, i)` — matching the deployed model's route conditioning. Older npz without TP keys fall back to zeros with a one-time warning (`acceleration` stays zero; the leaderboard config doesn't use it).
 - `DistanceComputer` is stateless (static methods); detectors (`MahalanobisDetector`, etc.) are stateful (fit/save/load).
 - Visualization functions return `matplotlib.Figure` objects; use `save_figure(fig, path)` to write them.
 - `viz_config.py` defines `apply_default_style()` — call it at the top of any new plotting script to keep figures consistent across the thesis.
@@ -183,9 +183,9 @@ Each extracted route has three subdirectories:
 
 Converts the extracted LEAD routes into the npz format consumed by the analysis pipeline. Reads from the `noScenarios/` directory, applies even-spaced frame sampling across all routes of each active town, and writes one `.npz` per route.
 
-**Output schema** (each npz): `wide_rgb [N,3,H,W] uint8`, `seg_red_wide [N,H,W] uint8`, `cmd [N] int32`, `speed [N] float32`, `is_brake [N] int8`, `frame_idx [N] int32`. No narrow camera (TFV6 is wide-only).
+**Output schema** (each npz): `wide_rgb [N,3,H,W] uint8`, `seg_red_wide [N,H,W] uint8`, `cmd [N] int32`, `speed [N] float32`, `is_brake [N] int8`, `frame_idx [N] int32`, plus (since 2026-07-02) `target_point / target_point_previous / target_point_next [N,2] float32` — ego-frame target points reproducing the **training dataloader recipe** exactly (`pos_global` + `theta`, `next/previous_target_points_3.25` meta keys with duplicate-merge; `TP_POP_DISTANCE = 3.25` must equal `TrainingConfig.tp_pop_distance`). No narrow camera (TFV6 is wide-only).
 
-**Command mapping:** CARLA `RoadOption` integers (1-based: LEFT=1, RIGHT=2, STRAIGHT=3, LANEFOLLOW=4, ...) → 0-based indices (0–5).
+**Command mapping:** CARLA `RoadOption` integers (1-based: LEFT=1, RIGHT=2, STRAIGHT=3, LANEFOLLOW=4, ...) → 0-based indices (0–5). When TP extraction succeeds, `cmd` is taken from the filtered `next_commands_3.25` list (what the model saw in training); the unsuffixed `next_commands` reflects a different route-planner pop state and can genuinely differ (e.g. LANEFOLLOW vs RIGHT at junctions).
 
 ```bash
 # Baseline: sample from all non-Town05 towns → data/TFV6/baseline_data/frames/
@@ -238,7 +238,7 @@ data/
     frames/run_*.npz         # Raw baseline driving frames (migrated from LEAD, non-Town05 towns)
     baseline_1.npz           # Computed profiles for MODE_ANALYSIS=1
     baseline_2.npz           # Computed profiles for MODE_ANALYSIS=2
-    mdx_parameters/          # Saved MDXDetector (v1) parameters — 512-d backbone + equal-width bins
+    mdx_parameters/          # Saved MDXDetector (v1) parameters — 512-d backbone + quantile bins
     mdx_v2_parameters/       # Saved MDXDetector (v2) parameters — 256-d F_c + quantile bins
   val_data/                  # Validation set — Town05 routes NOT used in test_data (planned)
     frames/run_*.npz         # Raw clean validation frames

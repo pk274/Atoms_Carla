@@ -406,7 +406,7 @@ for frame_file in frame_files:
         REL_DIR.mkdir(parents=True, exist_ok=True)
         atoms.reset()
         n_test          = test_data["wide_rgb"].shape[0]
-        test_profiles   = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+        test_profiles   = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
         test_logits_all = [] if action_logits_available else None
         t0 = time.time()
         for i in range(n_test):
@@ -480,7 +480,7 @@ for frame_file in frame_files:
             CLEAN_REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME / (variant + "_clean")
             CLEAN_REL_DIR.mkdir(parents=True, exist_ok=True)
             atoms.reset()
-            clean_profiles = np.zeros((n_test, atoms.num_classes), dtype=np.float64)
+            clean_profiles = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
             t0 = time.time()
             for i in range(n_test):
                 wide     = torch.from_numpy(clean_data["wide_rgb"][i:i+1]).float()
