@@ -1,0 +1,1299 @@
+TFv6(
+  (backbone): TransfuserBackbone(
+    (image_encoder): FeatureListNet(
+      (conv1): Conv2d(3, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+      (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (act1): ReLU(inplace=True)
+      (maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
+      (layer1): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer2): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(64, 128, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (3): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer3): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(128, 256, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (3): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (4): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (5): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer4): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(256, 512, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+    )
+    (avgpool_img): AdaptiveAvgPool2d(output_size=(12, 72))
+    (lidar_encoder): FeatureListNet(
+      (conv1): Conv2d(2, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+      (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (act1): ReLU(inplace=True)
+      (maxpool): MaxPool2d(kernel_size=3, stride=2, padding=1, dilation=1, ceil_mode=False)
+      (layer1): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer2): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(64, 128, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(64, 128, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (3): BasicBlock(
+          (conv1): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(128, 128, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer3): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(128, 256, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(128, 256, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (3): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (4): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (5): BasicBlock(
+          (conv1): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+      (layer4): Sequential(
+        (0): BasicBlock(
+          (conv1): Conv2d(256, 512, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+          (downsample): Sequential(
+            (0): Conv2d(256, 512, kernel_size=(1, 1), stride=(2, 2), bias=False)
+            (1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          )
+        )
+        (1): BasicBlock(
+          (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+        (2): BasicBlock(
+          (conv1): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn1): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (drop_block): Identity()
+          (act1): ReLU(inplace=True)
+          (aa): Identity()
+          (conv2): Conv2d(512, 512, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+          (bn2): BatchNorm2d(512, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (act2): ReLU(inplace=True)
+        )
+      )
+    )
+    (lidar_channel_to_img): ModuleList(
+      (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+      (1): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+      (2): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+      (3): Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1))
+    )
+    (img_channel_to_lidar): ModuleList(
+      (0): Conv2d(64, 64, kernel_size=(1, 1), stride=(1, 1))
+      (1): Conv2d(128, 128, kernel_size=(1, 1), stride=(1, 1))
+      (2): Conv2d(256, 256, kernel_size=(1, 1), stride=(1, 1))
+      (3): Conv2d(512, 512, kernel_size=(1, 1), stride=(1, 1))
+    )
+    (avgpool_lidar): AdaptiveAvgPool2d(output_size=(10, 12))
+    (transformers): ModuleList(
+      (0): GPT(
+        (drop): Dropout(p=0.1, inplace=False)
+        (blocks): Sequential(
+          (0): Block(
+            (ln1): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=64, out_features=64, bias=True)
+              (query): Linear(in_features=64, out_features=64, bias=True)
+              (value): Linear(in_features=64, out_features=64, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=64, out_features=64, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=64, out_features=256, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=256, out_features=64, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (1): Block(
+            (ln1): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=64, out_features=64, bias=True)
+              (query): Linear(in_features=64, out_features=64, bias=True)
+              (value): Linear(in_features=64, out_features=64, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=64, out_features=64, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=64, out_features=256, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=256, out_features=64, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+        )
+        (ln_f): LayerNorm((64,), eps=1e-05, elementwise_affine=True)
+      )
+      (1): GPT(
+        (drop): Dropout(p=0.1, inplace=False)
+        (blocks): Sequential(
+          (0): Block(
+            (ln1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=128, out_features=128, bias=True)
+              (query): Linear(in_features=128, out_features=128, bias=True)
+              (value): Linear(in_features=128, out_features=128, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=128, out_features=128, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=128, out_features=512, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=512, out_features=128, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (1): Block(
+            (ln1): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=128, out_features=128, bias=True)
+              (query): Linear(in_features=128, out_features=128, bias=True)
+              (value): Linear(in_features=128, out_features=128, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=128, out_features=128, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=128, out_features=512, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=512, out_features=128, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+        )
+        (ln_f): LayerNorm((128,), eps=1e-05, elementwise_affine=True)
+      )
+      (2): GPT(
+        (drop): Dropout(p=0.1, inplace=False)
+        (blocks): Sequential(
+          (0): Block(
+            (ln1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=256, out_features=256, bias=True)
+              (query): Linear(in_features=256, out_features=256, bias=True)
+              (value): Linear(in_features=256, out_features=256, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=256, out_features=256, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=256, out_features=1024, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=1024, out_features=256, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (1): Block(
+            (ln1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=256, out_features=256, bias=True)
+              (query): Linear(in_features=256, out_features=256, bias=True)
+              (value): Linear(in_features=256, out_features=256, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=256, out_features=256, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=256, out_features=1024, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=1024, out_features=256, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+        )
+        (ln_f): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+      )
+      (3): GPT(
+        (drop): Dropout(p=0.1, inplace=False)
+        (blocks): Sequential(
+          (0): Block(
+            (ln1): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=512, out_features=512, bias=True)
+              (query): Linear(in_features=512, out_features=512, bias=True)
+              (value): Linear(in_features=512, out_features=512, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=512, out_features=512, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=512, out_features=2048, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=2048, out_features=512, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+          (1): Block(
+            (ln1): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+            (ln2): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+            (attn): SelfAttention(
+              (key): Linear(in_features=512, out_features=512, bias=True)
+              (query): Linear(in_features=512, out_features=512, bias=True)
+              (value): Linear(in_features=512, out_features=512, bias=True)
+              (resid_drop): Dropout(p=0.1, inplace=False)
+              (proj): Linear(in_features=512, out_features=512, bias=True)
+            )
+            (mlp): Sequential(
+              (0): Linear(in_features=512, out_features=2048, bias=True)
+              (1): ReLU(inplace=True)
+              (2): Linear(in_features=2048, out_features=512, bias=True)
+              (3): Dropout(p=0.1, inplace=False)
+            )
+          )
+        )
+        (ln_f): LayerNorm((512,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+    (upsample): Upsample(scale_factor=2.0, mode='bilinear')
+    (upsample2): Upsample(size=(80, 96), mode='bilinear')
+    (up_conv5): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    (up_conv4): Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+    (c5_conv): Conv2d(512, 64, kernel_size=(1, 1), stride=(1, 1))
+  )
+  (radar_detector): RadarDetector(
+    (bev_proj): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1))
+    (ego_vel_proj): Linear(in_features=1, out_features=256, bias=True)
+    (radar_point_tokenizer): Sequential(
+      (0): Linear(in_features=261, out_features=1024, bias=True)
+      (1): ReLU(inplace=True)
+      (2): Linear(in_features=1024, out_features=256, bias=True)
+    )
+    (tf): TransformerDecoder(
+      (layers): ModuleList(
+        (0-3): 4 x TransformerDecoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (multihead_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=1024, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=1024, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+          (dropout3): Dropout(p=0.1, inplace=False)
+          (activation): GELU(approximate='none')
+        )
+      )
+      (norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    )
+    (state_decoder): Sequential(
+      (0): Linear(in_features=256, out_features=1024, bias=True)
+      (1): ReLU(inplace=True)
+      (2): Linear(in_features=1024, out_features=3, bias=True)
+    )
+    (label_decoder): Linear(in_features=256, out_features=1, bias=True)
+  )
+  (planning_decoder): PlanningDecoder(
+    (planning_context_encoder): PlanningContextEncoder(
+      (velocity_encoder): Sequential(
+        (0): Linear(in_features=1, out_features=256, bias=True)
+      )
+      (command_encoder): Sequential(
+        (0): Linear(in_features=6, out_features=256, bias=True)
+      )
+      (tp_encoder): Linear(in_features=2, out_features=256, bias=True)
+      (cosine_pos_embeding): PositionEmbeddingSine()
+      (dimension_adapter): Conv2d(512, 256, kernel_size=(1, 1), stride=(1, 1))
+    )
+    (transformer_decoder): TransformerDecoder(
+      (layers): ModuleList(
+        (0-5): 6 x TransformerDecoderLayer(
+          (self_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (multihead_attn): MultiheadAttention(
+            (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+          )
+          (linear1): Linear(in_features=256, out_features=2048, bias=True)
+          (dropout): Dropout(p=0.1, inplace=False)
+          (linear2): Linear(in_features=2048, out_features=256, bias=True)
+          (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+          (dropout1): Dropout(p=0.1, inplace=False)
+          (dropout2): Dropout(p=0.1, inplace=False)
+          (dropout3): Dropout(p=0.1, inplace=False)
+          (activation): GELU(approximate='none')
+        )
+      )
+      (norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    )
+    (route_decoder): Linear(in_features=256, out_features=2, bias=True)
+    (wp_decoder): Linear(in_features=256, out_features=2, bias=True)
+    (target_speed_decoder): Sequential(
+      (0): Linear(in_features=256, out_features=256, bias=True)
+      (1): ReLU(inplace=True)
+      (2): Linear(in_features=256, out_features=8, bias=True)
+    )
+  )
+)
+
+Total parameters:     67,560,336
+Trainable parameters: 67,560,336
+
+================================================================================
+Named modules (module_path : class_name)
+================================================================================
+backbone : TransfuserBackbone
+backbone.image_encoder : FeatureListNet
+backbone.image_encoder.conv1 : Conv2d
+backbone.image_encoder.bn1 : BatchNorm2d
+backbone.image_encoder.act1 : ReLU
+backbone.image_encoder.maxpool : MaxPool2d
+backbone.image_encoder.layer1 : Sequential
+backbone.image_encoder.layer1.0 : BasicBlock
+backbone.image_encoder.layer1.0.conv1 : Conv2d
+backbone.image_encoder.layer1.0.bn1 : BatchNorm2d
+backbone.image_encoder.layer1.0.drop_block : Identity
+backbone.image_encoder.layer1.0.act1 : ReLU
+backbone.image_encoder.layer1.0.aa : Identity
+backbone.image_encoder.layer1.0.conv2 : Conv2d
+backbone.image_encoder.layer1.0.bn2 : BatchNorm2d
+backbone.image_encoder.layer1.0.act2 : ReLU
+backbone.image_encoder.layer1.1 : BasicBlock
+backbone.image_encoder.layer1.1.conv1 : Conv2d
+backbone.image_encoder.layer1.1.bn1 : BatchNorm2d
+backbone.image_encoder.layer1.1.drop_block : Identity
+backbone.image_encoder.layer1.1.act1 : ReLU
+backbone.image_encoder.layer1.1.aa : Identity
+backbone.image_encoder.layer1.1.conv2 : Conv2d
+backbone.image_encoder.layer1.1.bn2 : BatchNorm2d
+backbone.image_encoder.layer1.1.act2 : ReLU
+backbone.image_encoder.layer1.2 : BasicBlock
+backbone.image_encoder.layer1.2.conv1 : Conv2d
+backbone.image_encoder.layer1.2.bn1 : BatchNorm2d
+backbone.image_encoder.layer1.2.drop_block : Identity
+backbone.image_encoder.layer1.2.act1 : ReLU
+backbone.image_encoder.layer1.2.aa : Identity
+backbone.image_encoder.layer1.2.conv2 : Conv2d
+backbone.image_encoder.layer1.2.bn2 : BatchNorm2d
+backbone.image_encoder.layer1.2.act2 : ReLU
+backbone.image_encoder.layer2 : Sequential
+backbone.image_encoder.layer2.0 : BasicBlock
+backbone.image_encoder.layer2.0.conv1 : Conv2d
+backbone.image_encoder.layer2.0.bn1 : BatchNorm2d
+backbone.image_encoder.layer2.0.drop_block : Identity
+backbone.image_encoder.layer2.0.act1 : ReLU
+backbone.image_encoder.layer2.0.aa : Identity
+backbone.image_encoder.layer2.0.conv2 : Conv2d
+backbone.image_encoder.layer2.0.bn2 : BatchNorm2d
+backbone.image_encoder.layer2.0.act2 : ReLU
+backbone.image_encoder.layer2.0.downsample : Sequential
+backbone.image_encoder.layer2.0.downsample.0 : Conv2d
+backbone.image_encoder.layer2.0.downsample.1 : BatchNorm2d
+backbone.image_encoder.layer2.1 : BasicBlock
+backbone.image_encoder.layer2.1.conv1 : Conv2d
+backbone.image_encoder.layer2.1.bn1 : BatchNorm2d
+backbone.image_encoder.layer2.1.drop_block : Identity
+backbone.image_encoder.layer2.1.act1 : ReLU
+backbone.image_encoder.layer2.1.aa : Identity
+backbone.image_encoder.layer2.1.conv2 : Conv2d
+backbone.image_encoder.layer2.1.bn2 : BatchNorm2d
+backbone.image_encoder.layer2.1.act2 : ReLU
+backbone.image_encoder.layer2.2 : BasicBlock
+backbone.image_encoder.layer2.2.conv1 : Conv2d
+backbone.image_encoder.layer2.2.bn1 : BatchNorm2d
+backbone.image_encoder.layer2.2.drop_block : Identity
+backbone.image_encoder.layer2.2.act1 : ReLU
+backbone.image_encoder.layer2.2.aa : Identity
+backbone.image_encoder.layer2.2.conv2 : Conv2d
+backbone.image_encoder.layer2.2.bn2 : BatchNorm2d
+backbone.image_encoder.layer2.2.act2 : ReLU
+backbone.image_encoder.layer2.3 : BasicBlock
+backbone.image_encoder.layer2.3.conv1 : Conv2d
+backbone.image_encoder.layer2.3.bn1 : BatchNorm2d
+backbone.image_encoder.layer2.3.drop_block : Identity
+backbone.image_encoder.layer2.3.act1 : ReLU
+backbone.image_encoder.layer2.3.aa : Identity
+backbone.image_encoder.layer2.3.conv2 : Conv2d
+backbone.image_encoder.layer2.3.bn2 : BatchNorm2d
+backbone.image_encoder.layer2.3.act2 : ReLU
+backbone.image_encoder.layer3 : Sequential
+backbone.image_encoder.layer3.0 : BasicBlock
+backbone.image_encoder.layer3.0.conv1 : Conv2d
+backbone.image_encoder.layer3.0.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.0.drop_block : Identity
+backbone.image_encoder.layer3.0.act1 : ReLU
+backbone.image_encoder.layer3.0.aa : Identity
+backbone.image_encoder.layer3.0.conv2 : Conv2d
+backbone.image_encoder.layer3.0.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.0.act2 : ReLU
+backbone.image_encoder.layer3.0.downsample : Sequential
+backbone.image_encoder.layer3.0.downsample.0 : Conv2d
+backbone.image_encoder.layer3.0.downsample.1 : BatchNorm2d
+backbone.image_encoder.layer3.1 : BasicBlock
+backbone.image_encoder.layer3.1.conv1 : Conv2d
+backbone.image_encoder.layer3.1.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.1.drop_block : Identity
+backbone.image_encoder.layer3.1.act1 : ReLU
+backbone.image_encoder.layer3.1.aa : Identity
+backbone.image_encoder.layer3.1.conv2 : Conv2d
+backbone.image_encoder.layer3.1.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.1.act2 : ReLU
+backbone.image_encoder.layer3.2 : BasicBlock
+backbone.image_encoder.layer3.2.conv1 : Conv2d
+backbone.image_encoder.layer3.2.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.2.drop_block : Identity
+backbone.image_encoder.layer3.2.act1 : ReLU
+backbone.image_encoder.layer3.2.aa : Identity
+backbone.image_encoder.layer3.2.conv2 : Conv2d
+backbone.image_encoder.layer3.2.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.2.act2 : ReLU
+backbone.image_encoder.layer3.3 : BasicBlock
+backbone.image_encoder.layer3.3.conv1 : Conv2d
+backbone.image_encoder.layer3.3.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.3.drop_block : Identity
+backbone.image_encoder.layer3.3.act1 : ReLU
+backbone.image_encoder.layer3.3.aa : Identity
+backbone.image_encoder.layer3.3.conv2 : Conv2d
+backbone.image_encoder.layer3.3.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.3.act2 : ReLU
+backbone.image_encoder.layer3.4 : BasicBlock
+backbone.image_encoder.layer3.4.conv1 : Conv2d
+backbone.image_encoder.layer3.4.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.4.drop_block : Identity
+backbone.image_encoder.layer3.4.act1 : ReLU
+backbone.image_encoder.layer3.4.aa : Identity
+backbone.image_encoder.layer3.4.conv2 : Conv2d
+backbone.image_encoder.layer3.4.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.4.act2 : ReLU
+backbone.image_encoder.layer3.5 : BasicBlock
+backbone.image_encoder.layer3.5.conv1 : Conv2d
+backbone.image_encoder.layer3.5.bn1 : BatchNorm2d
+backbone.image_encoder.layer3.5.drop_block : Identity
+backbone.image_encoder.layer3.5.act1 : ReLU
+backbone.image_encoder.layer3.5.aa : Identity
+backbone.image_encoder.layer3.5.conv2 : Conv2d
+backbone.image_encoder.layer3.5.bn2 : BatchNorm2d
+backbone.image_encoder.layer3.5.act2 : ReLU
+backbone.image_encoder.layer4 : Sequential
+backbone.image_encoder.layer4.0 : BasicBlock
+backbone.image_encoder.layer4.0.conv1 : Conv2d
+backbone.image_encoder.layer4.0.bn1 : BatchNorm2d
+backbone.image_encoder.layer4.0.drop_block : Identity
+backbone.image_encoder.layer4.0.act1 : ReLU
+backbone.image_encoder.layer4.0.aa : Identity
+backbone.image_encoder.layer4.0.conv2 : Conv2d
+backbone.image_encoder.layer4.0.bn2 : BatchNorm2d
+backbone.image_encoder.layer4.0.act2 : ReLU
+backbone.image_encoder.layer4.0.downsample : Sequential
+backbone.image_encoder.layer4.0.downsample.0 : Conv2d
+backbone.image_encoder.layer4.0.downsample.1 : BatchNorm2d
+backbone.image_encoder.layer4.1 : BasicBlock
+backbone.image_encoder.layer4.1.conv1 : Conv2d
+backbone.image_encoder.layer4.1.bn1 : BatchNorm2d
+backbone.image_encoder.layer4.1.drop_block : Identity
+backbone.image_encoder.layer4.1.act1 : ReLU
+backbone.image_encoder.layer4.1.aa : Identity
+backbone.image_encoder.layer4.1.conv2 : Conv2d
+backbone.image_encoder.layer4.1.bn2 : BatchNorm2d
+backbone.image_encoder.layer4.1.act2 : ReLU
+backbone.image_encoder.layer4.2 : BasicBlock
+backbone.image_encoder.layer4.2.conv1 : Conv2d
+backbone.image_encoder.layer4.2.bn1 : BatchNorm2d
+backbone.image_encoder.layer4.2.drop_block : Identity
+backbone.image_encoder.layer4.2.act1 : ReLU
+backbone.image_encoder.layer4.2.aa : Identity
+backbone.image_encoder.layer4.2.conv2 : Conv2d
+backbone.image_encoder.layer4.2.bn2 : BatchNorm2d
+backbone.image_encoder.layer4.2.act2 : ReLU
+backbone.avgpool_img : AdaptiveAvgPool2d
+backbone.lidar_encoder : FeatureListNet
+backbone.lidar_encoder.conv1 : Conv2d
+backbone.lidar_encoder.bn1 : BatchNorm2d
+backbone.lidar_encoder.act1 : ReLU
+backbone.lidar_encoder.maxpool : MaxPool2d
+backbone.lidar_encoder.layer1 : Sequential
+backbone.lidar_encoder.layer1.0 : BasicBlock
+backbone.lidar_encoder.layer1.0.conv1 : Conv2d
+backbone.lidar_encoder.layer1.0.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer1.0.drop_block : Identity
+backbone.lidar_encoder.layer1.0.act1 : ReLU
+backbone.lidar_encoder.layer1.0.aa : Identity
+backbone.lidar_encoder.layer1.0.conv2 : Conv2d
+backbone.lidar_encoder.layer1.0.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer1.0.act2 : ReLU
+backbone.lidar_encoder.layer1.1 : BasicBlock
+backbone.lidar_encoder.layer1.1.conv1 : Conv2d
+backbone.lidar_encoder.layer1.1.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer1.1.drop_block : Identity
+backbone.lidar_encoder.layer1.1.act1 : ReLU
+backbone.lidar_encoder.layer1.1.aa : Identity
+backbone.lidar_encoder.layer1.1.conv2 : Conv2d
+backbone.lidar_encoder.layer1.1.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer1.1.act2 : ReLU
+backbone.lidar_encoder.layer1.2 : BasicBlock
+backbone.lidar_encoder.layer1.2.conv1 : Conv2d
+backbone.lidar_encoder.layer1.2.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer1.2.drop_block : Identity
+backbone.lidar_encoder.layer1.2.act1 : ReLU
+backbone.lidar_encoder.layer1.2.aa : Identity
+backbone.lidar_encoder.layer1.2.conv2 : Conv2d
+backbone.lidar_encoder.layer1.2.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer1.2.act2 : ReLU
+backbone.lidar_encoder.layer2 : Sequential
+backbone.lidar_encoder.layer2.0 : BasicBlock
+backbone.lidar_encoder.layer2.0.conv1 : Conv2d
+backbone.lidar_encoder.layer2.0.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer2.0.drop_block : Identity
+backbone.lidar_encoder.layer2.0.act1 : ReLU
+backbone.lidar_encoder.layer2.0.aa : Identity
+backbone.lidar_encoder.layer2.0.conv2 : Conv2d
+backbone.lidar_encoder.layer2.0.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer2.0.act2 : ReLU
+backbone.lidar_encoder.layer2.0.downsample : Sequential
+backbone.lidar_encoder.layer2.0.downsample.0 : Conv2d
+backbone.lidar_encoder.layer2.0.downsample.1 : BatchNorm2d
+backbone.lidar_encoder.layer2.1 : BasicBlock
+backbone.lidar_encoder.layer2.1.conv1 : Conv2d
+backbone.lidar_encoder.layer2.1.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer2.1.drop_block : Identity
+backbone.lidar_encoder.layer2.1.act1 : ReLU
+backbone.lidar_encoder.layer2.1.aa : Identity
+backbone.lidar_encoder.layer2.1.conv2 : Conv2d
+backbone.lidar_encoder.layer2.1.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer2.1.act2 : ReLU
+backbone.lidar_encoder.layer2.2 : BasicBlock
+backbone.lidar_encoder.layer2.2.conv1 : Conv2d
+backbone.lidar_encoder.layer2.2.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer2.2.drop_block : Identity
+backbone.lidar_encoder.layer2.2.act1 : ReLU
+backbone.lidar_encoder.layer2.2.aa : Identity
+backbone.lidar_encoder.layer2.2.conv2 : Conv2d
+backbone.lidar_encoder.layer2.2.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer2.2.act2 : ReLU
+backbone.lidar_encoder.layer2.3 : BasicBlock
+backbone.lidar_encoder.layer2.3.conv1 : Conv2d
+backbone.lidar_encoder.layer2.3.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer2.3.drop_block : Identity
+backbone.lidar_encoder.layer2.3.act1 : ReLU
+backbone.lidar_encoder.layer2.3.aa : Identity
+backbone.lidar_encoder.layer2.3.conv2 : Conv2d
+backbone.lidar_encoder.layer2.3.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer2.3.act2 : ReLU
+backbone.lidar_encoder.layer3 : Sequential
+backbone.lidar_encoder.layer3.0 : BasicBlock
+backbone.lidar_encoder.layer3.0.conv1 : Conv2d
+backbone.lidar_encoder.layer3.0.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.0.drop_block : Identity
+backbone.lidar_encoder.layer3.0.act1 : ReLU
+backbone.lidar_encoder.layer3.0.aa : Identity
+backbone.lidar_encoder.layer3.0.conv2 : Conv2d
+backbone.lidar_encoder.layer3.0.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.0.act2 : ReLU
+backbone.lidar_encoder.layer3.0.downsample : Sequential
+backbone.lidar_encoder.layer3.0.downsample.0 : Conv2d
+backbone.lidar_encoder.layer3.0.downsample.1 : BatchNorm2d
+backbone.lidar_encoder.layer3.1 : BasicBlock
+backbone.lidar_encoder.layer3.1.conv1 : Conv2d
+backbone.lidar_encoder.layer3.1.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.1.drop_block : Identity
+backbone.lidar_encoder.layer3.1.act1 : ReLU
+backbone.lidar_encoder.layer3.1.aa : Identity
+backbone.lidar_encoder.layer3.1.conv2 : Conv2d
+backbone.lidar_encoder.layer3.1.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.1.act2 : ReLU
+backbone.lidar_encoder.layer3.2 : BasicBlock
+backbone.lidar_encoder.layer3.2.conv1 : Conv2d
+backbone.lidar_encoder.layer3.2.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.2.drop_block : Identity
+backbone.lidar_encoder.layer3.2.act1 : ReLU
+backbone.lidar_encoder.layer3.2.aa : Identity
+backbone.lidar_encoder.layer3.2.conv2 : Conv2d
+backbone.lidar_encoder.layer3.2.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.2.act2 : ReLU
+backbone.lidar_encoder.layer3.3 : BasicBlock
+backbone.lidar_encoder.layer3.3.conv1 : Conv2d
+backbone.lidar_encoder.layer3.3.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.3.drop_block : Identity
+backbone.lidar_encoder.layer3.3.act1 : ReLU
+backbone.lidar_encoder.layer3.3.aa : Identity
+backbone.lidar_encoder.layer3.3.conv2 : Conv2d
+backbone.lidar_encoder.layer3.3.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.3.act2 : ReLU
+backbone.lidar_encoder.layer3.4 : BasicBlock
+backbone.lidar_encoder.layer3.4.conv1 : Conv2d
+backbone.lidar_encoder.layer3.4.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.4.drop_block : Identity
+backbone.lidar_encoder.layer3.4.act1 : ReLU
+backbone.lidar_encoder.layer3.4.aa : Identity
+backbone.lidar_encoder.layer3.4.conv2 : Conv2d
+backbone.lidar_encoder.layer3.4.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.4.act2 : ReLU
+backbone.lidar_encoder.layer3.5 : BasicBlock
+backbone.lidar_encoder.layer3.5.conv1 : Conv2d
+backbone.lidar_encoder.layer3.5.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer3.5.drop_block : Identity
+backbone.lidar_encoder.layer3.5.act1 : ReLU
+backbone.lidar_encoder.layer3.5.aa : Identity
+backbone.lidar_encoder.layer3.5.conv2 : Conv2d
+backbone.lidar_encoder.layer3.5.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer3.5.act2 : ReLU
+backbone.lidar_encoder.layer4 : Sequential
+backbone.lidar_encoder.layer4.0 : BasicBlock
+backbone.lidar_encoder.layer4.0.conv1 : Conv2d
+backbone.lidar_encoder.layer4.0.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer4.0.drop_block : Identity
+backbone.lidar_encoder.layer4.0.act1 : ReLU
+backbone.lidar_encoder.layer4.0.aa : Identity
+backbone.lidar_encoder.layer4.0.conv2 : Conv2d
+backbone.lidar_encoder.layer4.0.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer4.0.act2 : ReLU
+backbone.lidar_encoder.layer4.0.downsample : Sequential
+backbone.lidar_encoder.layer4.0.downsample.0 : Conv2d
+backbone.lidar_encoder.layer4.0.downsample.1 : BatchNorm2d
+backbone.lidar_encoder.layer4.1 : BasicBlock
+backbone.lidar_encoder.layer4.1.conv1 : Conv2d
+backbone.lidar_encoder.layer4.1.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer4.1.drop_block : Identity
+backbone.lidar_encoder.layer4.1.act1 : ReLU
+backbone.lidar_encoder.layer4.1.aa : Identity
+backbone.lidar_encoder.layer4.1.conv2 : Conv2d
+backbone.lidar_encoder.layer4.1.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer4.1.act2 : ReLU
+backbone.lidar_encoder.layer4.2 : BasicBlock
+backbone.lidar_encoder.layer4.2.conv1 : Conv2d
+backbone.lidar_encoder.layer4.2.bn1 : BatchNorm2d
+backbone.lidar_encoder.layer4.2.drop_block : Identity
+backbone.lidar_encoder.layer4.2.act1 : ReLU
+backbone.lidar_encoder.layer4.2.aa : Identity
+backbone.lidar_encoder.layer4.2.conv2 : Conv2d
+backbone.lidar_encoder.layer4.2.bn2 : BatchNorm2d
+backbone.lidar_encoder.layer4.2.act2 : ReLU
+backbone.lidar_channel_to_img : ModuleList
+backbone.lidar_channel_to_img.0 : Conv2d
+backbone.lidar_channel_to_img.1 : Conv2d
+backbone.lidar_channel_to_img.2 : Conv2d
+backbone.lidar_channel_to_img.3 : Conv2d
+backbone.img_channel_to_lidar : ModuleList
+backbone.img_channel_to_lidar.0 : Conv2d
+backbone.img_channel_to_lidar.1 : Conv2d
+backbone.img_channel_to_lidar.2 : Conv2d
+backbone.img_channel_to_lidar.3 : Conv2d
+backbone.avgpool_lidar : AdaptiveAvgPool2d
+backbone.transformers : ModuleList
+backbone.transformers.0 : GPT
+backbone.transformers.0.drop : Dropout
+backbone.transformers.0.blocks : Sequential
+backbone.transformers.0.blocks.0 : Block
+backbone.transformers.0.blocks.0.ln1 : LayerNorm
+backbone.transformers.0.blocks.0.ln2 : LayerNorm
+backbone.transformers.0.blocks.0.attn : SelfAttention
+backbone.transformers.0.blocks.0.attn.key : Linear
+backbone.transformers.0.blocks.0.attn.query : Linear
+backbone.transformers.0.blocks.0.attn.value : Linear
+backbone.transformers.0.blocks.0.attn.resid_drop : Dropout
+backbone.transformers.0.blocks.0.attn.proj : Linear
+backbone.transformers.0.blocks.0.mlp : Sequential
+backbone.transformers.0.blocks.0.mlp.0 : Linear
+backbone.transformers.0.blocks.0.mlp.1 : ReLU
+backbone.transformers.0.blocks.0.mlp.2 : Linear
+backbone.transformers.0.blocks.0.mlp.3 : Dropout
+backbone.transformers.0.blocks.1 : Block
+backbone.transformers.0.blocks.1.ln1 : LayerNorm
+backbone.transformers.0.blocks.1.ln2 : LayerNorm
+backbone.transformers.0.blocks.1.attn : SelfAttention
+backbone.transformers.0.blocks.1.attn.key : Linear
+backbone.transformers.0.blocks.1.attn.query : Linear
+backbone.transformers.0.blocks.1.attn.value : Linear
+backbone.transformers.0.blocks.1.attn.resid_drop : Dropout
+backbone.transformers.0.blocks.1.attn.proj : Linear
+backbone.transformers.0.blocks.1.mlp : Sequential
+backbone.transformers.0.blocks.1.mlp.0 : Linear
+backbone.transformers.0.blocks.1.mlp.1 : ReLU
+backbone.transformers.0.blocks.1.mlp.2 : Linear
+backbone.transformers.0.blocks.1.mlp.3 : Dropout
+backbone.transformers.0.ln_f : LayerNorm
+backbone.transformers.1 : GPT
+backbone.transformers.1.drop : Dropout
+backbone.transformers.1.blocks : Sequential
+backbone.transformers.1.blocks.0 : Block
+backbone.transformers.1.blocks.0.ln1 : LayerNorm
+backbone.transformers.1.blocks.0.ln2 : LayerNorm
+backbone.transformers.1.blocks.0.attn : SelfAttention
+backbone.transformers.1.blocks.0.attn.key : Linear
+backbone.transformers.1.blocks.0.attn.query : Linear
+backbone.transformers.1.blocks.0.attn.value : Linear
+backbone.transformers.1.blocks.0.attn.resid_drop : Dropout
+backbone.transformers.1.blocks.0.attn.proj : Linear
+backbone.transformers.1.blocks.0.mlp : Sequential
+backbone.transformers.1.blocks.0.mlp.0 : Linear
+backbone.transformers.1.blocks.0.mlp.1 : ReLU
+backbone.transformers.1.blocks.0.mlp.2 : Linear
+backbone.transformers.1.blocks.0.mlp.3 : Dropout
+backbone.transformers.1.blocks.1 : Block
+backbone.transformers.1.blocks.1.ln1 : LayerNorm
+backbone.transformers.1.blocks.1.ln2 : LayerNorm
+backbone.transformers.1.blocks.1.attn : SelfAttention
+backbone.transformers.1.blocks.1.attn.key : Linear
+backbone.transformers.1.blocks.1.attn.query : Linear
+backbone.transformers.1.blocks.1.attn.value : Linear
+backbone.transformers.1.blocks.1.attn.resid_drop : Dropout
+backbone.transformers.1.blocks.1.attn.proj : Linear
+backbone.transformers.1.blocks.1.mlp : Sequential
+backbone.transformers.1.blocks.1.mlp.0 : Linear
+backbone.transformers.1.blocks.1.mlp.1 : ReLU
+backbone.transformers.1.blocks.1.mlp.2 : Linear
+backbone.transformers.1.blocks.1.mlp.3 : Dropout
+backbone.transformers.1.ln_f : LayerNorm
+backbone.transformers.2 : GPT
+backbone.transformers.2.drop : Dropout
+backbone.transformers.2.blocks : Sequential
+backbone.transformers.2.blocks.0 : Block
+backbone.transformers.2.blocks.0.ln1 : LayerNorm
+backbone.transformers.2.blocks.0.ln2 : LayerNorm
+backbone.transformers.2.blocks.0.attn : SelfAttention
+backbone.transformers.2.blocks.0.attn.key : Linear
+backbone.transformers.2.blocks.0.attn.query : Linear
+backbone.transformers.2.blocks.0.attn.value : Linear
+backbone.transformers.2.blocks.0.attn.resid_drop : Dropout
+backbone.transformers.2.blocks.0.attn.proj : Linear
+backbone.transformers.2.blocks.0.mlp : Sequential
+backbone.transformers.2.blocks.0.mlp.0 : Linear
+backbone.transformers.2.blocks.0.mlp.1 : ReLU
+backbone.transformers.2.blocks.0.mlp.2 : Linear
+backbone.transformers.2.blocks.0.mlp.3 : Dropout
+backbone.transformers.2.blocks.1 : Block
+backbone.transformers.2.blocks.1.ln1 : LayerNorm
+backbone.transformers.2.blocks.1.ln2 : LayerNorm
+backbone.transformers.2.blocks.1.attn : SelfAttention
+backbone.transformers.2.blocks.1.attn.key : Linear
+backbone.transformers.2.blocks.1.attn.query : Linear
+backbone.transformers.2.blocks.1.attn.value : Linear
+backbone.transformers.2.blocks.1.attn.resid_drop : Dropout
+backbone.transformers.2.blocks.1.attn.proj : Linear
+backbone.transformers.2.blocks.1.mlp : Sequential
+backbone.transformers.2.blocks.1.mlp.0 : Linear
+backbone.transformers.2.blocks.1.mlp.1 : ReLU
+backbone.transformers.2.blocks.1.mlp.2 : Linear
+backbone.transformers.2.blocks.1.mlp.3 : Dropout
+backbone.transformers.2.ln_f : LayerNorm
+backbone.transformers.3 : GPT
+backbone.transformers.3.drop : Dropout
+backbone.transformers.3.blocks : Sequential
+backbone.transformers.3.blocks.0 : Block
+backbone.transformers.3.blocks.0.ln1 : LayerNorm
+backbone.transformers.3.blocks.0.ln2 : LayerNorm
+backbone.transformers.3.blocks.0.attn : SelfAttention
+backbone.transformers.3.blocks.0.attn.key : Linear
+backbone.transformers.3.blocks.0.attn.query : Linear
+backbone.transformers.3.blocks.0.attn.value : Linear
+backbone.transformers.3.blocks.0.attn.resid_drop : Dropout
+backbone.transformers.3.blocks.0.attn.proj : Linear
+backbone.transformers.3.blocks.0.mlp : Sequential
+backbone.transformers.3.blocks.0.mlp.0 : Linear
+backbone.transformers.3.blocks.0.mlp.1 : ReLU
+backbone.transformers.3.blocks.0.mlp.2 : Linear
+backbone.transformers.3.blocks.0.mlp.3 : Dropout
+backbone.transformers.3.blocks.1 : Block
+backbone.transformers.3.blocks.1.ln1 : LayerNorm
+backbone.transformers.3.blocks.1.ln2 : LayerNorm
+backbone.transformers.3.blocks.1.attn : SelfAttention
+backbone.transformers.3.blocks.1.attn.key : Linear
+backbone.transformers.3.blocks.1.attn.query : Linear
+backbone.transformers.3.blocks.1.attn.value : Linear
+backbone.transformers.3.blocks.1.attn.resid_drop : Dropout
+backbone.transformers.3.blocks.1.attn.proj : Linear
+backbone.transformers.3.blocks.1.mlp : Sequential
+backbone.transformers.3.blocks.1.mlp.0 : Linear
+backbone.transformers.3.blocks.1.mlp.1 : ReLU
+backbone.transformers.3.blocks.1.mlp.2 : Linear
+backbone.transformers.3.blocks.1.mlp.3 : Dropout
+backbone.transformers.3.ln_f : LayerNorm
+backbone.upsample : Upsample
+backbone.upsample2 : Upsample
+backbone.up_conv5 : Conv2d
+backbone.up_conv4 : Conv2d
+backbone.c5_conv : Conv2d
+radar_detector : RadarDetector
+radar_detector.bev_proj : Conv2d
+radar_detector.ego_vel_proj : Linear
+radar_detector.radar_point_tokenizer : Sequential
+radar_detector.radar_point_tokenizer.0 : Linear
+radar_detector.radar_point_tokenizer.1 : ReLU
+radar_detector.radar_point_tokenizer.2 : Linear
+radar_detector.tf : TransformerDecoder
+radar_detector.tf.layers : ModuleList
+radar_detector.tf.layers.0 : TransformerDecoderLayer
+radar_detector.tf.layers.0.self_attn : MultiheadAttention
+radar_detector.tf.layers.0.self_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.0.multihead_attn : MultiheadAttention
+radar_detector.tf.layers.0.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.0.linear1 : Linear
+radar_detector.tf.layers.0.dropout : Dropout
+radar_detector.tf.layers.0.linear2 : Linear
+radar_detector.tf.layers.0.norm1 : LayerNorm
+radar_detector.tf.layers.0.norm2 : LayerNorm
+radar_detector.tf.layers.0.norm3 : LayerNorm
+radar_detector.tf.layers.0.dropout1 : Dropout
+radar_detector.tf.layers.0.dropout2 : Dropout
+radar_detector.tf.layers.0.dropout3 : Dropout
+radar_detector.tf.layers.0.activation : GELU
+radar_detector.tf.layers.1 : TransformerDecoderLayer
+radar_detector.tf.layers.1.self_attn : MultiheadAttention
+radar_detector.tf.layers.1.self_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.1.multihead_attn : MultiheadAttention
+radar_detector.tf.layers.1.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.1.linear1 : Linear
+radar_detector.tf.layers.1.dropout : Dropout
+radar_detector.tf.layers.1.linear2 : Linear
+radar_detector.tf.layers.1.norm1 : LayerNorm
+radar_detector.tf.layers.1.norm2 : LayerNorm
+radar_detector.tf.layers.1.norm3 : LayerNorm
+radar_detector.tf.layers.1.dropout1 : Dropout
+radar_detector.tf.layers.1.dropout2 : Dropout
+radar_detector.tf.layers.1.dropout3 : Dropout
+radar_detector.tf.layers.1.activation : GELU
+radar_detector.tf.layers.2 : TransformerDecoderLayer
+radar_detector.tf.layers.2.self_attn : MultiheadAttention
+radar_detector.tf.layers.2.self_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.2.multihead_attn : MultiheadAttention
+radar_detector.tf.layers.2.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.2.linear1 : Linear
+radar_detector.tf.layers.2.dropout : Dropout
+radar_detector.tf.layers.2.linear2 : Linear
+radar_detector.tf.layers.2.norm1 : LayerNorm
+radar_detector.tf.layers.2.norm2 : LayerNorm
+radar_detector.tf.layers.2.norm3 : LayerNorm
+radar_detector.tf.layers.2.dropout1 : Dropout
+radar_detector.tf.layers.2.dropout2 : Dropout
+radar_detector.tf.layers.2.dropout3 : Dropout
+radar_detector.tf.layers.2.activation : GELU
+radar_detector.tf.layers.3 : TransformerDecoderLayer
+radar_detector.tf.layers.3.self_attn : MultiheadAttention
+radar_detector.tf.layers.3.self_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.3.multihead_attn : MultiheadAttention
+radar_detector.tf.layers.3.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+radar_detector.tf.layers.3.linear1 : Linear
+radar_detector.tf.layers.3.dropout : Dropout
+radar_detector.tf.layers.3.linear2 : Linear
+radar_detector.tf.layers.3.norm1 : LayerNorm
+radar_detector.tf.layers.3.norm2 : LayerNorm
+radar_detector.tf.layers.3.norm3 : LayerNorm
+radar_detector.tf.layers.3.dropout1 : Dropout
+radar_detector.tf.layers.3.dropout2 : Dropout
+radar_detector.tf.layers.3.dropout3 : Dropout
+radar_detector.tf.layers.3.activation : GELU
+radar_detector.tf.norm : LayerNorm
+radar_detector.state_decoder : Sequential
+radar_detector.state_decoder.0 : Linear
+radar_detector.state_decoder.1 : ReLU
+radar_detector.state_decoder.2 : Linear
+radar_detector.label_decoder : Linear
+planning_decoder : PlanningDecoder
+planning_decoder.planning_context_encoder : PlanningContextEncoder
+planning_decoder.planning_context_encoder.velocity_encoder : Sequential
+planning_decoder.planning_context_encoder.velocity_encoder.0 : Linear
+planning_decoder.planning_context_encoder.command_encoder : Sequential
+planning_decoder.planning_context_encoder.command_encoder.0 : Linear
+planning_decoder.planning_context_encoder.tp_encoder : Linear
+planning_decoder.planning_context_encoder.cosine_pos_embeding : PositionEmbeddingSine
+planning_decoder.planning_context_encoder.dimension_adapter : Conv2d
+planning_decoder.transformer_decoder : TransformerDecoder
+planning_decoder.transformer_decoder.layers : ModuleList
+planning_decoder.transformer_decoder.layers.0 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.0.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.0.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.0.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.0.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.0.linear1 : Linear
+planning_decoder.transformer_decoder.layers.0.dropout : Dropout
+planning_decoder.transformer_decoder.layers.0.linear2 : Linear
+planning_decoder.transformer_decoder.layers.0.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.0.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.0.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.0.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.0.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.0.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.0.activation : GELU
+planning_decoder.transformer_decoder.layers.1 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.1.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.1.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.1.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.1.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.1.linear1 : Linear
+planning_decoder.transformer_decoder.layers.1.dropout : Dropout
+planning_decoder.transformer_decoder.layers.1.linear2 : Linear
+planning_decoder.transformer_decoder.layers.1.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.1.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.1.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.1.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.1.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.1.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.1.activation : GELU
+planning_decoder.transformer_decoder.layers.2 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.2.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.2.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.2.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.2.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.2.linear1 : Linear
+planning_decoder.transformer_decoder.layers.2.dropout : Dropout
+planning_decoder.transformer_decoder.layers.2.linear2 : Linear
+planning_decoder.transformer_decoder.layers.2.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.2.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.2.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.2.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.2.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.2.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.2.activation : GELU
+planning_decoder.transformer_decoder.layers.3 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.3.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.3.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.3.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.3.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.3.linear1 : Linear
+planning_decoder.transformer_decoder.layers.3.dropout : Dropout
+planning_decoder.transformer_decoder.layers.3.linear2 : Linear
+planning_decoder.transformer_decoder.layers.3.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.3.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.3.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.3.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.3.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.3.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.3.activation : GELU
+planning_decoder.transformer_decoder.layers.4 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.4.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.4.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.4.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.4.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.4.linear1 : Linear
+planning_decoder.transformer_decoder.layers.4.dropout : Dropout
+planning_decoder.transformer_decoder.layers.4.linear2 : Linear
+planning_decoder.transformer_decoder.layers.4.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.4.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.4.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.4.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.4.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.4.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.4.activation : GELU
+planning_decoder.transformer_decoder.layers.5 : TransformerDecoderLayer
+planning_decoder.transformer_decoder.layers.5.self_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.5.self_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.5.multihead_attn : MultiheadAttention
+planning_decoder.transformer_decoder.layers.5.multihead_attn.out_proj : NonDynamicallyQuantizableLinear
+planning_decoder.transformer_decoder.layers.5.linear1 : Linear
+planning_decoder.transformer_decoder.layers.5.dropout : Dropout
+planning_decoder.transformer_decoder.layers.5.linear2 : Linear
+planning_decoder.transformer_decoder.layers.5.norm1 : LayerNorm
+planning_decoder.transformer_decoder.layers.5.norm2 : LayerNorm
+planning_decoder.transformer_decoder.layers.5.norm3 : LayerNorm
+planning_decoder.transformer_decoder.layers.5.dropout1 : Dropout
+planning_decoder.transformer_decoder.layers.5.dropout2 : Dropout
+planning_decoder.transformer_decoder.layers.5.dropout3 : Dropout
+planning_decoder.transformer_decoder.layers.5.activation : GELU
+planning_decoder.transformer_decoder.norm : LayerNorm
+planning_decoder.route_decoder : Linear
+planning_decoder.wp_decoder : Linear
+planning_decoder.target_speed_decoder : Sequential
+planning_decoder.target_speed_decoder.0 : Linear
+planning_decoder.target_speed_decoder.1 : ReLU
+planning_decoder.target_speed_decoder.2 : Linear
