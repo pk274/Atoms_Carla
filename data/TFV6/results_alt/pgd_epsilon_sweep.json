@@ -4,84 +4,111 @@
     "n_steps": 5,
     "n_frames": 200,
     "brake_threshold": 0.9,
-    "success_target": 0.99,
+    "success_target": 0.98,
     "measure_with_tp": false,
     "epsilons": [
+      0.0,
       1.0,
       2.0,
       4.0,
+      5.0,
       6.0,
+      7.0,
       8.0,
-      12.0,
-      16.0,
-      24.0
+      9.0,
+      10.0,
+      12.0
     ],
     "frames_dir": "/ptmp/paulkull/atoms_test_alt/frames",
     "model_dir": "/u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
   },
   "rows": [
     {
+      "epsilon": 0.0,
+      "success_deploy": 0.325,
+      "success_strict": 0.04,
+      "p_brake_mean": 0.565011475981155,
+      "p_brake_median": 0.7219864428043365,
+      "n_frames": 200
+    },
+    {
       "epsilon": 1.0,
-      "success_deploy": 0.965,
-      "success_strict": 0.28,
-      "p_brake_mean": 0.9742170490324498,
-      "p_brake_median": 0.9940633177757263,
+      "success_deploy": 0.97,
+      "success_strict": 0.27,
+      "p_brake_mean": 0.9746641589514912,
+      "p_brake_median": 0.9943884611129761,
       "n_frames": 200
     },
     {
       "epsilon": 2.0,
-      "success_deploy": 0.955,
-      "success_strict": 0.31,
-      "p_brake_mean": 0.9810893100500107,
-      "p_brake_median": 0.9956914186477661,
+      "success_deploy": 0.97,
+      "success_strict": 0.315,
+      "p_brake_mean": 0.9824783205986023,
+      "p_brake_median": 0.9953949153423309,
       "n_frames": 200
     },
     {
       "epsilon": 4.0,
-      "success_deploy": 0.95,
-      "success_strict": 0.3,
-      "p_brake_mean": 0.982517421245575,
-      "p_brake_median": 0.9955319464206696,
+      "success_deploy": 0.945,
+      "success_strict": 0.325,
+      "p_brake_mean": 0.9799593290686608,
+      "p_brake_median": 0.9953712821006775,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 5.0,
+      "success_deploy": 0.965,
+      "success_strict": 0.335,
+      "p_brake_mean": 0.9809406694554491,
+      "p_brake_median": 0.995865136384964,
       "n_frames": 200
     },
     {
       "epsilon": 6.0,
-      "success_deploy": 0.945,
-      "success_strict": 0.335,
-      "p_brake_mean": 0.9776051779091358,
-      "p_brake_median": 0.9954562187194824,
+      "success_deploy": 0.935,
+      "success_strict": 0.295,
+      "p_brake_mean": 0.9791336703300476,
+      "p_brake_median": 0.9949241280555725,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 7.0,
+      "success_deploy": 0.92,
+      "success_strict": 0.31,
+      "p_brake_mean": 0.9796830508112907,
+      "p_brake_median": 0.9951883852481842,
       "n_frames": 200
     },
     {
       "epsilon": 8.0,
+      "success_deploy": 0.96,
+      "success_strict": 0.31,
+      "p_brake_mean": 0.9819627048075199,
+      "p_brake_median": 0.9956966638565063,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 9.0,
       "success_deploy": 0.97,
-      "success_strict": 0.35,
-      "p_brake_mean": 0.9841063794493675,
-      "p_brake_median": 0.9958107471466064,
+      "success_strict": 0.3,
+      "p_brake_mean": 0.9820435413718224,
+      "p_brake_median": 0.9947397708892822,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 10.0,
+      "success_deploy": 0.97,
+      "success_strict": 0.34,
+      "p_brake_mean": 0.9849682313203811,
+      "p_brake_median": 0.9954576194286346,
       "n_frames": 200
     },
     {
       "epsilon": 12.0,
-      "success_deploy": 0.955,
-      "success_strict": 0.31,
-      "p_brake_mean": 0.9751713021844626,
-      "p_brake_median": 0.9945090711116791,
-      "n_frames": 200
-    },
-    {
-      "epsilon": 16.0,
-      "success_deploy": 0.965,
-      "success_strict": 0.33,
-      "p_brake_mean": 0.9736735282139852,
-      "p_brake_median": 0.9954564571380615,
-      "n_frames": 200
-    },
-    {
-      "epsilon": 24.0,
-      "success_deploy": 0.92,
+      "success_deploy": 0.95,
       "success_strict": 0.305,
-      "p_brake_mean": 0.963409887701273,
-      "p_brake_median": 0.993794858455658,
+      "p_brake_mean": 0.9685467411857098,
+      "p_brake_median": 0.9941910803318024,
       "n_frames": 200
     }
   ],
