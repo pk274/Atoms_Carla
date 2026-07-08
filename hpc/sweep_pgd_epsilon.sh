@@ -42,9 +42,9 @@ FRAMES_DIR="${FRAMES_DIR:-/ptmp/$USER/atoms_test_alt/frames}"
 OUT="${OUT:-$CODE_DIR/data/TFV6/results_alt/pgd_epsilon_sweep}"
 N_FRAMES="${N_FRAMES:-200}"
 N_STEPS="${N_STEPS:-5}"
-EPSILONS="${EPSILONS:-1 2 4 6 8 12 16 24}"
+EPSILONS="${EPSILONS:-0 1 2 4 5 6 7 8 9 10 12}"
 BRAKE_THRESHOLD="${BRAKE_THRESHOLD:-0.9}"
-SUCCESS_TARGET="${SUCCESS_TARGET:-0.99}"
+SUCCESS_TARGET="${SUCCESS_TARGET:-0.98}"
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 # sweep_pgd_epsilon.py sets sys.path itself, but exporting PYTHONPATH too keeps
