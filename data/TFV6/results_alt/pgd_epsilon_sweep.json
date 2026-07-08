@@ -1,0 +1,89 @@
+{
+  "config": {
+    "target": "brake",
+    "n_steps": 5,
+    "n_frames": 200,
+    "brake_threshold": 0.9,
+    "success_target": 0.99,
+    "measure_with_tp": false,
+    "epsilons": [
+      1.0,
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      12.0,
+      16.0,
+      24.0
+    ],
+    "frames_dir": "/ptmp/paulkull/atoms_test_alt/frames",
+    "model_dir": "/u/paulkull/pcla/pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
+  },
+  "rows": [
+    {
+      "epsilon": 1.0,
+      "success_deploy": 0.965,
+      "success_strict": 0.28,
+      "p_brake_mean": 0.9742170490324498,
+      "p_brake_median": 0.9940633177757263,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 2.0,
+      "success_deploy": 0.955,
+      "success_strict": 0.31,
+      "p_brake_mean": 0.9810893100500107,
+      "p_brake_median": 0.9956914186477661,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 4.0,
+      "success_deploy": 0.95,
+      "success_strict": 0.3,
+      "p_brake_mean": 0.982517421245575,
+      "p_brake_median": 0.9955319464206696,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 6.0,
+      "success_deploy": 0.945,
+      "success_strict": 0.335,
+      "p_brake_mean": 0.9776051779091358,
+      "p_brake_median": 0.9954562187194824,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 8.0,
+      "success_deploy": 0.97,
+      "success_strict": 0.35,
+      "p_brake_mean": 0.9841063794493675,
+      "p_brake_median": 0.9958107471466064,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 12.0,
+      "success_deploy": 0.955,
+      "success_strict": 0.31,
+      "p_brake_mean": 0.9751713021844626,
+      "p_brake_median": 0.9945090711116791,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 16.0,
+      "success_deploy": 0.965,
+      "success_strict": 0.33,
+      "p_brake_mean": 0.9736735282139852,
+      "p_brake_median": 0.9954564571380615,
+      "n_frames": 200
+    },
+    {
+      "epsilon": 24.0,
+      "success_deploy": 0.92,
+      "success_strict": 0.305,
+      "p_brake_mean": 0.963409887701273,
+      "p_brake_median": 0.993794858455658,
+      "n_frames": 200
+    }
+  ],
+  "chosen_epsilon": null
+}
