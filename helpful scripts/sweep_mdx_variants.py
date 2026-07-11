@@ -46,8 +46,13 @@ import sys
 import time
 from pathlib import Path
 
-# Add transfuserv6 to sys.path so lead imports resolve
-sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
+# This script lives in "helpful scripts/", not at the repo root, so anchor
+# on the parent directory rather than this file's own directory.
+_ROOT = Path(__file__).resolve().parent.parent
+# Repo root, so ATOMs_Analysis is importable.
+sys.path.insert(0, str(_ROOT))
+# transfuserv6 to sys.path so its internal `lead` package resolves.
+sys.path.insert(0, str(_ROOT / "pcla_agents" / "transfuserv6"))
 
 import numpy as np
 import torch
@@ -85,7 +90,7 @@ def _load_model(device: torch.device):
     from lead.tfv6.tfv6 import TFv6
     from ATOMs_Analysis.saliency.lrp_transfuser import LRPTFv6Model
 
-    TFV6_MODEL_DIR = Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
+    TFV6_MODEL_DIR = _ROOT / "pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
     with open(TFV6_MODEL_DIR / "config.json") as fh:
         training_config = TrainingConfig(json.load(fh))
 
@@ -142,7 +147,7 @@ def _extract_baseline_backbone(lrp, baseline_cache: Path) -> tuple[np.ndarray, n
     acts_arr  = np.array(acts,  dtype=np.float64)
     np.savez_compressed(baseline_cache, features=feats_arr.astype(np.float32),
                         actions=acts_arr.astype(np.float32))
-    print(f"  Saved → {baseline_cache}")
+    print(f"  Saved -> {baseline_cache}")
     return feats_arr, acts_arr
 
 
@@ -173,7 +178,7 @@ def _extract_baseline_fc(lrp, cache_path: Path) -> tuple[np.ndarray, np.ndarray]
     np.savez_compressed(cache_path, features=feats_arr.astype(np.float32),
                         actions=acts_arr.astype(np.float32))
     steer_std = acts_arr[:, 0].std()
-    print(f"  Saved → {cache_path}  (steer std={steer_std:.4f})")
+    print(f"  Saved -> {cache_path}  (steer std={steer_std:.4f})")
     return feats_arr, acts_arr
 
 
@@ -196,7 +201,7 @@ def _extract_test_backbone(lrp, test_data: dict, cache_path: Path) -> np.ndarray
     feats_arr = np.array(feats, dtype=np.float64)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(cache_path, features=feats_arr.astype(np.float32))
-    print(f"  Saved → {cache_path}")
+    print(f"  Saved -> {cache_path}")
     return feats_arr
 
 
@@ -223,7 +228,7 @@ def _extract_test_fc(lrp, test_data: dict, cache_path: Path) -> np.ndarray:
     feats_arr = np.array(feats, dtype=np.float64)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(cache_path, features=feats_arr.astype(np.float32))
-    print(f"  Saved → {cache_path}")
+    print(f"  Saved -> {cache_path}")
     return feats_arr
 
 
@@ -430,7 +435,7 @@ def main() -> None:
     out_path = out_dir / f"mdx_ablation_pca{n_pca}.json"
     with open(out_path, "w") as fh:
         json.dump(all_results, fh, indent=2)
-    print(f"  Results saved → {out_path}\n")
+    print(f"  Results saved -> {out_path}\n")
 
 
 if __name__ == "__main__":

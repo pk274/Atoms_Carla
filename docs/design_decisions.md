@@ -1146,3 +1146,79 @@ of a problem (reduced signal resolution) that it can't afford. Revisit only if
 a future qualitative-visualization deliverable (e.g. thesis figures showing
 raw pixel heatmaps rather than class-level bar charts) needs the same "spread
 out the hotspot" effect Otsuki et al. were targeting.
+
+---
+
+## `camera_loss` target camera: front-left (idx 0) → front-center (idx 1) (2026-07-09)
+
+**What changed.** For TFV6, the `camera_loss` perturbation now zeros camera
+index 1 (front-center) of the 6-camera LEAD layout instead of index 0
+(front-left). Updated in `run_analysis.py` (TFV6 branch only),
+`hpc/prep_test.py`, `apply_val_perturbations.py`, and the row label in
+`hpc/visualize_perturb.py`. The WoR branch of `run_analysis.py` and
+`hpc/prep_test_wor.py` are unaffected and deliberately left at index 0 — WoR's
+`camera_loss` runs on a single-element wide-image list (WoR has one wide
+camera, not a 6-camera concat), so index 0 is the only valid index there and
+changing it would silently no-op.
+
+**Why.** Two reasons, not just one:
+1. *Real-world motivation.* Forward-camera failure is the sensor-loss
+   scenario most discussed in AV safety contexts — the front-center camera
+   carries the most lane-keeping/collision-relevant information of the six.
+   Dropping a peripheral camera (front-left) is a weaker stand-in for "the
+   camera the agent depends on most fails."
+2. *Measured detection weakness.* `docs/interpretation_hypothesis.md`'s
+   per-perturbation MDX breakdown shows `camera_loss` scoring near-chance AUC
+   (~0.47–0.48) with front-left dropped — plausibly because front-left
+   carries low baseline attention weight, so zeroing it barely shifts the
+   ATOMs profile. Front-center likely dominates the baseline attention
+   distribution, so dropping it should produce a larger, more legitimate
+   attention-profile shift for detectors to catch, making this a fairer test
+   of the OOD-detection hypothesis.
+
+**Consequence.** Invalidates any `test_labeled.npz` / `val_labeled.npz` and
+downstream profiles/results tied to the old `camera_loss` frames (including
+the numbers in `docs/interpretation_hypothesis.md` and the `results_summary*`
+folders) — these must be regenerated (`REAPPLY_PERTURBATIONS` /
+`RECOMPUTE_TEST_ATOMS` and the val equivalents) before drawing conclusions
+about `camera_loss` detectability. Being folded into an already-planned
+recompute for a new PGD ε value, so no separate recompute pass was triggered
+by this change alone.
+
+---
+
+## `NOISE_INTENSITY` (gaussian_noise σ): 21 → 25 (2026-07-09)
+
+**What changed.** `NOISE_INTENSITY` raised from 21 to 25 pixel units. Updated
+everywhere it's duplicated as a standalone default (no shared import across
+the local/HPC scripts): `atoms_config.py`, `hpc/prep_test.py` (docstring
+example, `_SPEC` fallback, `--noise-intensity` argparse default),
+`hpc/prep_test_wor.py` (same three spots), and `hpc/prep_test_task.sh`'s
+`${NOISE_INTENSITY:-...}` shell fallback. Also updated the stale comment next
+to the live-perturbation `INTENSITY` constant (`# 4 for brightness, 25 gn,
+0.07 for po`) so it stays consistent if `PERTURBATION` is manually switched to
+`gaussian_noise` for a live run.
+
+**Why 25 specifically.** Not derived from a target AUC — chosen as a round
+number one notch above the old value, sitting a bit past the middle of the
+perturbation's own documented range (docstring: 1 "barely visible" – 50
+"heavily degraded", `perturbation_manager.py:744-746`).
+
+**Context that motivated even asking the question.** `gaussian_noise` has
+been a consistently weak/near-chance perturbation across almost every
+detector configuration in `docs/interpretation_hypothesis.md` and
+`results_summary*/SUMMARY.md`, similar to the pre-fix `camera_loss` symptom
+above. Unlike `camera_loss`, though, there was no configuration bug behind
+it — `run_analysis.py:1600-1622` and `summarize_results.py:314`
+(`_EXCLUDE_PERTS_FROM_REC`) already deliberately exclude `gaussian_noise` from
+val-AUC K-selection and result recommendations, with the stated rationale
+that "the ATOMs signal is expected to be clean-like" under iid pixel noise
+since it isn't semantically meaningful to the network. That exclusion logic
+is independent of the exact σ value and was left as-is: a modest 21→25 bump
+is not expected to overturn it, and per explicit instruction, a
+still-near-chance result at σ=25 is an acceptable outcome to report as-is
+rather than something to keep pushing the intensity to fix.
+
+**Consequence.** Same as the `camera_loss` change above — invalidates
+existing `test_labeled.npz`/`val_labeled.npz` and downstream `gaussian_noise`
+profiles/results, folded into the same already-planned recompute.

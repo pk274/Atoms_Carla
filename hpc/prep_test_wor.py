@@ -12,7 +12,7 @@ Usage (standalone):
         --frames-dir  /ptmp/$USER/atoms_wor_test/frames \
         --output      /ptmp/$USER/atoms_wor_test/test_labeled.npz \
         --seed        42 \
-        --noise-intensity 21 \
+        --noise-intensity 25 \
         --brightness-intensity 3
 """
 
@@ -27,7 +27,7 @@ import torch
 _SPEC = [
     # (perturbation_or_None, intensity_default, fraction)
     (None,                0.0, 0.25),
-    ("gaussian_noise",   21.0, 0.25),   # overridden by --noise-intensity
+    ("gaussian_noise",   25.0, 0.25),   # overridden by --noise-intensity
     ("brightness_scale",  3.0, 0.25),   # overridden by --brightness-intensity
     ("camera_loss",       0.0, 0.25),
 ]
@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output",               required=True, type=Path,
                    help="Output path for test_labeled.npz.")
     p.add_argument("--seed",                 default=42,   type=int)
-    p.add_argument("--noise-intensity",      default=21.0, type=float)
+    p.add_argument("--noise-intensity",      default=25.0, type=float)
     p.add_argument("--brightness-intensity", default=3.0,  type=float)
     return p.parse_args()
 

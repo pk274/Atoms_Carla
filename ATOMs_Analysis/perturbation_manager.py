@@ -351,7 +351,7 @@ class PerturbationManager:
 
                     if self.verbose:
                         print(f"[PerturbationManager] PGD | target={target} | "
-                              f"step={step + 1}/{n_steps} | ε={epsilon} | "
+                              f"step={step + 1}/{n_steps} | eps={epsilon} | "
                               f"loss={loss.item():.4f}")
 
                 model.train(was_training)
@@ -490,7 +490,7 @@ class PerturbationManager:
                     if self.verbose:
                         print(
                             f"[PerturbationManager] PGD-TFV6 | target={target} | "
-                            f"step={step + 1}/{n_steps} | ε={epsilon} | "
+                            f"step={step + 1}/{n_steps} | eps={epsilon} | "
                             f"loss={total_loss.item():.4f}"
                         )
 
@@ -616,7 +616,7 @@ class PerturbationManager:
 
                 if self.verbose:
                     print(f"[PerturbationManager] FGSM | target={target} | "
-                          f"ε={epsilon} | loss={loss.item():.4f}")
+                          f"eps={epsilon} | loss={loss.item():.4f}")
 
                 # ---- 4. Backward pass ------------------------------------------------
                 loss.sum().backward()

@@ -295,7 +295,7 @@ class GMMClustering:
             shrinkage_alpha  = np.array([self.shrinkage_alpha]),
             covariance_type  = np.array([self.covariance_type], dtype=object),
         )
-        print(f"[GMMClustering] Saved → {path}")
+        print(f"[GMMClustering] Saved -> {path}")
 
     def load(self, path: str | Path) -> None:
         path = Path(path)
@@ -313,7 +313,7 @@ class GMMClustering:
         # Reconstruct a sklearn GMM for predict/predict_proba
         self._reconstruct_gmm()
         self._fitted = True
-        print(f"[GMMClustering] Loaded {self.n_components} components ← {path}")
+        print(f"[GMMClustering] Loaded {self.n_components} components <- {path}")
 
     # ------------------------------------------------------------------
     # Internal helpers

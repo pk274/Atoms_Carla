@@ -11,10 +11,16 @@ import json
 import numpy as np
 from pathlib import Path as _Path
 
+# This script lives in "helpful scripts/", not at the repo root, so anchor
+# on the parent directory rather than this file's own directory.
+_ROOT = _Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))   # repo root, so ATOMs_Analysis is importable
+
 # The transfuserv6 `lead` package uses bare `from lead.xxx` imports, so its
 # parent directory must be on sys.path before any pcla_agents.transfuserv6
 # import is attempted.
-_lead_parent = _Path(__file__).parent / "pcla_agents/transfuserv6"
+_lead_parent = _ROOT / "pcla_agents/transfuserv6"
 if str(_lead_parent) not in sys.path:
     sys.path.insert(0, str(_lead_parent))
 import torch
@@ -27,7 +33,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-ROOT       = Path(__file__).parent
+ROOT       = _ROOT
 MODEL_DIR  = ROOT / "pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
 FRAMES_DIR = ROOT / "data/TFV6/test_data_alt/frames"
 OUT_PATH   = ROOT / "data/TFV6/results_alt/atoms_analysis/pgd_visual_example.png"

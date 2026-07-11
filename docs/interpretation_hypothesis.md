@@ -182,6 +182,12 @@ PGD ε=14). Even our strongest perturbation (PGD) scores near chance in the per-
 breakdown, suggesting MDX backbone features are largely insensitive to the specific corruptions
 we apply.
 
+> **Stale parameters (2026-07-09):** the table below was computed under the perturbation
+> mix active at the time (Gaussian noise σ=21, camera_loss dropping camera 0/front-left,
+> PGD ε=14). The active mix has since changed to σ=25, camera_loss on camera 1/front-center,
+> and PGD ε=4 (see `docs/design_decisions.md`) — the numbers below need a recompute before
+> being cited as current.
+
 ### Per-perturbation evidence (n_pca=50)
 
 | Variant | brightness_scale | camera_loss | gaussian_noise | pgd |

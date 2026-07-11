@@ -8,14 +8,18 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
+# This script lives in "helpful scripts/", not at the repo root, so anchor
+# on the parent directory rather than this file's own directory.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))   # repo root, so `pcla_agents.transfuserv6...` absolute imports resolve
+sys.path.insert(0, str(ROOT / "pcla_agents" / "transfuserv6"))
 
 import torch
 
 from lead.training.config_training import TrainingConfig
 from lead.tfv6.tfv6 import TFv6
 
-TFV6_MODEL_DIR = Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
+TFV6_MODEL_DIR = ROOT / "pcla_agents/transfuserv6_pretrained/visiononly_resnet34"
 OUT_FILE = Path("tfv6_architecture.txt")
 
 

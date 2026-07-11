@@ -196,7 +196,7 @@ class TestDataCollector:
         np.savez_compressed(save_path, **save_kwargs)
         n = len(self._buf_wide)
         self._run_count += 1
-        print(f"[TestDataCollector] Saved {n} frames → {save_path}")
+        print(f"[TestDataCollector] Saved {n} frames -> {save_path}")
         return save_path
 
     def clear(self):
@@ -409,7 +409,7 @@ class PerturbationApplier:
         print(
             f"[PerturbationApplier] Saved {n} frames "
             f"({n - n_perturbed} clean, {n_perturbed} perturbed) "
-            f"→ {self._out_path}"
+            f"-> {self._out_path}"
         )
         return self._out_path
 

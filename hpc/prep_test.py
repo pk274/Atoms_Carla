@@ -15,7 +15,7 @@ Usage (standalone):
         --frames-dir  /ptmp/$USER/atoms_test/frames \
         --output      /ptmp/$USER/atoms_test/test_labeled.npz \
         --seed        42 \
-        --noise-intensity 21 \
+        --noise-intensity 25 \
         --brightness-intensity 3
 """
 
@@ -35,9 +35,9 @@ import torch
 _SPEC = [
     # (perturbation_or_None, intensity_default, fraction)
     (None,                0.0, 0.20),
-    ("gaussian_noise",   21.0, 0.20),   # overridden by --noise-intensity
+    ("gaussian_noise",   25.0, 0.20),   # overridden by --noise-intensity
     ("brightness_scale",  3.0, 0.20),   # overridden by --brightness-intensity
-    ("camera_loss",       0.0, 0.20),
+    ("camera_loss",       1.0, 0.20),   # drops camera 1 (front-center)
     ("pgd",               4.0, 0.20),   # intensity = ℓ∞ ε budget (0–255); overridden by --pgd-epsilon
 ]
 
@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output",               required=True, type=Path,
                    help="Output path for test_labeled.npz.")
     p.add_argument("--seed",                 default=42,   type=int)
-    p.add_argument("--noise-intensity",      default=21.0, type=float)
+    p.add_argument("--noise-intensity",      default=25.0, type=float)
     p.add_argument("--brightness-intensity", default=3.0,  type=float)
     p.add_argument("--pgd-epsilon",          default=4.0, type=float,
                    help="ℓ∞ ε budget recorded for pgd frames; the attack itself "

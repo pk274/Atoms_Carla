@@ -149,6 +149,69 @@ def visualize_relevance(relevance, rgb_image=None, alpha=None, save_path: Option
     plt.close()
 
 
+def visualize_relevance_comparison(
+    relevance_top, rgb_top,
+    relevance_bottom, rgb_bottom,
+    save_path: Optional[str] = None,
+    alpha: float = None,
+    is_brake_top: bool = None,
+    is_brake_bottom: bool = None,
+    label_top: str = "Perturbed",
+    label_bottom: str = "Clean",
+):
+    """
+    Two-row relevance/overlay comparison (e.g. a perturbed frame vs. its clean
+    counterpart before perturbation), so the attention shift under a
+    perturbation is directly visible in one figure.
+
+    relevance_top / relevance_bottom: [1, 3, H, W] or [3, H, W] tensors
+    rgb_top / rgb_bottom:             [H, W, 3] numpy arrays in [0, 255]
+    Each row uses the same heatmap normalization/colormap logic as
+    visualize_relevance, so the two rows are visually comparable.
+    """
+    if alpha is None:
+        alpha = vc.SALIENCY_OVERLAY_ALPHA
+
+    if save_path:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=vc.FIGSIZE_ATTENTION_OVERLAY_COMPARISON)
+
+    rows = [
+        (relevance_top,    rgb_top,    is_brake_top,    label_top),
+        (relevance_bottom, rgb_bottom, is_brake_bottom, label_bottom),
+    ]
+    for row, (relevance, rgb_image, is_brake, label) in enumerate(rows):
+        rel = relevance.squeeze(0)          # [3, H, W]
+        heatmap = rel.sum(dim=0).numpy()    # [H, W]
+        heatmap = np.maximum(heatmap, 0)    # keep only positive relevance
+        heatmap /= heatmap.max() + 1e-8     # normalize to [0, 1]
+
+        cmap_name = vc.SALIENCY_CMAP_ALT if is_brake else vc.SALIENCY_CMAP_POSITIVE
+
+        # aspect='auto' fills each panel regardless of the source image's aspect
+        # ratio (e.g. TFV6's 6-camera panorama is ~6:1) -- avoids large blank
+        # gaps between the two rows that a preserved data aspect would leave.
+        axes[row, 0].imshow(heatmap, cmap=cmap_name, aspect='auto')
+        axes[row, 0].set_title(f"{label} — Relevance")
+        axes[row, 0].axis('off')
+
+        cmap_fn = plt.get_cmap(cmap_name)
+        colored = (cmap_fn(heatmap)[..., :3] * 255).astype(np.uint8)
+        overlay = ((1 - alpha) * rgb_image + alpha * colored).astype(np.uint8)
+        axes[row, 1].imshow(overlay, aspect='auto')
+        axes[row, 1].set_title(f"{label} — Overlay")
+        axes[row, 1].axis('off')
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
+        print(f"[Visualizer] Saved image to {save_path}")
+    else:
+        plt.show()
+    plt.close(fig)
+
+
 def visualize_comparative_relevance(relevance, rgb_image=None, alpha=None, save_path: Optional[str] = None, is_brake: bool = None):
     """
     Visualize a signed (drive − brake) relevance map with a diverging colormap.
@@ -1006,7 +1069,7 @@ def save_figure(fig, path: str, dpi: int = None) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(p, dpi=dpi, bbox_inches=vc.SAVE_BBOX_INCHES)
     plt.close(fig)
-    print(f"[visualization] Saved → {p}")
+    print(f"[visualization] Saved -> {p}")
 
 
 def save_figure_both_legend(fig, path: str, dpi: int = None) -> None:
@@ -1019,7 +1082,7 @@ def save_figure_both_legend(fig, path: str, dpi: int = None) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(p, dpi=dpi, bbox_inches=vc.SAVE_BBOX_INCHES)
-    print(f"[visualization] Saved → {p}")
+    print(f"[visualization] Saved -> {p}")
     for ax in fig.get_axes():
         leg = ax.get_legend()
         if leg is not None:
@@ -1027,7 +1090,7 @@ def save_figure_both_legend(fig, path: str, dpi: int = None) -> None:
     fig.tight_layout()
     p_noleg = p.with_stem(p.stem + "_nolegend")
     fig.savefig(p_noleg, dpi=dpi, bbox_inches=vc.SAVE_BBOX_INCHES)
-    print(f"[visualization] Saved → {p_noleg}")
+    print(f"[visualization] Saved -> {p_noleg}")
     plt.close(fig)
 
 
@@ -1439,7 +1502,7 @@ def plot_distance_over_time(
     fig_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(fig_path, dpi=vc.SAVE_DPI, bbox_inches=vc.SAVE_BBOX_INCHES)
     plt.close(fig)
-    print(f"[INFO] Saved plot → {fig_path}")
+    print(f"[INFO] Saved plot -> {fig_path}")
     return None
 
 def _distance_type_from_detector_name(name: str) -> Optional[str]:

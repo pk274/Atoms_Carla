@@ -154,6 +154,7 @@ FIGSIZE_HISTOGRAM          = (6, 4)     # score distributions
 FIGSIZE_BIC_AIC            = (5, 3.5)   # model selection
 FIGSIZE_BAR                = (7, 4)     # bar charts with fixed number of bars
 FIGSIZE_ATTENTION_OVERLAY  = (15, 4)    # CARLA saliency input/heatmap/overlay triptych
+FIGSIZE_ATTENTION_OVERLAY_COMPARISON = (12, 5)   # 2x2 grid: e.g. perturbed vs clean saliency
 FIGSIZE_DISTANCE_OVER_TIME = (7, 5)     # CARLA distance vs frame index
 
 
@@ -293,6 +294,7 @@ __all__ = [
     # figure sizes
     "FIGSIZE_PCA", "FIGSIZE_TRAJECTORY", "FIGSIZE_ROC", "FIGSIZE_HISTOGRAM",
     "FIGSIZE_BIC_AIC", "FIGSIZE_BAR", "FIGSIZE_ATTENTION_OVERLAY",
+    "FIGSIZE_ATTENTION_OVERLAY_COMPARISON",
     "FIGSIZE_DISTANCE_OVER_TIME",
     "figsize_bar_scaled", "figsize_attention_bar",
     # markers

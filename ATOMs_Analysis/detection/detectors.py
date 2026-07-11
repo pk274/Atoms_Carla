@@ -456,7 +456,7 @@ class DetectorEvaluator:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(results, f, indent=2)
-        print(f"[DetectorEvaluator] Results saved → {path}")
+        print(f"[DetectorEvaluator] Results saved -> {path}")
 
     def compare(self, results_list: List[Dict]) -> None:
         """Print a comparison table for multiple detectors."""
@@ -1048,7 +1048,7 @@ class MDXDetector(BaseDetector):
         print(
             f"[MDXDetector] Fitted on {len(data)} samples | "
             f"{len(self._class_means)}/{self.n_classes} classes populated | "
-            f"PCA: {data.shape[1]}D → {self.n_pca_components}D"
+            f"PCA: {data.shape[1]}D -> {self.n_pca_components}D"
         )
 
     # ------------------------------------------------------------------
@@ -1117,7 +1117,7 @@ class MDXDetector(BaseDetector):
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "wb") as f:
             pickle.dump(self, f)
-        print(f"[MDXDetector] Saved → {path}")
+        print(f"[MDXDetector] Saved -> {path}")
 
     def load(self, path: str | Path) -> None:
         import pickle

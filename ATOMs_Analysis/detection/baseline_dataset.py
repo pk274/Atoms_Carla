@@ -258,7 +258,7 @@ class BaselineDataCollector:
 
         n = len(self._buf_wide)
         self._run_count += 1
-        print(f"[BaselineDataCollector] Saved {n} frames → {save_path}")
+        print(f"[BaselineDataCollector] Saved {n} frames -> {save_path}")
         return save_path
 
     def clear(self):
@@ -381,7 +381,7 @@ class BaselineDataLoader:
                 "target_point_previous": d["target_point_previous"] if "target_point_previous" in d else None,
                 "target_point_next":     d["target_point_next"]     if "target_point_next"     in d else None,
             })
-            print(f"  Loaded run {run_id:03d}: {n} frames ← {fpath.name}")
+            print(f"  Loaded run {run_id:03d}: {n} frames <- {fpath.name}")
 
         total = sum(d["wide_rgb"].shape[0] for d in parts)
         print(f"[BaselineDataLoader] Total: {total} frames from {len(parts)} runs.")
@@ -597,7 +597,7 @@ class BaselineComputer:
 
         elapsed = time.time() - t0
         print(f"[BaselineComputer] Done. {n_frames} frames in {elapsed:.1f}s.")
-        print(f"  Baseline saved → {self._output_path}")
+        print(f"  Baseline saved -> {self._output_path}")
         return series
 
 

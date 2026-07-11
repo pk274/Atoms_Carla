@@ -31,11 +31,11 @@ class ExperimentConfig:
     FC_RELEVANCE_FILTER = 0.9       # 0.9
 
 
-    NOISE_INTENSITY = 21        # 25 for day, 21 by night
+    NOISE_INTENSITY = 25        # must match hpc/prep_test.py / prep_test_wor.py --noise-intensity default
     BRIGHTNESS_INTENSITY = 3
 
     PERTURBATION = "brightness_scale"
-    INTENSITY = 3                 # 4 for brightness, 21 gn, 0.07 for po
+    INTENSITY = 3                 # 4 for brightness, 25 gn, 0.07 for po
     INJECTION_TIME = 10            # 10 for live perturbation
     AFFECT_BOTH_CAMS = True
     CAM_INDEX = None      # None for all cams; list for a subset (0-based: 0=front-left,1=front-center,2=front-right for 6-cam TFV6)

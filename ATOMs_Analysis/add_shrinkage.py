@@ -56,7 +56,7 @@ def migrate_baseline(path: Path, alpha: float) -> None:
         print(f"  Backup already exists: {backup.name} — skipping rename, loading from backup")
     else:
         shutil.copy2(str(path), str(backup))
-        print(f"  Backed up original → {backup.name}")
+        print(f"  Backed up original -> {backup.name}")
 
     # Load from the backup (= original data)
     data = np.load(backup, allow_pickle=True)
@@ -82,7 +82,7 @@ def migrate_baseline(path: Path, alpha: float) -> None:
                 print(f"  Warning: could not copy key '{k}' ({e}) — skipping")
 
     np.savez_compressed(path, **save_kwargs)
-    print(f"  Saved shrinkage-regularised file → {path.name}  (alpha={alpha})")
+    print(f"  Saved shrinkage-regularised file -> {path.name}  (alpha={alpha})")
 
 
 def main() -> None:

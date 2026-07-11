@@ -32,17 +32,28 @@ matplotlib.use("Agg")   # non-interactive backend — must be set before any pyp
 import numpy as np
 import torch
 import yaml
+import os
+
+# Get the absolute path of the current script's directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Get the parent directory (the repo root — this script lives in
+# "helpful scripts/", not at the repo root)
+parent_dir = os.path.dirname(current_dir)
+
+# Insert the parent directory at the front of the path
+sys.path.insert(0, parent_dir)
 
 # Add transfuserv6 to sys.path so its internal `lead` package resolves correctly
-# without modifying the agent's own import statements.
-sys.path.insert(0, str(Path(__file__).parent / "pcla_agents" / "transfuserv6"))
+# without modifying the agent's own import statements. Must be based on
+# parent_dir (repo root), not this script's own directory.
+sys.path.insert(0, str(Path(parent_dir) / "pcla_agents" / "transfuserv6"))
 
 from ATOMs_Analysis.atoms_config import ExperimentConfig as conf
 from ATOMs_Analysis.saliency.atoms_carla import ATOMsCarla, extract_target_points
 from ATOMs_Analysis.detection.baseline_dataset import BaselineDataLoader
 from ATOMs_Analysis.detection.dataset import LabeledTestLoader
 from ATOMs_Analysis.utils.visualization_carla import (
-    visualize_relevance, CARLA_CLASSES, TFV6_CLASSES,
+    visualize_relevance, visualize_relevance_comparison, CARLA_CLASSES, TFV6_CLASSES,
 )
 
 if conf.AGENT == "TFV6":
@@ -88,7 +99,7 @@ def load_lrp_model():
     test_labeled.npz — no local crafting needed).
     """
     if conf.AGENT == "TFV6":
-        model_dir = Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
+        model_dir = parent_dir / Path("pcla_agents/transfuserv6_pretrained/visiononly_resnet34")
         with open(model_dir / "config.json") as f:
             training_config = TrainingConfig(json.load(f))
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -144,7 +155,7 @@ def craft_pgd_frame(pm, raw_model, wide, cmd, spd, target_points, epsilon, devic
 def _save_saliency(atoms, wide, out_dir, stem, i, n_total, run_id, frame_idx, cmd, spd):
     """Runs ATOMs on a single already-conditioned frame and saves its saliency map(s)."""
     rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
-    save_path = out_dir / f"{stem}.png"
+    save_path = parent_dir / out_dir / f"{stem}.png"
     visualize_relevance(
         atoms.saliency_data_wide_default,
         rgb_image = rgb_wide,
@@ -166,6 +177,82 @@ def _save_saliency(atoms, wide, out_dir, stem, i, n_total, run_id, frame_idx, cm
             is_brake  = False,
         )
     print(f"  [{i + 1}/{n_total}] run={run_id} frame={frame_idx} cmd={cmd} speed={spd:.1f} -> {save_path}")
+
+
+def _save_saliency_comparison(pert_maps, wide_pert, atoms, wide_clean, out_dir, stem,
+                               i, n_total, run_id, frame_idx, cmd, spd):
+    """
+    Like _save_saliency, but for perturbed frames with a clean counterpart:
+    saves a two-row figure (perturbed on top, clean below) per saliency map so
+    the attention shift caused by the perturbation is visible directly.
+
+    pert_maps: dict captured from the perturbed pass BEFORE `atoms` was reset
+               and re-run on the clean frame (atoms' own tensors get overwritten
+               by that second process_frame call). Keys: "default", "is_brake",
+               and optionally "brake" / "wp".
+    atoms:     the ATOMsCarla instance, holding the CLEAN frame's just-computed
+               results at call time.
+    """
+    rgb_pert  = wide_pert[0].permute(1, 2, 0).cpu().detach().numpy()
+    rgb_clean = wide_clean[0].permute(1, 2, 0).cpu().detach().numpy()
+    save_path = parent_dir / out_dir / f"{stem}.png"
+
+    visualize_relevance_comparison(
+        pert_maps["default"], rgb_pert,
+        atoms.saliency_data_wide_default, rgb_clean,
+        save_path       = save_path,
+        is_brake_top    = pert_maps["is_brake"],
+        is_brake_bottom = atoms._last_is_brake,
+    )
+    if conf.ADD_BRAKE_SEEDS and pert_maps.get("brake") is not None and atoms.saliency_data_wide_brake is not None:
+        visualize_relevance_comparison(
+            pert_maps["brake"], rgb_pert,
+            atoms.saliency_data_wide_brake, rgb_clean,
+            save_path       = parent_dir / out_dir / f"{stem}_brake.png",
+            is_brake_top    = True,
+            is_brake_bottom = True,
+        )
+    if conf.ADD_WAYPOINT_SEEDS and pert_maps.get("wp") is not None and atoms.saliency_data_wide_wp is not None:
+        visualize_relevance_comparison(
+            pert_maps["wp"], rgb_pert,
+            atoms.saliency_data_wide_wp, rgb_clean,
+            save_path       = parent_dir / out_dir / f"{stem}_wp.png",
+            is_brake_top    = False,
+            is_brake_bottom = False,
+        )
+    print(f"  [{i + 1}/{n_total}] run={run_id} frame={frame_idx} cmd={cmd} speed={spd:.1f} -> {save_path}")
+
+
+def _build_clean_frame_lookup(data_dir):
+    """
+    Load all raw clean frames for a test/val dataset and index them by
+    (run_id, frame_idx), so a perturbed frame from test_labeled.npz /
+    val_labeled.npz can be matched back to its pre-perturbation pixels.
+
+    Matches by construction: PerturbationApplier assigns run_id/frame_idx from
+    the exact same sorted `frames/*.npz` glob that BaselineDataLoader.load_all_runs
+    uses here, so every (run_id, frame_idx) key in the labeled set has a
+    corresponding entry in this lookup.
+    """
+    frames_dir = Path(data_dir) / "frames"
+    raw = BaselineDataLoader.load_all_runs(frames_dir)
+    lookup = {
+        (int(rid), int(fidx)): row
+        for row, (rid, fidx) in enumerate(zip(raw["run_id"], raw["frame_idx"]))
+    }
+    return raw, lookup
+
+
+def _lookup_clean_frame(clean_raw, clean_lookup, run_id, frame_idx, has_narr):
+    """Return (wide_clean, narr_clean) for a (run_id, frame_idx) key, or (None, None) if missing."""
+    row = clean_lookup.get((run_id, frame_idx))
+    if row is None:
+        return None, None
+    wide_clean = torch.from_numpy(clean_raw["wide_rgb"][row:row + 1]).float()
+    narr_clean = None
+    if has_narr and clean_raw.get("narr_rgb") is not None:
+        narr_clean = torch.from_numpy(clean_raw["narr_rgb"][row:row + 1]).float()
+    return wide_clean, narr_clean
 
 
 def plot_clean_examples(atoms, args, out_dir):
@@ -258,9 +345,18 @@ def plot_perturbed_examples(atoms, args, out_dir, raw_model):
         pm = PerturbationManager(verbose=False)
         pm.attack_interval = 1   # craft a fresh delta for every attacked frame
 
+    # Clean (pre-perturbation) counterparts are looked up by (run_id, frame_idx)
+    # from the raw frames/ directory, so the saved figure can show how the
+    # saliency map shifts under the perturbation.
+    data_dir = conf.VAL_DATA_DIR if args.dataset == "val" else conf.TEST_DATA_DIR
+    print(f"Loading clean frames from {Path(data_dir) / 'frames'} for before/after comparison...")
+    clean_raw, clean_lookup = _build_clean_frame_lookup(data_dir)
+    print()
+
     print(f"Sampling {len(selections)} frame(s) across {len(types_to_sample)} "
           f"perturbation type(s): {types_to_sample}\n")
 
+    n_missing_clean = 0
     n_total = len(selections)
     for rank, (ptype, idx) in enumerate(selections):
         wide = torch.from_numpy(data["wide_rgb"][idx:idx + 1]).float()
@@ -273,21 +369,50 @@ def plot_perturbed_examples(atoms, args, out_dir, raw_model):
         frame_idx = int(data["frame_idx"][idx])
         target_points = extract_target_points(data, idx)
 
-        if ptype == "pgd" and pm is not None:
+        is_local_pgd = (ptype == "pgd" and pm is not None)
+        if is_local_pgd:
+            # test_labeled.npz still holds CLEAN pixels here (attack deferred to
+            # HPC) -- capture that as the clean reference before crafting locally.
+            wide_clean, narr_clean = wide.clone(), (narr.clone() if narr is not None else None)
             eps = float(data["intensity"][idx]) if "intensity" in data else 0.0
             if eps <= 0.0:
                 eps = conf.PGD_EPSILON
             wide = craft_pgd_frame(pm, raw_model, wide, cmd, spd, target_points,
                                     epsilon=eps, device=raw_model.device)
+        else:
+            wide_clean, narr_clean = _lookup_clean_frame(clean_raw, clean_lookup, run_id, frame_idx, has_narr)
 
         atoms.reset()
         atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd,
                             target_points=target_points)
 
         stem = f"saliency_{ptype}_{rank}_run{run_id}_frame{frame_idx}"
-        _save_saliency(atoms, wide, out_dir, stem, rank, n_total, run_id, frame_idx, cmd, spd)
 
-    print(f"\nSaved {n_total} saliency map(s) to {out_dir}")
+        if wide_clean is None:
+            n_missing_clean += 1
+            print(f"  [warn] no clean counterpart found for run={run_id} frame={frame_idx}; "
+                  "saving perturbed-only.")
+            _save_saliency(atoms, wide, out_dir, stem, rank, n_total, run_id, frame_idx, cmd, spd)
+            continue
+
+        pert_maps = {
+            "default":  atoms.saliency_data_wide_default.clone(),
+            "is_brake": atoms._last_is_brake,
+        }
+        if conf.ADD_BRAKE_SEEDS and atoms.saliency_data_wide_brake is not None:
+            pert_maps["brake"] = atoms.saliency_data_wide_brake.clone()
+        if conf.ADD_WAYPOINT_SEEDS and atoms.saliency_data_wide_wp is not None:
+            pert_maps["wp"] = atoms.saliency_data_wide_wp.clone()
+
+        atoms.reset()
+        atoms.process_frame(wide_clean, narr_clean, seg_wide, seg_narr, cmd=cmd, spd=spd,
+                            target_points=target_points)
+
+        _save_saliency_comparison(pert_maps, wide, atoms, wide_clean, out_dir, stem,
+                                   rank, n_total, run_id, frame_idx, cmd, spd)
+
+    print(f"\nSaved {n_total} saliency map(s) to {out_dir}"
+          + (f"  ({n_missing_clean} without a clean counterpart)" if n_missing_clean else ""))
 
 
 def main():

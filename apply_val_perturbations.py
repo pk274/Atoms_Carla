@@ -24,7 +24,7 @@ spec = PerturbationSpec([
     PerturbationEntry(fraction=0.20, perturbation=None),
     PerturbationEntry(fraction=0.20, perturbation="gaussian_noise",   intensity=conf.NOISE_INTENSITY),
     PerturbationEntry(fraction=0.20, perturbation="brightness_scale", intensity=conf.BRIGHTNESS_INTENSITY),
-    PerturbationEntry(fraction=0.20, perturbation="camera_loss",      intensity=0),
+    PerturbationEntry(fraction=0.20, perturbation="camera_loss",      intensity=1),
     PerturbationEntry(fraction=0.20, perturbation="pgd",              intensity=conf.PGD_EPSILON, fgsm_target=conf.PGD_TARGET),
 ])
 

@@ -51,7 +51,7 @@ def _row_label(pert: str, eps: float) -> str:
     if pert == "clean":
         return "clean"
     if pert == "camera_loss":
-        return f"camera_loss\n(cam 0 dropped)"
+        return f"camera_loss\n(cam 1 dropped)"
     if pert == "pgd":
         return f"pgd\n(ε = {eps:.1f}, deferred)"
     return f"{pert}\n(ε = {eps:.1f})"
