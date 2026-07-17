@@ -133,9 +133,11 @@ else:  # WoR
     model.eval()
     lrp = LRPCameraModel(model_eval=model, uitb=False)
 
-# WoR has discrete steer×throt×brake action logits → PEOC via get_action_logits().
-# TFV6 uses speed logits (get_speed_logits) handled separately in run_analysis.py.
+# PEOC logits: WoR uses discrete steer×throt×brake action logits (get_action_logits);
+# TFV6 uses the 8-bin speed logits (get_speed_logits). Both feed ActionEntropyDetector.
 action_logits_available = (conf.AGENT == "WOR")
+speed_logits_available  = (conf.AGENT == "TFV6")
+logits_available        = action_logits_available or speed_logits_available
 
 # Initialize ATOMs.
 #
@@ -398,6 +400,11 @@ for frame_file in frame_files:
         if conf.AGENT == "WOR"
         else f"live_pert_speed_logits_{variant}_{_mode}.npy"
     )
+    _clean_logits_fname = (
+        f"live_pert_action_logits_{variant}_clean_{_mode}.npy"
+        if conf.AGENT == "WOR"
+        else f"live_pert_speed_logits_{variant}_clean_{_mode}.npy"
+    )
 
     # --- Step 8: compute or load profiles ---
     if conf.RECOMPUTE_TEST_ATOMS:
@@ -407,7 +414,7 @@ for frame_file in frame_files:
         atoms.reset()
         n_test          = test_data["wide_rgb"].shape[0]
         test_profiles   = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
-        test_logits_all = [] if action_logits_available else None
+        test_logits_all = [] if logits_available else None
         t0 = time.time()
         for i in range(n_test):
             wide     = torch.from_numpy(test_data["wide_rgb"][i:i+1]).float()
@@ -461,6 +468,8 @@ for frame_file in frame_files:
 
             if action_logits_available:
                 test_logits_all.append(lrp.get_action_logits(wide, narr, cmd=cmd, spd=spd))
+            elif speed_logits_available:
+                test_logits_all.append(lrp.get_speed_logits(wide, cmd=cmd, spd=spd))
 
             if (i + 1) % 100 == 0:
                 fps = (i + 1) / (time.time() - t0)
@@ -468,19 +477,21 @@ for frame_file in frame_files:
 
         atoms.reset()
         np.save(profile_path, test_profiles)
-        if action_logits_available:
+        if logits_available:
             test_logits_all = np.array(test_logits_all, dtype=np.float32)
             np.save(ATT_DIR / _logits_fname, test_logits_all)
         print(f"  Done. {n_test} frames processed.\n")
 
         # --- Clean frames (same loop, only wide_rgb replaced) ---
-        clean_profiles = None
+        clean_profiles   = None
+        clean_logits_all = None
         if clean_data is not None:
             print(f"[Step 8] Computing ATOMs for clean frames of variant '{variant}'...")
             CLEAN_REL_DIR = Path(conf.TEST_DATA_DIR) / "relevance_live_pert" / LIVE_PERT_NAME / (variant + "_clean")
             CLEAN_REL_DIR.mkdir(parents=True, exist_ok=True)
             atoms.reset()
-            clean_profiles = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
+            clean_profiles   = np.zeros((n_test, atoms.profile_dim), dtype=np.float64)
+            clean_logits_all = [] if logits_available else None
             t0 = time.time()
             for i in range(n_test):
                 wide     = torch.from_numpy(clean_data["wide_rgb"][i:i+1]).float()
@@ -491,6 +502,10 @@ for frame_file in frame_files:
                 spd      = float(test_data["speed"][i])
                 profile  = atoms.process_frame(wide, narr, seg_wide, seg_narr, cmd=cmd, spd=spd)
                 clean_profiles[i] = profile
+                if action_logits_available:
+                    clean_logits_all.append(lrp.get_action_logits(wide, narr, cmd=cmd, spd=spd))
+                elif speed_logits_available:
+                    clean_logits_all.append(lrp.get_speed_logits(wide, cmd=cmd, spd=spd))
                 savepath_rel_w = CLEAN_REL_DIR / f"relevance_wide_{i}"
                 rgb_wide = wide[0].permute(1, 2, 0).cpu().detach().numpy()
                 default_wide = atoms.saliency_data_wide_default
@@ -503,6 +518,9 @@ for frame_file in frame_files:
                     print(f"  {i+1}/{n_test}  ({fps:.1f} fr/s)")
             atoms.reset()
             np.save(clean_profile_path, clean_profiles)
+            if logits_available:
+                clean_logits_all = np.array(clean_logits_all, dtype=np.float32)
+                np.save(ATT_DIR / _clean_logits_fname, clean_logits_all)
             print(f"  Done. {n_test} clean frames processed.\n")
 
     else:
@@ -521,10 +539,12 @@ for frame_file in frame_files:
                 f"but the frame file has {n_frames} frames.\n"
                 "Re-run HPC for this file or set RECOMPUTE_TEST_ATOMS=True."
             )
-        if action_logits_available and (ATT_DIR / _logits_fname).exists():
+        if logits_available and (ATT_DIR / _logits_fname).exists():
             test_logits_all = np.load(ATT_DIR / _logits_fname)
         else:
             test_logits_all = None
+            if logits_available:
+                print(f"  Logits not found: {_logits_fname} — skipping PEOC.")
         print(f"  Loaded {len(test_profiles)} profiles from {profile_path.name}")
 
         clean_profiles = None
@@ -536,18 +556,18 @@ for frame_file in frame_files:
         else:
             print(f"  Clean profiles not found: {clean_profile_path.name} — skipping clean overlay.")
 
+        clean_logits_all = None
+        if logits_available and (ATT_DIR / _clean_logits_fname).exists():
+            clean_logits_all = np.load(ATT_DIR / _clean_logits_fname)
+            if test_logits_all is not None and len(clean_logits_all) > len(test_logits_all):
+                clean_logits_all = clean_logits_all[:len(test_logits_all)]
+
     # --- Step 9: score ---
     print(f"[Step 9] Scoring variant '{variant}'...")
 
-    scores_mahal_single = np.array([
-        DistanceComputer.compute_mahalanobis(
-            mu_ref         = baseline_mean,
-            cov_ref        = baseline_cov,
-            mu_target      = test_profiles[i],
-            regularization = conf.MAHAL_RIDGE,
-        )
-        for i in range(len(test_profiles))
-    ])
+    # Shrunk covariance via the fitted detector — same regularisation as the
+    # GMM detectors (uniform-shrinkage fix, 2026-07-16).
+    scores_mahal_single = mahal_detector.score_batch(test_profiles)
 
     scores_euclid_single = np.array([
         DistanceComputer.compute_euclidean(
@@ -588,20 +608,18 @@ for frame_file in frame_files:
     ]
     scores_mahal_gmm = np.array([r.distance for r in gmm_results])
 
-    scores_entropy = None
+    # PEOC: entropy of the (action | speed) logit distribution — WoR | TFV6.
+    scores_entropy = _cs_entropy = None
     if test_logits_all is not None:
         entropy_detector = ActionEntropyDetector(from_logits=True, cmd=None)
         scores_entropy   = entropy_detector.score_batch(test_logits_all)
+        if clean_logits_all is not None:
+            _cs_entropy = entropy_detector.score_batch(clean_logits_all)
 
     # --- Clean scores (computed only when clean_profiles available) ---
     _cs_mahal   = _cs_euclid = _cs_knn = _cs_jsd = _cs_mahal_gmm = None
     if clean_profiles is not None:
-        _cs_mahal = np.array([
-            DistanceComputer.compute_mahalanobis(
-                mu_ref=baseline_mean, cov_ref=baseline_cov,
-                mu_target=clean_profiles[i], regularization=conf.MAHAL_RIDGE,
-            ) for i in range(len(clean_profiles))
-        ])
+        _cs_mahal = mahal_detector.score_batch(clean_profiles)
         _cs_euclid = np.array([
             DistanceComputer.compute_euclidean(mu_ref=baseline_mean, mu_target=clean_profiles[i])
             for i in range(len(clean_profiles))
@@ -624,7 +642,7 @@ for frame_file in frame_files:
         ]
         _cs_mahal_gmm = np.array([r.distance for r in _clean_gmm])
 
-    scores_mdx = None
+    scores_mdx = _cs_mdx = None
     if mdx is not None:
         scores_list = []
         for i in range(len(test_data["frame_idx"])):
@@ -638,6 +656,22 @@ for frame_file in frame_files:
                 feat_vec = features[0].cpu().detach().numpy()
             scores_list.append(mdx.score(feat_vec))
         scores_mdx = np.array(scores_list)
+
+        # Clean MDX scores need only the clean RGB (local forward pass), so they
+        # are available even when clean ATOMs profiles were never computed.
+        if clean_data is not None:
+            _clean_scores_list = []
+            for i in range(len(test_data["frame_idx"])):
+                if conf.AGENT == "TFV6":
+                    wide_t   = torch.from_numpy(clean_data["wide_rgb"][i]).unsqueeze(0)
+                    feat_vec = lrp.get_backbone_features(wide_t)
+                else:
+                    features = model.get_features(torch.from_numpy(clean_data["wide_rgb"][i]),
+                                                  torch.from_numpy(clean_data["narr_rgb"][i]),
+                                                  clean_data["speed"][i])
+                    feat_vec = features[0].cpu().detach().numpy()
+                _clean_scores_list.append(mdx.score(feat_vec))
+            _cs_mdx = np.array(_clean_scores_list)
 
     # --- Plot ---
     live_pert_dir = Path(conf.RESULTS_DIR) / "live_perturbation" / LIVE_PERT_NAME
@@ -664,9 +698,9 @@ for frame_file in frame_files:
     plot_distance_over_time(scores_jsd_single,    _plot_label, "jsd",                OUT_DIR, _injection_frame, dist_clean=_cs_jsd         if _clean_overlay else None)
     plot_distance_over_time(scores_knn_single,    _plot_label, "knn",                OUT_DIR, _injection_frame, dist_clean=_cs_knn         if _clean_overlay else None)
     if scores_entropy is not None:
-        plot_distance_over_time(scores_entropy, _plot_label, "PEOC", OUT_DIR, _injection_frame)
+        plot_distance_over_time(scores_entropy, _plot_label, "PEOC", OUT_DIR, _injection_frame, dist_clean=_cs_entropy if _clean_overlay else None)
     if scores_mdx is not None:
-        plot_distance_over_time(scores_mdx, _plot_label, "mdx", OUT_DIR, _injection_frame)
+        plot_distance_over_time(scores_mdx, _plot_label, "mdx", OUT_DIR, _injection_frame, dist_clean=_cs_mdx if _clean_overlay else None)
 
 print(f"\nAll variants processed. Figures in {OUT_DIR}")
 

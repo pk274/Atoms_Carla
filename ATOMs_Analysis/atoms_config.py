@@ -43,7 +43,7 @@ class ExperimentConfig:
 
     RECOMPUTE_BASELINE = False
     RECOMPUTE_TEST_ATOMS = False
-    REAPPLY_PERTURBATIONS = True
+    REAPPLY_PERTURBATIONS = False
     RECOMPUTE_MDX_BASELINE      = False
     RECOMPUTE_MDX_V2_BASELINE   = False    # set False after first successful run
     RECOMPUTE_MDX_TEST_SCORES   = False    # set True to re-extract backbone features on test set

@@ -1171,16 +1171,11 @@ print("[Step 10f] Generating figures...")
 print("[Step 11] Scoring test profiles...")
 
 # --- 9a: Single-Gaussian Mahalanobis (ATOMs) ---
-# compute_mahalanobis() takes (mu_ref, cov_ref, mu_target) — called once per frame.
-scores_mahal_single = np.array([
-    DistanceComputer.compute_mahalanobis(
-        mu_ref         = baseline_mean,
-        cov_ref        = baseline_cov,
-        mu_target      = test_profiles[i],
-        regularization = conf.MAHAL_RIDGE,
-    )
-    for i in range(len(test_profiles))
-])
+# Score with the fitted MahalanobisDetector so the single-Gaussian detector
+# uses the same shrinkage-regularised covariance as every GMM detector
+# (uniform-shrinkage fix, 2026-07-16 — previously this scored with the raw
+# baseline_cov from the npz, i.e. without shrinkage).
+scores_mahal_single = mahal_detector.score_batch(test_profiles)
 
 scores_euclid_single = np.array([
     DistanceComputer.compute_euclidean(
@@ -1659,6 +1654,13 @@ all_results = [
     ] if r is not None
 ]
 evaluator.compare(all_results)
+
+# Remove results JSONs from previous runs first: several filenames embed
+# run-specific values (GMM K, val-selected kNN k), so stale files from other
+# sweep runs would otherwise accumulate in this scratch dir and get copied
+# into every "<K> clusters/" snapshot by sweep_clusters.py.
+for _old in OUT_DIR.glob("results_*.json"):
+    _old.unlink()
 
 # Save each result as JSON
 for res in all_results:

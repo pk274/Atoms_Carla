@@ -1222,3 +1222,46 @@ rather than something to keep pushing the intensity to fix.
 **Consequence.** Same as the `camera_loss` change above — invalidates
 existing `test_labeled.npz`/`val_labeled.npz` and downstream `gaussian_noise`
 profiles/results, folded into the same already-planned recompute.
+
+## Uniform shrinkage: predict() and single-Gaussian scoring now use the shrunk covariances (2026-07-16)
+
+**Problem.** The shrinkage regularisation (`SHRINKAGE_ALPHA = 0.01`, applied
+at fit time) was used inconsistently across the pipeline. Two paths silently
+used the *raw* (unshrunk) covariances:
+
+1. **`GMMClustering.predict()/predict_batch()/predict_proba()` after
+   `fit()`** — `fit()` shrank only the exposed `self.covariances_` (what
+   `score()` uses) but left the internal sklearn `_gmm` with its raw EM
+   covariances, so cluster *membership* was decided without shrinkage. Worse,
+   `load()` reconstructed the internal predictor *from* the shrunk
+   covariances, so a fitted and a reloaded model predicted **different
+   labels** for the same data (measured on the alt split, K=8: cluster 2 had
+   233 members after fit but 96 after save/load). Baseline cluster labels
+   feed the cluster visualizations, per-cluster attention stats, and the
+   kNN-GMM baseline pools — so the kNN-GMM AUC depended on this.
+2. **Single-Gaussian Mahalanobis test scoring** (`run_analysis.py` step 9a,
+   and the analogous block in `run_online_analysis.py`) — scored with the raw
+   `baseline_2.npz` mean/cov + `MAHAL_RIDGE` instead of the fitted
+   `MahalanobisDetector` (whose covariance is shrunk). The shrunk detector
+   was fit, thresholded and saved but never used for the test scores. All
+   GMM detectors, by contrast, scored with the shrunk `gmm.covariances_`.
+
+**Decision.** Use the shrunk covariances uniformly everywhere:
+
+- `GMMClustering.fit()` now rebuilds the internal sklearn predictor from the
+  shrunk parameters (same `_reconstruct_gmm()` path as `load()`), so
+  predict/score are consistent with each other and across fit/save/load.
+  `_reconstruct_gmm()` now always declares `covariance_type="full"` because
+  `self.covariances_` is stored expanded to full `[K, C, C]` regardless of
+  the fit-time type (this also fixes a latent load bug for non-full types).
+- `run_analysis.py` step 9a and `run_online_analysis.py` score the
+  single-Gaussian detector via `mahal_detector.score_batch()` (shrunk cov).
+
+The `MAHAL_RIDGE = 1e-6` score-time ridge is unaffected — it is a numerical
+stabiliser, not a modelling choice, and is applied identically everywhere.
+
+**Effect size.** Single-Gaussian Mahalanobis test AUC on the alt split moves
+from 0.563 (raw cov) to 0.573 (shrunk cov); cluster memberships shift for a
+few % of frames near component boundaries. All sweep results were recomputed
+after this change (`sweep_clusters.py`, alt split, mode 2); results produced
+before 2026-07-16 mix the two conventions as described above.

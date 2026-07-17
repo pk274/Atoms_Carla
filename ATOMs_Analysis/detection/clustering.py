@@ -123,11 +123,21 @@ class GMMClustering:
                 self.covariances_[k], self.shrinkage_alpha
             )
 
+        log_likelihood = self._gmm.lower_bound_
+
+        # Rebuild the internal sklearn predictor from the SHRUNK parameters so
+        # predict()/predict_proba() use the same covariances as score().
+        # Before 2026-07-16 fit() predicted with the raw EM covariances while
+        # load() predicted with the shrunk ones — cluster memberships differed
+        # between a fitted and a reloaded model (uniform-shrinkage fix, see
+        # docs/design_decisions.md).
+        self._reconstruct_gmm()
+
         self._fitted = True
         print(
             f"[GMMClustering] Fitted {self.n_components} components on "
             f"{n_samples} samples.  "
-            f"Log-likelihood: {self._gmm.lower_bound_:.4f}"
+            f"Log-likelihood: {log_likelihood:.4f}"
         )
         return self
 
@@ -341,16 +351,18 @@ class GMMClustering:
         return full
 
     def _reconstruct_gmm(self):
-        """Reconstruct a minimal sklearn GaussianMixture for prediction only."""
+        """Reconstruct a minimal sklearn GaussianMixture for prediction only.
+
+        Always declared covariance_type="full": self.covariances_ is stored
+        expanded to full [K, C, C] regardless of the fit-time covariance_type,
+        and these shrunk matrices are exactly what score() uses — the internal
+        predictor must match them.
+        """
         from sklearn.mixture import GaussianMixture
         self._gmm = GaussianMixture(
             n_components    = self.n_components,
-            covariance_type = self.covariance_type,
+            covariance_type = "full",
         )
-        # Manually inject fitted parameters
-        self._gmm.means_              = self.means_
-        self._gmm.weights_            = self.weights_
-        self._gmm.covariances_        = self.covariances_
         # sklearn needs precisions_chol for predict; refit is cleaner
         # We do a dummy fit on the means themselves to initialise internals,
         # then overwrite.  Not elegant but avoids reimplementing sklearn internals.
@@ -361,7 +373,7 @@ class GMMClustering:
         # Recompute precision Cholesky as sklearn does internally
         from sklearn.mixture._gaussian_mixture import _compute_precision_cholesky
         self._gmm.precisions_cholesky_ = _compute_precision_cholesky(
-            self.covariances_, self.covariance_type
+            self.covariances_, "full"
         )
 
     def _check_fitted(self):

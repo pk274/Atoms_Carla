@@ -257,8 +257,13 @@ data/
       test_logits_1.npy      # Per-frame action logits (WOR, mode 1)
       test_logits_2.npy      # Per-frame action logits (WOR, mode 2)
       live_pert/<pert>/
-        live_pert_profiles_1.npy
-        live_pert_profiles_2.npy
+        live_pert_profiles_<variant>_<mode>.npy          # perturbed-run ATOMs profiles
+        live_pert_profiles_<variant>_clean_<mode>.npy    # clean-RGB counterpart (overlay line)
+        live_pert_speed_logits_<variant>_<mode>.npy      # TFV6 8-bin speed logits → PEOC
+        live_pert_speed_logits_<variant>_clean_<mode>.npy
+        live_pert_mdx_scores_<variant>.npy               # cached MDX scores (cache_live_mdx_scores.py;
+        live_pert_mdx_scores_<variant>_clean.npy         #   no mode suffix — MDX is mode-independent)
+        # WOR uses live_pert_action_logits_* instead of speed logits
   results/
     atoms_analysis/          # All output figures and JSON results
       trajectory_analysis/   # Displacement/trajectory figures
@@ -337,6 +342,45 @@ from PCLA import location_to_waypoint, route_maker
 waypoints = location_to_waypoint(client, startLoc, endLoc)
 route_maker(waypoints, "my_route.xml")
 ```
+
+---
+
+## Thesis Figures
+
+Final thesis-quality figures are produced by `make_thesis_figures.py` (repo root)
+and written to `thesis_figures/` as `.pdf` + `.png`. The visual style is shared
+with the Atari/ATOMs chapter and defined by `thesis_style.py` (rcParams, CVD-safe
+metric palette, save helper) with the full written spec in
+`documents/14_thesis_figure_style.md` — no titles, one legend/colorbar per figure,
+serif fonts sized for placement at exactly `\textwidth` (6.3 in). Follow that spec
+for any new thesis figure; exploratory pipeline plots (`visualization_carla.py` /
+`viz_config.py`) are unaffected.
+
+Current figures (alternative split, TFV6 mode 2, val-selected K=8): GMM AUROC vs
+K sweep, baseline PCA (by run vs by GMM cluster), score distributions of the two
+best GMM detectors (Mahalanobis-GMM vs kNN-GMM), per-perturbation AUROC bars, a
+GMM-vs-single parity scatter, three cluster-attention figures (per-cluster
+bar grid, the same grid with representative frames, and the all-clusters grouped
+bars), and three live-perturbation score-trace figures (Mahalanobis-GMM | MDX |
+PEOC per panel; one variant each of brightness_scale / gaussian_noise / pgd —
+MDX scores must be pre-cached once via `cache_live_mdx_scores.py`, which needs
+the `PCLA` env with torch/timm). The per-perturbation bar chart also carries
+plain (non-GMM) kNN as an outlined bar — kNN is the one detector where
+cluster-restricted pools are conceptually questionable. Score arrays are
+recomputed from saved detector parameters; the script
+asserts the recomputed AUCs match the stored results JSONs. Since the
+**uniform-shrinkage fix (2026-07-16**, see `docs/design_decisions.md`), the
+pipeline uses the shrinkage-regularised covariances everywhere — GMM scoring,
+GMM cluster prediction, and single-Gaussian Mahalanobis scoring — so the
+figure script simply reuses the stored `gmm.npz`/`mahal_detector.npz`
+parameters (results computed before that date mixed shrunk and raw
+covariances and do not reproduce from the stored parameters alone). Note the
+summary.json test AUROCs (and hence the AUROC-vs-K figure) include
+gaussian-noise frames as OOD; only the val-side `__val_auc_*__` K-selection
+metrics exclude them. Runs in either conda env (`PCLA`, numpy 1.x, or
+`atoms3`, numpy 2.x): a shim in the script aliases `numpy._core` →
+`numpy.core` so the numpy-2-pickled object arrays in the alt-split npz files
+load under numpy 1.x.
 
 ---
 
