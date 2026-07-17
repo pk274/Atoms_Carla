@@ -48,6 +48,15 @@ Figures written to `thesis_figures/` (each as .pdf + .png):
        perturbation-onset frame marked.  MDX scores must be cached first via
        cache_live_mdx_scores.py (needs torch/timm); everything else loads
        from the cached live_pert arrays.
+  12. auroc_val_test_vs_K
+       K-selection view: mean GMM-detector AUROC on the validation set (the
+       selection criterion) as a solid line, test-set counterpart dotted;
+       BOTH exclude gaussian-noise frames so the comparison is
+       like-for-like; the selected K=8 marked.
+  13. knn_k_selection
+       Validation AUROC vs neighbour count k (full val set, as used by the
+       pipeline's k selection) for single kNN and kNN-GMM; the selected k of
+       each variant is circled.
 
 Run with any env that has numpy / matplotlib / sklearn — both conda `PCLA`
 (numpy 1.x) and `atoms3` (numpy 2.x) work; a shim below handles the
@@ -107,6 +116,22 @@ OUT_DIR      = ROOT / "thesis_figures"
 # GMM detector families (canonical thesis_style keys) -> matcher on the raw
 # summary.json / results_per_perturbation.json detector names.
 GMM_FAMILIES = ["mahalanobis", "euclidean", "knn", "jsd"]
+
+# Lighter tint of the kNN green for the single (non-GMM) kNN variant — same
+# hue as METRIC_COLORS["knn"], lightness-only contrast (survives CVD/print).
+KNN_SINGLE_COLOR = "#66bb6a"
+
+# Cluster palette: 8 categorical colors that avoid the metric hue families
+# (red, blue, green, purple, rose, gold) so cluster figures are never read
+# as detector figures.  Four free hue families (orange, cyan, magenta/pink,
+# brown) in dark+light steps, plus gray; the largest clusters (1, 3, 5, 7)
+# get the strongest hues.  Shared by the PCA scatter and all attention bars.
+CLUSTER_COLORS = ["#e6851f", "#00acc1", "#f0a3d3", "#6d4c41",
+                  "#f7b565", "#d63fa6", "#7fd6e4", "#8d8d8d"]
+
+
+def cluster_color(k: int) -> str:
+    return CLUSTER_COLORS[k % len(CLUSTER_COLORS)]
 
 PERT_LABELS = {                       # display names for perturbation types
     "brightness_scale": "Brightness",
@@ -352,19 +377,18 @@ def fig_pca_run_vs_gmm() -> None:
                    rasterized=True)
 
     K = len(weights)
-    clus_cmap = plt.get_cmap("tab10")
     axs[1].scatter(proj[:, 0], proj[:, 1],
-                   c=clus_cmap(labels % 10), s=6, alpha=0.5, linewidths=0,
-                   rasterized=True)
+                   c=[cluster_color(l) for l in labels], s=6, alpha=0.5,
+                   linewidths=0, rasterized=True)
     for k in range(K):
-        axs[1].scatter(*cent[k], marker="*", s=120, facecolor=clus_cmap(k % 10),
+        axs[1].scatter(*cent[k], marker="*", s=120, facecolor=cluster_color(k),
                        edgecolor="black", linewidths=0.6, zorder=3)
 
     fig.supxlabel(f"PC1 ({var[0]:.1f} %)")
     fig.supylabel(f"PC2 ({var[1]:.1f} %)")
 
     handles = [Line2D([], [], marker="o", linestyle="none", markersize=5,
-                      markerfacecolor=clus_cmap(k % 10), markeredgewidth=0,
+                      markerfacecolor=cluster_color(k), markeredgewidth=0,
                       label=str(k)) for k in range(K)]
     handles.append(Line2D([], [], marker="*", linestyle="none", markersize=9,
                           markerfacecolor="0.85", markeredgecolor="0.15",
@@ -487,8 +511,8 @@ def fig_auroc_per_perturbation() -> None:
 
     # "knn_single" = plain kNN over the full baseline (no clustering) — kNN is
     # the one detector for which the GMM pooling is conceptually questionable,
-    # so its single variant is reported alongside.  Drawn outlined instead of
-    # filled to mark it as the non-GMM variant.
+    # so its single variant is reported alongside, in a lighter tint of the
+    # kNN green.
     detectors = ["mahalanobis", "euclidean", "knn", "knn_single", "jsd", "mdx", "peoc"]
     hatches = {"mdx": "///", "peoc": "xxx"}   # bar analogue of the dashed lines
 
@@ -511,8 +535,8 @@ def fig_auroc_per_perturbation() -> None:
         ys = np.array([value(src, fam) for src in sources])
         if fam == "knn_single":
             ax.bar(xs, ys - 0.5, bottom=0.5, width=width * 0.92,
-                   facecolor="none", edgecolor=METRIC_COLORS["knn"],
-                   linewidth=1.0)
+                   facecolor=KNN_SINGLE_COLOR, edgecolor="white",
+                   linewidth=0.0)
         else:
             ax.bar(xs, ys - 0.5, bottom=0.5, width=width * 0.92,
                    facecolor=METRIC_COLORS[fam], edgecolor="white",
@@ -532,8 +556,8 @@ def fig_auroc_per_perturbation() -> None:
     handles = []
     for f in detectors:
         if f == "knn_single":
-            handles.append(Patch(facecolor="none", edgecolor=METRIC_COLORS["knn"],
-                                 linewidth=1.0,
+            handles.append(Patch(facecolor=KNN_SINGLE_COLOR, edgecolor="white",
+                                 linewidth=0.0,
                                  label=METRIC_LEGEND["knn"] + " (single)"))
         else:
             handles.append(Patch(facecolor=METRIC_COLORS[f], edgecolor="white",
@@ -596,9 +620,6 @@ def fig_gmm_vs_single_parity() -> None:
 # --------------------------------------------------------------------------- #
 # Figures 6-8 — per-cluster ATOMs attention profiles
 # --------------------------------------------------------------------------- #
-CLUSTER_CMAP = plt.get_cmap("tab10")   # cluster k -> tab10(k), as in figure 2
-
-
 def cluster_attention_stats():
     """Baseline series, GMM cluster labels, profile names and the shared
     class display order (descending by max mean attention across clusters —
@@ -621,7 +642,7 @@ def _cluster_bars(ax, series, labels, k, order_asc, with_whiskers=True):
     xerr = np.vstack([np.clip(vals - lo[order_asc], 0, None),
                       np.clip(hi[order_asc] - vals, 0, None)]) if with_whiskers else None
     ax.barh(np.arange(len(order_asc)), vals, height=0.72,
-            color=CLUSTER_CMAP(k % 10), linewidth=0,
+            color=cluster_color(k), linewidth=0,
             xerr=xerr, error_kw=dict(ecolor="0.35", elinewidth=0.8,
                                      capsize=2.0, capthick=0.8))
     ax.text(0.97, 0.05, f"Cluster {k} (n = {(labels == k).sum()})",
@@ -707,19 +728,162 @@ def fig_attention_by_cluster() -> None:
     width = 0.8 / K
     for k in range(K):
         ax.bar(x0 + (k - (K - 1) / 2) * width, cluster_mean[k][order_desc],
-               width=width * 0.92, color=CLUSTER_CMAP(k % 10), linewidth=0)
+               width=width * 0.92, color=cluster_color(k), linewidth=0)
 
     ax.set_xticks(x0)
     ax.set_xticklabels([names[j] for j in order_desc], rotation=30, ha="right")
     ax.set_ylabel("Normalized attention")
     ax.grid(axis="x", visible=False)
 
-    handles = [Patch(facecolor=CLUSTER_CMAP(k % 10),
+    handles = [Patch(facecolor=cluster_color(k),
                      label=f"Cluster {k} (n = {(labels == k).sum()})")
                for k in range(K)]
     _fig_legend(fig, handles, ncol=4)
 
     save_figure(fig, OUT_DIR, "attention_by_cluster")
+
+
+# --------------------------------------------------------------------------- #
+# Figure 12 — K selection: mean GMM AUROC on val (criterion) vs test
+# --------------------------------------------------------------------------- #
+def fig_val_test_auc_vs_k() -> None:
+    """Mean GMM AUROC vs K: validation (the selection criterion) vs test.
+
+    Both curves EXCLUDE gaussian-noise frames: the val criterion
+    (__val_auc_gmm_avg__) is defined ex-GN, so the test counterpart is
+    recomputed here on the same footing — pooled AUC over clean + the three
+    remaining perturbations, per detector, averaged.  kNN-GMM uses each K's
+    val-selected k (parsed from summary.json)."""
+    from sklearn.metrics import roc_auc_score
+    from ATOMs_Analysis.utils.distance_computer import DistanceComputer as DC
+
+    sweep = load_sweep()
+    Ks = sorted(set().union(*[set(v) for v in sweep.values()]))
+
+    profiles = np.load(TEST_DIR / "attention" / "test_profiles_2.npy").astype(np.float64)
+    tl = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)
+    labels = tl["label"].astype(int)
+    mask = tl["perturbation"].astype(str) != "gaussian_noise"
+    series = load_baseline_series()
+
+    val_avg, test_avg = [], []
+    for K in Ks:
+        run = RESULTS_ROOT / f"{K} clusters" / "atoms_analysis_mode_2"
+        summ = json.loads((run / "summary.json").read_text())
+        val_avg.append(summ["__val_auc_gmm_avg__"])
+
+        g = np.load(run / "gmm.npz", allow_pickle=True)
+        means = g["means"].astype(np.float64)
+        covs = g["covariances"].astype(np.float64)
+        weights = g["weights"].astype(np.float64)
+
+        comp_d = np.stack([mahalanobis_batch(profiles, means[c], covs[c])
+                           for c in range(len(weights))])
+        route = comp_d.argmin(axis=0)
+        s_mahal = comp_d.min(axis=0)
+        s_euclid = np.linalg.norm(profiles - means[route], axis=1)
+        s_jsd = np.array([DC.compute_jsd(means[route[i]], profiles[i])
+                          for i in range(len(profiles))])
+        knn_key = next(k for k in summ if "k-NN-GMM" in k)
+        k_val = int(re.search(r"k=(\d+)", knn_key).group(1))
+        s_knn = knn_gmm_scores(profiles, series, means, covs, weights, k=k_val)
+
+        aucs = [roc_auc_score(labels[mask], s[mask])
+                for s in (s_mahal, s_euclid, s_jsd, s_knn)]
+        test_avg.append(float(np.mean(aucs)))
+        # sanity: incl-GN pooled mahal AUC must match the stored summary value
+        auc_all = roc_auc_score(labels, s_mahal)
+        stored = next(v["auc"] for key, v in summ.items()
+                      if isinstance(v, dict) and "Mahalanobis (GMM" in key)
+        if abs(auc_all - stored) > 1e-3:
+            raise RuntimeError(f"K={K}: mahal-GMM {auc_all:.4f} != stored {stored:.4f}")
+
+    print(f"  [info] K={SELECTED_K}: val ex-GN {val_avg[Ks.index(SELECTED_K)]:.4f}  "
+          f"test ex-GN {test_avg[Ks.index(SELECTED_K)]:.4f}")
+
+    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    lo = min(min(val_avg), min(test_avg)) - 0.012
+    hi = max(max(val_avg), max(test_avg)) + 0.012
+    ax.axvline(SELECTED_K, color="0.78", linewidth=0.8,
+               linestyle=(0, (2, 2)), zorder=1)
+    ax.plot(Ks, val_avg, color="0.15", linewidth=1.9,
+            marker="o", markersize=3.4, markeredgewidth=0, zorder=3)
+    ax.plot(Ks, test_avg, color="0.15", linewidth=1.25,
+            linestyle=(0, (1, 1.6)), marker="o", markersize=2.6,
+            markeredgewidth=0, zorder=2)
+    ax.text(SELECTED_K + 0.25, lo + 0.003, f"$K={SELECTED_K}$",
+            fontsize=7.5, color=MUTED, ha="left", va="bottom")
+
+    ax.set_xlabel("GMM components $K$")
+    ax.set_ylabel("Mean AUROC (GMM detectors)")
+    ax.set_xticks(range(2, 21, 2))
+    ax.set_xlim(1.4, 20.6)
+    ax.set_ylim(lo, hi)
+
+    handles = [
+        Line2D([], [], color="0.15", linewidth=1.9, label="validation"),
+        Line2D([], [], color="0.15", linewidth=1.25, linestyle=(0, (1, 1.6)),
+               label="test"),
+    ]
+    _fig_legend(fig, handles, ncol=2)
+
+    save_figure(fig, OUT_DIR, "auroc_val_test_vs_K")
+
+
+# --------------------------------------------------------------------------- #
+# Figure 13 — kNN neighbour-count selection on the validation set
+# --------------------------------------------------------------------------- #
+def fig_knn_k_selection() -> None:
+    from scipy.spatial.distance import cdist
+    from sklearn.metrics import roc_auc_score
+
+    KS_NN = [1, 5, 10, 25, 50, 100, 250]
+    series = load_baseline_series()
+    vprof = np.load(ROOT / "data" / "TFV6" / "val_data_alt" / "attention"
+                    / "val_profiles_2.npy").astype(np.float64)
+    # k is selected on the FULL val set (incl. gaussian noise), exactly as
+    # run_analysis.py does for results_knn(_gmm)_val_by_k.
+    vlab = np.load(ROOT / "data" / "TFV6" / "val_data_alt"
+                   / "val_labeled.npz")["label"].astype(int)
+
+    def norm(a):
+        return a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
+
+    d_single = np.sort(cdist(norm(vprof), norm(series)), axis=1)
+    auc_single = [roc_auc_score(vlab, d_single[:, k - 1]) for k in KS_NN]
+
+    means, covs, weights, _ = load_gmm()
+    auc_gmm = [roc_auc_score(vlab, knn_gmm_scores(vprof, series, means, covs,
+                                                  weights, k=k))
+               for k in KS_NN]
+
+    fig, ax = plt.subplots(figsize=(4.6, 2.8))
+    for aucs, color in ((auc_single, KNN_SINGLE_COLOR),
+                        (auc_gmm, METRIC_COLORS["knn"])):
+        ax.plot(KS_NN, aucs, color=color, linewidth=1.25, alpha=0.95,
+                marker="o", markersize=3.0, markeredgewidth=0)
+        k_best = KS_NN[int(np.argmax(aucs))]
+        ax.scatter([k_best], [max(aucs)], s=64, facecolor="none",
+                   edgecolor=color, linewidths=1.1, zorder=4)
+        print(f"  [info] val-selected k = {k_best} "
+              f"({'single' if color == KNN_SINGLE_COLOR else 'GMM'})")
+
+    ax.set_xscale("log")
+    ax.set_xticks(KS_NN)
+    ax.set_xticklabels([str(k) for k in KS_NN])
+    ax.minorticks_off()
+    ax.set_xlabel("Neighbour count $k$")
+    ax.set_ylabel("Validation AUROC")
+
+    handles = [
+        Line2D([], [], color=KNN_SINGLE_COLOR, linewidth=1.6,
+               label=METRIC_LEGEND["knn"] + " (single)"),
+        Line2D([], [], color=METRIC_COLORS["knn"], linewidth=1.6,
+               label=METRIC_LEGEND["knn"] + " (GMM)"),
+    ]
+    _fig_legend(fig, handles, ncol=2)
+
+    save_figure(fig, OUT_DIR, "knn_k_selection")
 
 
 # --------------------------------------------------------------------------- #
@@ -798,25 +962,29 @@ def main() -> None:
     apply_thesis_style()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("[1/11] GMM AUROC vs K ...")
+    print("[1/13] GMM AUROC vs K ...")
     fig_gmm_auc_vs_k()
-    print("[2/11] Baseline PCA (run vs GMM) ...")
+    print("[2/13] Baseline PCA (run vs GMM) ...")
     fig_pca_run_vs_gmm()
-    print("[3/11] Score distributions (Mahalanobis-GMM vs single kNN) ...")
+    print("[3/13] Score distributions (Mahalanobis-GMM vs single kNN) ...")
     fig_score_distributions()
-    print("[4/11] AUROC per perturbation ...")
+    print("[4/13] AUROC per perturbation ...")
     fig_auroc_per_perturbation()
-    print("[5/11] GMM vs single-Gaussian parity ...")
+    print("[5/13] GMM vs single-Gaussian parity ...")
     fig_gmm_vs_single_parity()
-    print("[6/11] Attention per cluster ...")
+    print("[6/13] Attention per cluster ...")
     fig_attention_per_cluster()
-    print("[7/11] Attention per cluster with representative frames ...")
+    print("[7/13] Attention per cluster with representative frames ...")
     fig_attention_per_cluster_frames()
-    print("[8/11] Attention by cluster (single plot) ...")
+    print("[8/13] Attention by cluster (single plot) ...")
     fig_attention_by_cluster()
     for i, pert in enumerate(LIVE_VARIANTS, start=9):
-        print(f"[{i}/11] Live scores: {pert} ...")
+        print(f"[{i}/13] Live scores: {pert} ...")
         fig_live_scores(pert)
+    print("[12/13] Val vs test mean AUROC over K ...")
+    fig_val_test_auc_vs_k()
+    print("[13/13] kNN k selection on val ...")
+    fig_knn_k_selection()
     print(f"\nDone -> {OUT_DIR}")
 
 

@@ -25,7 +25,7 @@ class ExperimentConfig:
     TESTSET_RECORDING_MODE = False
     LIVE_PERTURBATION_RECORDING_MODE = True
 
-    NUM_GMM_CLUSTERS = 9        # None for automatic BIC selection; overridden by --gmm-k CLI arg
+    NUM_GMM_CLUSTERS = 8        # None for automatic BIC selection; overridden by --gmm-k CLI arg
 
     MODE_ANALYSIS = 2
     FC_RELEVANCE_FILTER = 0.9       # 0.9

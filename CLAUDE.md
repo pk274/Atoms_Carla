@@ -361,12 +361,17 @@ K sweep, baseline PCA (by run vs by GMM cluster), score distributions of the two
 best GMM detectors (Mahalanobis-GMM vs kNN-GMM), per-perturbation AUROC bars, a
 GMM-vs-single parity scatter, three cluster-attention figures (per-cluster
 bar grid, the same grid with representative frames, and the all-clusters grouped
-bars), and three live-perturbation score-trace figures (Mahalanobis-GMM | MDX |
+bars), three live-perturbation score-trace figures (Mahalanobis-GMM | MDX |
 PEOC per panel; one variant each of brightness_scale / gaussian_noise / pgd —
 MDX scores must be pre-cached once via `cache_live_mdx_scores.py`, which needs
-the `PCLA` env with torch/timm). The per-perturbation bar chart also carries
-plain (non-GMM) kNN as an outlined bar — kNN is the one detector where
-cluster-restricted pools are conceptually questionable. Score arrays are
+the `PCLA` env with torch/timm), a K-selection view (val mean GMM AUROC solid
+vs test dotted), and a kNN k-selection figure (val AUROC vs k, single vs GMM).
+The per-perturbation bar chart also carries plain (non-GMM) kNN in a lighter
+green tint (`KNN_SINGLE_COLOR`) — kNN is the one detector where
+cluster-restricted pools are conceptually questionable. Cluster figures (PCA +
+attention bars) share `CLUSTER_COLORS`, eight hues deliberately outside the
+metric families (orange/cyan/magenta/brown/gray) so cluster and detector
+figures can't be confused. Score arrays are
 recomputed from saved detector parameters; the script
 asserts the recomputed AUCs match the stored results JSONs. Since the
 **uniform-shrinkage fix (2026-07-16**, see `docs/design_decisions.md`), the
