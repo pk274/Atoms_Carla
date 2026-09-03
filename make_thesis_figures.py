@@ -7,7 +7,12 @@ Recreates the key result figures of the alternative-split TFV6 experiment
 `documents/14_thesis_figure_style.md` / `thesis_style.py`, so the CARLA chapter
 matches the ATOMs (Atari) chapter visually.
 
-Figures written to `thesis_figures/` (each as .pdf + .png):
+Every figure also writes a companion `<name>.txt` beside it (see
+figure_notes.py) holding the exact numbers behind every visual feature the
+caption or the prose would describe, so the chapter can be drafted off one
+file instead of read off a plot.
+
+Figures written to `thesis_figures/` (each as .pdf + .png + .txt):
 
   1. gmm_auc_vs_K
        Test AUROC of every GMM detector vs cluster count K, plus their mean;
@@ -91,6 +96,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
+from figure_notes import FigureNotes
 from thesis_style import (
     METRIC_AXIS,
     METRIC_COLORS,
@@ -133,6 +139,49 @@ CLUSTER_COLORS = ["#e6851f", "#00acc1", "#f0a3d3", "#6d4c41",
 def cluster_color(k: int) -> str:
     return CLUSTER_COLORS[k % len(CLUSTER_COLORS)]
 
+# Perturbation shades, used only where the four perturbations subdivide one
+# population (the stacked score histogram).  Deliberately NOT a fourth
+# categorical family: the metric and cluster palettes have taken every free hue,
+# and the four segments here are subdivisions of "perturbed", which is already
+# drawn in the Mahalanobis red.  A dark-to-light ramp within that red keeps the
+# stack readable in colour and in grayscale, which a categorical set would not.
+# The shade order is PERT_ORDER, which coincides with the AUROC order.
+PERT_COLORS = {
+    "brightness_scale": "#8c1515",
+    "camera_loss":      "#c0392b",
+    "gaussian_noise":   "#e08e86",
+    "pgd":              "#f6d3cf",
+}
+
+
+def run_colors(n: int) -> list[tuple[float, float, float]]:
+    """`n` genuinely distinct colours, one per collection run.
+
+    A categorical palette cannot do this at n = 190, and the earlier figure used
+    tab20 modulo 20, so ten runs shared each colour.  Golden-angle hue rotation
+    spreads the hues as evenly as possible for any n, and cycling saturation and
+    value separates neighbouring indices further.  Uniqueness is asserted at
+    8-bit, which is what actually lands in the PNG.
+
+    The colours are unique, not individually identifiable: at 190 levels no
+    reader can look up a run.  The panel's claim is that runs interleave rather
+    than separate, and the per-component route counts in the sidecar are what
+    carry it quantitatively.
+    """
+    import colorsys
+    golden = 0.6180339887498949
+    cols = []
+    for i in range(n):
+        h = (i * golden) % 1.0
+        s = 0.55 + 0.15 * (i % 3)          # 0.55, 0.70, 0.85
+        v = 0.95 - 0.20 * (i % 2)          # 0.95, 0.75
+        cols.append(colorsys.hsv_to_rgb(h, s, v))
+    keys = {tuple(round(c * 255) for c in rgb) for rgb in cols}
+    if len(keys) != n:
+        raise RuntimeError(f"run_colors({n}) produced {len(keys)} distinct 8-bit "
+                           "colours; adjust the saturation/value cycle")
+    return cols
+
 PERT_LABELS = {                       # display names for perturbation types
     "brightness_scale": "Brightness",
     "camera_loss":      "Camera loss",
@@ -140,6 +189,121 @@ PERT_LABELS = {                       # display names for perturbation types
     "pgd":              "PGD",
 }
 PERT_ORDER = ["brightness_scale", "camera_loss", "gaussian_noise", "pgd"]
+
+# TFv6 target-speed bins in m/s (config_training.TrainingConfig.target_speed_classes).
+# The predicted target speed is the two-hot decoding of the softmaxed logits,
+# which is simply the expectation sum(p_i * v_i) (planning_decoder.decode_two_hot).
+SPEED_BINS = np.array([0.0, 4.0, 8.0, 10.0, 13.88888888, 16.0, 17.77777777, 20.0])
+
+# --------------------------------------------------------------------------- #
+# Sidecar helpers (figure_notes.py)
+# --------------------------------------------------------------------------- #
+# Three different aggregations appear across these figures and they are NOT
+# interchangeable.  Every sidecar states which one it is showing, because the
+# same word ("overall", "mean AUROC") is used for all three in the sources.
+AGG_POOLED_TEST = (
+    "pooled AUROC over the whole mixed test set (1000 frames: 200 clean and 200 "
+    "each of brightness / camera loss / Gaussian noise / PGD). Gaussian noise IS "
+    "included.")
+AGG_POOLED_EXGN = (
+    "pooled AUROC over clean + brightness + camera loss + PGD only. "
+    "Gaussian-noise frames are dropped from the pool entirely, not counted as "
+    "negatives (run_analysis.py: they are labelled OOD but the ATOMs signal is "
+    "expected to be clean-like). This is the K-selection criterion.")
+AGG_MEAN_OVER_DETECTORS = (
+    "the plotted mean is the unweighted mean over the FOUR GMM detectors of "
+    "their pooled AUROC. Averaging over detectors is an extra step on top of "
+    "the pooling.")
+
+# Verified identity, checked to machine precision for all ten detector variants
+# on both splits.  Both splits hold exactly 200 clean and 200 of each of the
+# four perturbations, and every perturbation is scored against the same clean
+# frames, so a pooled AUROC decomposes exactly:
+#     AUROC(pooled) = P(perturbed > clean)
+#                   = mean over the equal-sized perturbation groups of their own
+#                     AUROC.
+# So "pooled AUROC on the mixed set" and "unweighted mean of the per-perturbation
+# AUROCs" are the SAME NUMBER here, not two competing aggregations.  What still
+# differs between the figures is WHICH perturbations are in the pool.
+AGG_IDENTITY = (
+    "Because the split holds exactly 200 frames of each perturbation and all of "
+    "them are scored against the same 200 clean frames, a pooled AUROC is "
+    "identically the unweighted mean of the per-perturbation AUROCs in the pool. "
+    "Verified to machine precision for every detector. The two are not competing "
+    "quantities; only the set of perturbations in the pool distinguishes the "
+    "figures.")
+
+
+# Plain-text detector names. METRIC_LEGEND / METRIC_AXIS carry matplotlib
+# mathtext ("$k^\\mathrm{th}$-NN"), which is right on an axis and unreadable in
+# a text file.
+PLAIN_NAME = {
+    "mahalanobis": "Mahalanobis (MD)",
+    "euclidean":   "Euclidean (ED)",
+    "knn":         "k-th-NN",
+    "knn_single":  "k-th-NN (single, no clustering)",
+    "jsd":         "Jensen-Shannon (JSD)",
+    "mdx":         "MDX",
+    "peoc":        "PEOC",
+    "mean":        "Mean over the four detectors",
+}
+
+PLAIN_AXIS = {
+    "mahalanobis": "Mahalanobis distance",
+    "euclidean":   "Euclidean distance",
+    "knn":         "k-th-NN distance",
+    "jsd":         "Jensen-Shannon divergence",
+    "mdx":         "MDX distance",
+    "peoc":        "PEOC entropy",
+}
+
+
+def _note_listing(notes: FigureNotes, label: str, xs, ys,
+                  x_fmt: str = "{:g}", y_fmt: str = "{:.4f}",
+                  per_line: int = 7) -> None:
+    """An explicit x=y listing under `label`, wrapped over several lines.
+    Sweeps are short enough that the reader wants every value, not a summary."""
+    notes.line(f"    {label}:")
+    items = [f"{x_fmt.format(x)}={y_fmt.format(y)}" for x, y in zip(xs, ys)]
+    for i in range(0, len(items), per_line):
+        notes.line("        " + ", ".join(items[i:i + per_line]))
+
+
+def _quantiles(a: np.ndarray) -> dict[str, float]:
+    a = np.asarray(a, float)
+    qs = np.percentile(a, [5, 25, 50, 75, 95, 99])
+    return {"min": float(a.min()), "q05": float(qs[0]), "q25": float(qs[1]),
+            "median": float(qs[2]), "q75": float(qs[3]), "q95": float(qs[4]),
+            "q99": float(qs[5]), "max": float(a.max()), "mean": float(a.mean())}
+
+
+def _note_distribution(notes: FigureNotes, label: str, a: np.ndarray) -> None:
+    q = _quantiles(a)
+    notes.line(f"    {label} (n = {len(a)}):")
+    notes.line("        min {min:.4g}, q05 {q05:.4g}, q25 {q25:.4g}, median "
+               "{median:.4g}, q75 {q75:.4g}, q95 {q95:.4g}, q99 {q99:.4g}, "
+               "max {max:.4g}".format(**q))
+    notes.line(f"        mean {q['mean']:.4g}")
+
+
+def tpr_at_fpr(clean: np.ndarray, pert: np.ndarray, fpr: float) -> tuple[float, float]:
+    """(TPR, threshold) at a target FPR, thresholding at the clean scores'
+    (1 - fpr) quantile.  Higher score = more OOD throughout this script.
+
+    The reason this belongs in every score sidecar: an AUROC of 0.6 says
+    nothing about whether a deployable threshold exists, and the chapter's
+    claim is that the separation lives in the right tail."""
+    thr = float(np.quantile(clean, 1.0 - fpr))
+    return float((pert > thr).mean()), thr
+
+
+def _note_tail(notes: FigureNotes, clean: np.ndarray, pert: np.ndarray,
+               prefix: str = "") -> None:
+    """The operating points a reader can judge: TPR at 5 % and 1 % FPR."""
+    for fpr in (0.05, 0.01):
+        tpr, thr = tpr_at_fpr(clean, pert, fpr)
+        notes.value(f"{prefix}TPR at {fpr:.0%} FPR", tpr,
+                    note=f"threshold {thr:.4g} = clean q{100 * (1 - fpr):.0f}")
 
 
 # --------------------------------------------------------------------------- #
@@ -289,6 +453,25 @@ def gmm_predict(X: np.ndarray, means: np.ndarray, covs: np.ndarray,
     return log_prob.argmax(axis=1)
 
 
+def mean_pixel_intensity() -> np.ndarray:
+    """Mean pixel value of each labelled test frame, cached beside the data.
+
+    The reference point for the obvious objection to the chapter's one positive
+    result: if a perturbation is a global photometric change, a statistic that
+    needs no model at all might detect it just as well.  Reading it out costs a
+    2.6 GB decompression of `wide_rgb`, so the 1000 means are cached and the
+    raw array is touched once."""
+    cache = TEST_DIR / "mean_pixel_intensity_2.npy"
+    if cache.exists():
+        return np.load(cache)
+    d = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)
+    rgb = d["wide_rgb"]
+    mi = rgb.reshape(len(rgb), -1).mean(axis=1)
+    np.save(cache, mi)
+    print(f"  [info] cached mean pixel intensity -> {cache.name}")
+    return mi
+
+
 def roc_auc(scores: np.ndarray, labels: np.ndarray) -> float:
     from sklearn.metrics import roc_auc_score
     return float(roc_auc_score(labels, scores))
@@ -350,6 +533,39 @@ def fig_gmm_auc_vs_k() -> None:
 
     save_figure(fig, OUT_DIR, "gmm_auc_vs_K")
 
+    notes = FigureNotes(
+        "gmm_auc_vs_K",
+        title="Test AUROC of the four GMM attention detectors against the "
+              "component count K",
+        source=str(RESULTS_ROOT) + "/<K> clusters/atoms_analysis_mode_2/summary.json")
+    notes.line(f"    Sweep: {len(Ks)} values of K, {min(Ks)} to {max(Ks)} "
+               f"({', '.join(str(k) for k in Ks)}).")
+    notes.line(f"    AUROC is {AGG_POOLED_TEST}")
+    notes.line(f"    {AGG_MEAN_OVER_DETECTORS}")
+    notes.line("    NOTE the criterion K was actually selected on is a different "
+               "quantity: the validation split, Gaussian noise dropped from the "
+               "pool, then averaged over detectors. See auroc_val_test_vs_K.txt. "
+               "Name the perturbation set before comparing a value from there "
+               "with one from here.")
+    notes.line(f"    The same 1000 test frames are reused at every K, so the "
+               f"{len(Ks)} points are not independent comparisons.")
+    notes.line("    No rise/plateau/shape descriptors: those are defined for a "
+               "smooth sweep over a severity knob, which K is not. The per-K "
+               "listing carries the shape.")
+
+    curves = [(fam, [sweep[fam][K] for K in Ks]) for fam in GMM_FAMILIES]
+    curves.append(("mean", mean))
+    for fam, ys in curves:
+        notes.section(PLAIN_NAME[fam])
+        notes.curve("test AUROC vs K", Ks, ys, rise=False, plateau=False, shape=False)
+        best = int(np.argmax(ys))
+        notes.value("best K", f"{Ks[best]}", note=f"AUROC {ys[best]:.4f}")
+        notes.value(f"at the selected K = {SELECTED_K}", ys[Ks.index(SELECTED_K)])
+        notes.value("spread over the sweep", max(ys) - min(ys),
+                    note="max minus min across K")
+        _note_listing(notes, "per K", Ks, ys)
+    notes.write(OUT_DIR)
+
 
 # --------------------------------------------------------------------------- #
 # Figure 2 — baseline PCA: coloured by run vs by GMM component
@@ -371,9 +587,10 @@ def fig_pca_run_vs_gmm() -> None:
     fig, axs = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 2.9),
                             sharex=True, sharey=True)
 
-    run_cmap = plt.get_cmap("tab20")
+    n_runs = int(run_ids.max()) + 1
+    palette = run_colors(n_runs)
     axs[0].scatter(proj[:, 0], proj[:, 1],
-                   c=run_cmap(run_ids % 20), s=6, alpha=0.5, linewidths=0,
+                   c=[palette[r] for r in run_ids], s=6, alpha=0.5, linewidths=0,
                    rasterized=True)
 
     K = len(weights)
@@ -396,6 +613,68 @@ def fig_pca_run_vs_gmm() -> None:
     _fig_legend(fig, handles, ncol=K + 1)
 
     save_figure(fig, OUT_DIR, "pca_baseline_run_vs_gmm")
+
+    full = PCA(random_state=42).fit(series)
+    evr = full.explained_variance_ratio_ * 100
+
+    notes = FigureNotes(
+        "pca_baseline_run_vs_gmm",
+        title="Baseline attention cloud in its first two principal components, "
+              "coloured by collection run (left) and by GMM component (right)",
+        source=f"{BASELINE_NPZ} + {RUN_DIR}/gmm.npz")
+    notes.line(f"    {len(series)} baseline profiles, {series.shape[1]} classes, "
+               f"from {n_runs} collection runs (routes). This is the TRAINING "
+               f"split only.")
+    notes.line(f"    Left-panel palette: {n_runs} genuinely distinct colours, one "
+               f"per run, from a golden-angle hue rotation with cycling "
+               f"saturation and value; uniqueness is asserted at 8-bit. "
+               f"(The earlier version used tab20 modulo 20, so ten runs shared "
+               f"each colour.) They are unique but NOT individually "
+               f"identifiable at 190 levels: the panel shows that runs "
+               f"interleave rather than separate, and the per-component route "
+               f"counts below are what carry that quantitatively.")
+    notes.line("    Both panels show the same projection; only the colouring differs.")
+
+    notes.section("Explained variance")
+    for i in range(min(6, len(evr))):
+        notes.value(f"PC{i + 1}", evr[i], unit="%",
+                    note=f"cumulative {evr[:i + 1].sum():.2f} %")
+    notes.value("components reaching 99 % of the variance",
+                int(np.searchsorted(np.cumsum(evr), 99.0) + 1),
+                note="the cloud is effectively this low-dimensional")
+    notes.value("variance left in PC5 and above", evr[4:].sum(), unit="%")
+
+    notes.section("Components (right panel)")
+    sizes = np.bincount(labels, minlength=K)
+    notes.value("K", K)
+    notes.counts("component sizes (index = n)",
+                 {str(k): int(sizes[k]) for k in range(K)})
+    notes.value("sizes ascending", ", ".join(str(int(s)) for s in np.sort(sizes)))
+    notes.value("sizes sum", int(sizes.sum()),
+                note="equals the training split, so the baseline is fitted on "
+                     "training frames only")
+    notes.value("largest / smallest", f"{sizes.max()} / {sizes.min()}",
+                note=f"share {sizes.max() / len(series):.1%} / "
+                     f"{sizes.min() / len(series):.1%}")
+    for k in range(K):
+        notes.value(f"component {k} centre (PC1, PC2)",
+                    f"{cent[k, 0]:+.3f}, {cent[k, 1]:+.3f}",
+                    note=f"n = {sizes[k]} ({sizes[k] / len(series):.1%})")
+
+    notes.section("How components relate to runs")
+    notes.line("    Answers the figure's open question: the left and right "
+               "panels are only comparable if a component is not simply a run.")
+    per_cluster = {str(k): int(len(np.unique(run_ids[labels == k])))
+                   for k in range(K)}
+    notes.counts("runs contributing to each component", per_cluster)
+    cpr = np.array([len(np.unique(labels[run_ids == r])) for r in range(n_runs)])
+    notes.value("components visited per run", f"{cpr.min()} to {cpr.max()}",
+                note=f"median {np.median(cpr):.0f}, mean {cpr.mean():.2f}")
+    notes.counts("runs by number of components visited",
+                 {str(c): int(n) for c, n in enumerate(np.bincount(cpr)) if n})
+    notes.value("runs confined to a single component", int((cpr == 1).sum()),
+                note=f"of {n_runs}")
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -431,7 +710,9 @@ def knn_gmm_scores(profiles: np.ndarray, series: np.ndarray, means: np.ndarray,
 
 def fig_score_distributions() -> None:
     profiles = np.load(TEST_DIR / "attention" / "test_profiles_2.npy").astype(np.float64)
-    labels = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)["label"].astype(int)
+    tl = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)
+    labels = tl["label"].astype(int)
+    perts = tl["perturbation"].astype(str)
 
     means, covs, weights, _ = load_gmm()
 
@@ -468,38 +749,124 @@ def fig_score_distributions() -> None:
                 "detector parameters and test profiles are out of sync.")
         print(f"  [check] {name}: recomputed AUC {auc:.4f} == stored {res['auc']:.4f}")
 
+    # One panel, Mahalanobis only (the k-NN panel was dropped on 2026-09-03).
+    # The perturbed histogram is STACKED by perturbation: each bar's total is the
+    # perturbed density in that bin and each segment is one perturbation's share
+    # of it.  The four sets are exactly equal in size, so segment height is
+    # directly comparable across perturbations and across bins.
     clean_face, clean_edge = to_rgba("0.5", 0.45), "0.35"
-    pert_face, pert_edge = to_rgba("#b71c1c", 0.35), "#b71c1c"
 
-    # Different distance units per panel — independent x axes, shared y label.
-    fig, axs = plt.subplots(1, 2, figsize=(TEXT_WIDTH_IN, 2.7))
-    for ax, scores, res, xlabel, box in (
-            (axs[0], s_mahal, res_mahal, METRIC_AXIS["mahalanobis"],
-             f"AUROC = {res_mahal['auc']:.3f}"),
-            (axs[1], s_knn, res_knn, METRIC_AXIS["knn"],
-             f"AUROC = {res_knn['auc']:.3f}\n$k = {best_k}$")):
-        bins = np.linspace(0.0, float(scores.max()) * 1.02, 48)
-        ax.hist(scores[labels == 0], bins=bins, density=True,
-                histtype="stepfilled", facecolor=clean_face,
-                edgecolor=clean_edge, linewidth=0.9)
-        ax.hist(scores[labels == 1], bins=bins, density=True,
-                histtype="stepfilled", facecolor=pert_face,
-                edgecolor=pert_edge, linewidth=0.9)
-        ax.set_xlabel(xlabel)
-        ax.set_xlim(left=0.0)
-        _stats_box(ax, box)
+    bins = np.linspace(0.0, float(s_mahal.max()) * 1.02, 48)
+    width = bins[1] - bins[0]
+    n_pert = int((labels == 1).sum())
 
-    fig.supylabel("Density")
+    fig, ax = plt.subplots(figsize=(5.2, 3.1))
 
-    handles = [
-        Patch(facecolor=clean_face, edgecolor=clean_edge, linewidth=0.9,
-              label="clean"),
-        Patch(facecolor=pert_face, edgecolor=pert_edge, linewidth=0.9,
-              label="perturbed"),
-    ]
-    _fig_legend(fig, handles, ncol=2)
+    ax.hist(s_mahal[labels == 0], bins=bins, density=True,
+            histtype="stepfilled", facecolor=clean_face,
+            edgecolor=clean_edge, linewidth=0.9, zorder=2)
+
+    bottom = np.zeros(len(bins) - 1)
+    centres = 0.5 * (bins[:-1] + bins[1:])
+    for pt in PERT_ORDER:
+        counts, _ = np.histogram(s_mahal[perts == pt], bins=bins)
+        seg = counts / (n_pert * width)          # shares of the perturbed density
+        ax.bar(centres, seg, bottom=bottom, width=width,
+               facecolor=PERT_COLORS[pt], edgecolor="none", zorder=3)
+        bottom += seg
+    # one outline around the whole perturbed stack, so it reads as one population
+    ax.step(np.append(bins, bins[-1]), np.append(np.append(0.0, bottom), 0.0),
+            where="pre", color="#b71c1c", linewidth=0.9, zorder=4)
+    # and the clean outline again on top: the fill is behind the stack, so
+    # without this the clean shape is unreadable wherever the stack is taller
+    c_counts, _ = np.histogram(s_mahal[labels == 0], bins=bins)
+    c_dens = c_counts / (int((labels == 0).sum()) * width)
+    ax.step(np.append(bins, bins[-1]), np.append(np.append(0.0, c_dens), 0.0),
+            where="pre", color=clean_edge, linewidth=0.9, zorder=4)
+
+    # the 5 % FPR operating point: everything to its right is what a detector
+    # admitting one false alarm in twenty would flag
+    thr95 = float(np.quantile(s_mahal[labels == 0], 0.95))
+    ax.axvline(thr95, color="0.25", linestyle=(0, (1, 1.6)), linewidth=0.9,
+               zorder=5)
+    ax.annotate("5 % FPR", xy=(thr95, ax.get_ylim()[1] * 0.60),
+                xytext=(4, 0), textcoords="offset points",
+                fontsize=7.5, color=MUTED, ha="left", va="center", zorder=5)
+
+    ax.set_xlabel(METRIC_AXIS["mahalanobis"])
+    ax.set_ylabel("Density")
+    ax.set_xlim(left=0.0)
+    _stats_box(ax, f"AUROC = {res_mahal['auc']:.3f}")
+
+    handles = [Patch(facecolor=clean_face, edgecolor=clean_edge, linewidth=0.9,
+                     label="clean")]
+    handles += [Patch(facecolor=PERT_COLORS[pt], edgecolor="none",
+                      label=PERT_LABELS[pt]) for pt in PERT_ORDER]
+    _fig_legend(fig, handles, ncol=5)
 
     save_figure(fig, OUT_DIR, "score_dist_mahal_gmm_vs_knn_single")
+
+    notes = FigureNotes(
+        "score_dist_mahal_gmm_vs_knn_single",
+        title="Mahalanobis-GMM score distribution on the labelled test set, "
+              "clean against perturbed, the perturbed side split by perturbation",
+        source=f"{TEST_DIR}/attention/test_profiles_2.npy + {RUN_DIR}")
+    notes.line(f"    Both AUROCs are {AGG_POOLED_TEST}")
+    notes.line("    Scores are recomputed from the saved detector parameters and "
+               "checked against the stored results JSONs.")
+    notes.line("    ONE panel since 2026-09-03, Mahalanobis-GMM only. The "
+               "perturbed histogram is stacked by perturbation: a bar's total "
+               "height is the perturbed density in that bin, each segment one "
+               "perturbation's share of it. The four perturbation sets are "
+               "exactly equal in size, so segment heights are comparable across "
+               "perturbations and across bins. Shade order is PERT_ORDER, dark "
+               "to light, which coincides with the AUROC order.")
+    notes.line("    The dotted vertical rule is the clean scores' 95th "
+               "percentile, i.e. the threshold of a detector admitting one false "
+               "alarm in twenty. Everything to its right is what that detector "
+               "flags. Higher score = more OOD.")
+    notes.line("    The threshold rows below are the point of this sidecar: an "
+               "AUROC does not say whether a usable operating point exists, and "
+               "the chapter's claim is that the separation sits in the right tail.")
+    notes.counts("test frames",
+                 {"clean": int((labels == 0).sum()),
+                  "perturbed": int((labels == 1).sum())})
+    notes.counts("perturbed frames by perturbation",
+                 {PERT_LABELS.get(pt, pt): int((perts == pt).sum())
+                  for pt in PERT_ORDER})
+
+    for panel, scores, res in (("Mahalanobis-GMM (the panel)", s_mahal, res_mahal),
+                               (f"single k-NN, k = {best_k} (NOT DRAWN since "
+                                "2026-09-03, kept as a check on the stored "
+                                "results and because the metric comparison "
+                                "cites it)", s_knn, res_knn)):
+        notes.section(panel)
+        notes.value("AUROC, whole mixed test set", res["auc"])
+        clean, pert = scores[labels == 0], scores[labels == 1]
+        _note_distribution(notes, "clean", clean)
+        _note_distribution(notes, "perturbed", pert)
+        notes.value("median shift, perturbed minus clean",
+                    float(np.median(pert) - np.median(clean)))
+        notes.value("perturbed above the clean median",
+                    float((pert > np.median(clean)).mean()),
+                    note="0.5 would mean no shift of the bulk")
+        _note_tail(notes, clean, pert)
+        notes.line("    per perturbation, against the same clean set:")
+        for pt in PERT_ORDER:
+            sel = perts == pt
+            if not sel.any():
+                continue
+            sub_p = scores[sel]
+            auc = roc_auc(np.concatenate([clean, sub_p]),
+                          np.concatenate([np.zeros(len(clean)),
+                                          np.ones(len(sub_p))]))
+            t5, _ = tpr_at_fpr(clean, sub_p, 0.05)
+            t1, _ = tpr_at_fpr(clean, sub_p, 0.01)
+            notes.value(f"    {PERT_LABELS.get(pt, pt)}",
+                        f"AUROC {auc:.4f}, median {np.median(sub_p):.4g}, "
+                        f"TPR@5%FPR {t5:.3f}, TPR@1%FPR {t1:.3f}",
+                        note=f"n = {int(sel.sum())}")
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -521,9 +888,16 @@ def fig_auroc_per_perturbation() -> None:
             return src[fam] if fam in ("mdx", "peoc") else src["knn_single"]
         return src[f"{fam}_gmm"]
 
-    groups = PERT_ORDER + ["overall"]
-    group_labels = [PERT_LABELS[p] for p in PERT_ORDER] + ["Overall"]
-    sources = [per_pert[p] for p in PERT_ORDER] + [overall]
+    # The "Overall" group was removed on 2026-09-03 (author): it is exactly the
+    # unweighted mean of the four groups beside it (equal 200-frame perturbation
+    # sets against a shared clean set, verified to machine precision), and the
+    # chapter's position, established in the Atari study and visible again here,
+    # is that averaging over perturbations carries little information.  The
+    # mixed-set values are still in the sidecar, since the metric ranking reads
+    # off them.
+    groups = list(PERT_ORDER)
+    group_labels = [PERT_LABELS[p] for p in PERT_ORDER]
+    sources = [per_pert[p] for p in PERT_ORDER]
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.9))
 
@@ -566,6 +940,89 @@ def fig_auroc_per_perturbation() -> None:
     _fig_legend(fig, handles, ncol=4)
 
     save_figure(fig, OUT_DIR, "auroc_per_perturbation_gmm")
+
+    det_labels = {f: PLAIN_NAME[f] for f in detectors}
+
+    notes = FigureNotes(
+        "auroc_per_perturbation_gmm",
+        title="Test AUROC per perturbation for the GMM attention detectors and "
+              "the two non-attention baselines",
+        source=f"{RUN_DIR}/results_per_perturbation.json + summary.json")
+    notes.line(f"    K = {SELECTED_K}. Bars are drawn from the chance line 0.5, "
+               "so bar height is AUROC minus 0.5 and the sign is the direction.")
+    notes.line("    A per-perturbation column is that perturbation's frames "
+               "against the clean frames only.")
+    notes.line("    There is no aggregate group in this figure. The 'Overall' "
+               "bar was removed on 2026-09-03: it was exactly the unweighted "
+               "mean of the four groups drawn here.")
+    notes.line(f"    {AGG_IDENTITY}")
+    notes.line("    The mixed-set values are kept in the last section below, "
+               "marked as not drawn, because the metric ranking reads off them.")
+    notes.line("    The K-selection criterion is yet another pool, because it "
+               "drops Gaussian noise and then averages over detectors as well. "
+               "See auroc_val_test_vs_K.txt.")
+    notes.line("    All k-NN entries except 'single' use the GMM-pooled variant.")
+
+    for gi, (g, glabel, src_d) in enumerate(zip(groups, group_labels, sources)):
+        notes.section(glabel)
+        vals = {fam: value(src_d, fam) for fam in detectors}
+        for fam in detectors:
+            notes.value(det_labels[fam], vals[fam],
+                        note=f"{vals[fam] - 0.5:+.4f} from chance")
+        best = max(vals, key=vals.get)
+        worst = min(vals, key=vals.get)
+        notes.value("highest", f"{det_labels[best]} {vals[best]:.4f}")
+        notes.value("lowest", f"{det_labels[worst]} {vals[worst]:.4f}")
+        att = ["mahalanobis", "euclidean", "knn", "knn_single", "jsd"]
+        b_att = max(att, key=lambda f: vals[f])
+        notes.value("highest attention distance",
+                    f"{det_labels[b_att]} {vals[b_att]:.4f}")
+        notes.value("detectors above 0.70", 
+                    ", ".join(det_labels[f] for f in detectors if vals[f] > 0.70)
+                    or "none")
+        notes.value("detectors below 0.50",
+                    ", ".join(f"{det_labels[f]} ({vals[f]:.4f})"
+                              for f in detectors if vals[f] < 0.50) or "none")
+
+    notes.section("NOT DRAWN: mean pixel intensity, a model-free reference")
+    notes.line("    Not a detector we propose and not in the figure. It is the "
+               "answer to the obvious objection to the brightness result: that a "
+               "trivial input statistic would do as well on a global photometric "
+               "change. Higher intensity = more OOD, one-sided like every other "
+               "score here.")
+    mi = mean_pixel_intensity()
+    tl_ = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)
+    lab_ = tl_["label"].astype(int)
+    pert_ = tl_["perturbation"].astype(str)
+    clean_mi = mi[lab_ == 0]
+    notes.value("clean frames, median mean-pixel value", float(np.median(clean_mi)))
+    for pt in PERT_ORDER:
+        sub_mi = mi[pert_ == pt]
+        auc = roc_auc(np.concatenate([clean_mi, sub_mi]),
+                      np.concatenate([np.zeros(len(clean_mi)),
+                                      np.ones(len(sub_mi))]))
+        notes.value(PERT_LABELS[pt], auc,
+                    note=f"median {np.median(sub_mi):.1f}, "
+                         f"{abs(auc - 0.5):.4f} from chance")
+    notes.line("    Reading: on the brightness increase it reaches 0.78, which is "
+               "BELOW both MDX and the attention MD, so the attention distance is "
+               "not merely re-detecting a change any pixel average would see. It "
+               "is at chance on Gaussian noise and PGD and inverted on camera "
+               "loss, where removing a camera lowers the frame mean.")
+
+    notes.section("NOT DRAWN: the mixed test set, and the ranking on it")
+    notes.line("    Removed from the figure on 2026-09-03. Retained here because "
+               "it is the only place the detectors are ranked against each other "
+               "on one number, and it is exactly the mean of the four groups "
+               "above.")
+    ov = {fam: value(overall, fam) for fam in detectors}
+    for fam in detectors:
+        notes.value(det_labels[fam], ov[fam],
+                    note=f"{ov[fam] - 0.5:+.4f} from chance")
+    notes.line("    ranking:")
+    for rank, fam in enumerate(sorted(ov, key=ov.get, reverse=True), start=1):
+        notes.value(f"{rank}. {det_labels[fam]}", ov[fam])
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -616,6 +1073,48 @@ def fig_gmm_vs_single_parity() -> None:
 
     save_figure(fig, OUT_DIR, "auroc_gmm_vs_single")
 
+    notes = FigureNotes(
+        "auroc_gmm_vs_single",
+        title="Test AUROC against a single-Gaussian baseline versus a "
+              f"{SELECTED_K}-component GMM baseline",
+        source=f"{RUN_DIR}/results_per_perturbation.json + summary.json")
+    notes.line("    Each point is one detector family on one evaluation set. "
+               "Above the diagonal = the GMM baseline scores higher.")
+    notes.line("    Circles are per-perturbation (that perturbation against the "
+               f"clean frames). The diamond is {AGG_POOLED_TEST}")
+    notes.line(f"    {AGG_IDENTITY} The diamond is therefore the centroid of the "
+               "four circles of its own colour.")
+    notes.line("    'gain' below is GMM minus single, so a negative gain means "
+               "clustering hurt that family.")
+
+    for fam in GMM_FAMILIES:
+        notes.section(PLAIN_NAME[fam])
+        gains = []
+        for gname, srcd, _, _ in cases:
+            s, g = srcd[f"{fam}_single"], srcd[f"{fam}_gmm"]
+            gains.append(g - s)
+            label = PERT_LABELS.get(gname, "overall (mixed test set)")
+            notes.value(label, f"single {s:.4f}, GMM {g:.4f}",
+                        note=f"gain {g - s:+.4f}")
+        per_pert_gains = gains[:len(PERT_ORDER)]
+        notes.counts("perturbations where the GMM baseline wins",
+                     {"wins": int(sum(x > 0 for x in per_pert_gains)),
+                      "losses": int(sum(x < 0 for x in per_pert_gains)),
+                      "of": len(per_pert_gains)})
+        notes.value("mean gain over the four perturbations",
+                    float(np.mean(per_pert_gains)))
+        notes.value("gain on the mixed test set", gains[-1])
+
+    notes.section("Summary across families")
+    for fam in GMM_FAMILIES:
+        g = overall[f"{fam}_gmm"] - overall[f"{fam}_single"]
+        pp = [per_pert[pt][f"{fam}_gmm"] - per_pert[pt][f"{fam}_single"]
+              for pt in PERT_ORDER]
+        notes.value(PLAIN_NAME[fam],
+                    f"mixed set {g:+.4f}, per-perturbation "
+                    f"{sum(x > 0 for x in pp)} up / {sum(x < 0 for x in pp)} down")
+    notes.write(OUT_DIR)
+
 
 # --------------------------------------------------------------------------- #
 # Figures 6-8 — per-cluster ATOMs attention profiles
@@ -632,6 +1131,78 @@ def cluster_attention_stats():
     cluster_mean = np.stack([series[labels == k].mean(axis=0) for k in range(K)])
     order_desc = np.argsort(cluster_mean.max(axis=0))[::-1]
     return series, labels, names, K, cluster_mean, order_desc
+
+
+# A class is called "unused" when its mean attention stays below this in every
+# component.  A convention, not a measurement, hence [def] wherever it is quoted.
+ATTENTION_ZERO_TOL = 0.005
+
+
+def _note_cluster_attention(notes, series, labels, names, K, cluster_mean,
+                            order_desc) -> None:
+    """The numbers behind every per-cluster attention figure: the full
+    component x class matrix, the per-class range across components, and which
+    classes carry no attention at all.  Shared by all three, since they draw the
+    same matrix in three layouts and the prose must not disagree between them."""
+    sizes = np.bincount(labels, minlength=K)
+    N = len(series)
+
+    notes.line(f"    {N} baseline profiles over {len(names)} semantic classes, "
+               f"{K} GMM components. Profiles are normalised to sum to 1, so a "
+               f"value is a share of the frame's total relevance.")
+    notes.line("    Class display order is descending by the largest component "
+               "mean, the same rule the figure uses.")
+
+    notes.section("Classes")
+    unused = []
+    for j in order_desc:
+        col = cluster_mean[:, j]
+        raw = series[:, j]
+        if col.max() < ATTENTION_ZERO_TOL:
+            unused.append(names[j])
+        notes.value(names[j],
+                    f"component means {col.min():.4g} to {col.max():.4g}",
+                    note=(f"highest in component {int(np.argmax(col))}, "
+                          f"lowest in {int(np.argmin(col))}; " if col.max() > 0
+                          else "") +
+                         f"over all frames max {raw.max():.4g}, nonzero in "
+                         f"{int((raw > 0).sum())} of {N}")
+    notes.value("classes with any attention in some component",
+                len(names) - len(unused), note=f"of {len(names)}", derived=True)
+    notes.value("classes below the unused threshold in every component",
+                ", ".join(unused) or "none",
+                note=f"threshold {ATTENTION_ZERO_TOL}", derived=True)
+    exact_zero = [names[j] for j in range(len(names)) if series[:, j].max() == 0.0]
+    notes.value("classes identically zero over every training frame",
+                ", ".join(exact_zero) or "none")
+    notes.line("        the four unused classes are near-zero rather than "
+               "absent: " + ", ".join(
+                   f"{names[j]} max {series[:, j].max():.3g} over {N} frames"
+                   for j in range(len(names))
+                   if cluster_mean[:, j].max() < ATTENTION_ZERO_TOL))
+
+    notes.section("Components")
+    for k in range(K):
+        rows = series[labels == k]
+        notes.value(f"component {k}", f"n = {int(sizes[k])}",
+                    note=f"{sizes[k] / N:.1%} of the baseline")
+        top = np.argsort(cluster_mean[k])[::-1]
+        shown = [j for j in top if cluster_mean[k][j] >= ATTENTION_ZERO_TOL]
+        notes.line("        mean: " + ", ".join(
+            f"{names[j]} {cluster_mean[k][j]:.4f}" for j in shown))
+        notes.line("        min-max whiskers: " + ", ".join(
+            f"{names[j]} [{rows[:, j].min():.3f}, {rows[:, j].max():.3f}]"
+            for j in shown))
+        notes.value("    classes at or above the threshold", len(shown),
+                    derived=True)
+    notes.value("largest / smallest component",
+                f"{int(sizes.max())} / {int(sizes.min())}",
+                note=f"{sizes.max() / N:.1%} / {sizes.min() / N:.1%}")
+    notes.value("component sizes ascending",
+                ", ".join(str(int(s)) for s in np.sort(sizes)))
+    notes.value("sizes sum", int(sizes.sum()),
+                note="equals the training split, so the baseline is fitted on "
+                     "training frames only")
 
 
 def _cluster_bars(ax, series, labels, k, order_asc, with_whiskers=True):
@@ -654,7 +1225,7 @@ def _cluster_bars(ax, series, labels, k, order_asc, with_whiskers=True):
 
 
 def fig_attention_per_cluster() -> None:
-    series, labels, names, K, _, order_desc = cluster_attention_stats()
+    series, labels, names, K, cluster_mean, order_desc = cluster_attention_stats()
     order_asc = order_desc[::-1]          # barh: largest class ends up on top
 
     fig, axs = plt.subplots(4, 2, figsize=(TEXT_WIDTH_IN, 6.9),
@@ -667,30 +1238,48 @@ def fig_attention_per_cluster() -> None:
     fig.supxlabel("Normalized attention")
     save_figure(fig, OUT_DIR, "attention_per_cluster")
 
+    notes = FigureNotes(
+        "attention_per_cluster",
+        title="Mean ATOMs attention profile per GMM component, one panel per "
+              "component, min-max whiskers",
+        source=f"{BASELINE_NPZ} + {RUN_DIR}/gmm.npz")
+    notes.line("    Bars are the component mean, whiskers the min and max over "
+               "that component's frames. Panels share the class order and axes.")
+    _note_cluster_attention(notes, series, labels, names, K, cluster_mean,
+                            order_desc)
+    notes.write(OUT_DIR)
 
-def representative_frames(series, labels, K) -> dict[int, np.ndarray]:
+
+def representative_frames(series, labels, K):
     """Per cluster: the baseline frame closest (L2) to the cluster mean —
     same rule as run_analysis.py step 6b.5.  Loads only the two npz members
-    needed (frame counts, then the one wide_rgb array per hit)."""
+    needed (frame counts, then the one wide_rgb array per hit).
+
+    Returns ``(imgs, provenance)``; provenance names the run file, the frame
+    index inside it and the distance to the cluster mean, so the sidecar can
+    say which frame a panel shows."""
     files = sorted(FRAMES_DIR.glob("run_*.npz"))
     counts = np.array([np.load(f)["frame_idx"].shape[0] for f in files])
     bounds = np.concatenate([[0], np.cumsum(counts)])
-    imgs = {}
+    imgs, prov = {}, {}
     for k in range(K):
         mask = labels == k
         mean = series[mask].mean(axis=0)
-        gidx = int(np.where(mask)[0][
-            np.argmin(np.linalg.norm(series[mask] - mean, axis=1))])
+        dists = np.linalg.norm(series[mask] - mean, axis=1)
+        j = int(np.argmin(dists))
+        gidx = int(np.where(mask)[0][j])
         fi = int(np.searchsorted(bounds, gidx, side="right") - 1)
         img = np.load(files[fi])["wide_rgb"][gidx - bounds[fi]]   # [3, H, W]
         imgs[k] = np.transpose(img, (1, 2, 0))
-    return imgs
+        prov[k] = (files[fi].name, gidx - bounds[fi], float(dists[j]),
+                   float(np.median(dists)))
+    return imgs, prov
 
 
 def fig_attention_per_cluster_frames() -> None:
-    series, labels, names, K, _, order_desc = cluster_attention_stats()
+    series, labels, names, K, cluster_mean, order_desc = cluster_attention_stats()
     order_asc = order_desc[::-1]
-    imgs = representative_frames(series, labels, K)
+    imgs, prov = representative_frames(series, labels, K)
 
     # 4 card rows x 2 columns; each card = frame strip (6:1) above its bars.
     fig = plt.figure(figsize=(TEXT_WIDTH_IN, 8.1))
@@ -719,9 +1308,31 @@ def fig_attention_per_cluster_frames() -> None:
     fig.supxlabel("Normalized attention")
     save_figure(fig, OUT_DIR, "attention_per_cluster_frames")
 
+    notes = FigureNotes(
+        "attention_per_cluster_frames",
+        title="Mean ATOMs attention profile per GMM component, each paired with "
+              "the baseline frame closest to that component's mean",
+        source=f"{BASELINE_NPZ} + {FRAMES_DIR}")
+    notes.line("    Same numbers as attention_per_cluster; only the "
+               "representative frame strip is added.")
+    notes.line("    A representative is the single frame nearest the component "
+               "mean in profile space. It is an illustration of the component's "
+               "centre, NOT evidence about what the component encodes: the "
+               "spread below shows how far the component's frames reach.")
+    _note_cluster_attention(notes, series, labels, names, K, cluster_mean,
+                            order_desc)
+
+    notes.section("Representative frames")
+    for k in range(K):
+        fname, fidx, d, dmed = prov[k]
+        notes.value(f"component {k}", f"{fname}, frame {fidx}",
+                    note=f"distance to the component mean {d:.4f}, median "
+                         f"distance in the component {dmed:.4f}")
+    notes.write(OUT_DIR)
+
 
 def fig_attention_by_cluster() -> None:
-    _, labels, names, K, cluster_mean, order_desc = cluster_attention_stats()
+    series, labels, names, K, cluster_mean, order_desc = cluster_attention_stats()
 
     fig, ax = plt.subplots(figsize=(TEXT_WIDTH_IN, 2.9))
     x0 = np.arange(len(order_desc))
@@ -742,6 +1353,22 @@ def fig_attention_by_cluster() -> None:
 
     save_figure(fig, OUT_DIR, "attention_by_cluster")
 
+    notes = FigureNotes(
+        "attention_by_cluster",
+        title="Mean ATOMs attention per semantic class, all GMM components in "
+              "one grouped bar chart",
+        source=f"{BASELINE_NPZ} + {RUN_DIR}/gmm.npz")
+    notes.line("    One bar group per class, one bar per component, no whiskers. "
+               "The component sizes in the legend are the n values below.")
+    _note_cluster_attention(notes, series, labels, names, K, cluster_mean,
+                            order_desc)
+
+    notes.section("Per class, every component mean")
+    for j in order_desc:
+        _note_listing(notes, names[j], range(K), cluster_mean[:, j],
+                      x_fmt="c{:d}", per_line=8)
+    notes.write(OUT_DIR)
+
 
 # --------------------------------------------------------------------------- #
 # Figure 12 — K selection: mean GMM AUROC on val (criterion) vs test
@@ -753,7 +1380,14 @@ def fig_val_test_auc_vs_k() -> None:
     (__val_auc_gmm_avg__) is defined ex-GN, so the test counterpart is
     recomputed here on the same footing — pooled AUC over clean + the three
     remaining perturbations, per detector, averaged.  kNN-GMM uses each K's
-    val-selected k (parsed from summary.json)."""
+    val-selected k (parsed from summary.json).
+
+    K = 1 is the single-Gaussian, no-clustering baseline, computed here rather
+    than read from a snapshot (there is no "1 clusters" directory).  It really
+    is the K = 1 member of the same family: one component means one mean and
+    one covariance for Mahalanobis / Euclidean / JSD, and a kNN pool that is
+    the whole baseline.  Including it is what lets the figure show what the
+    clustering buys, which is the question the chapter asks of it."""
     from sklearn.metrics import roc_auc_score
     from ATOMs_Analysis.utils.distance_computer import DistanceComputer as DC
 
@@ -766,7 +1400,58 @@ def fig_val_test_auc_vs_k() -> None:
     mask = tl["perturbation"].astype(str) != "gaussian_noise"
     series = load_baseline_series()
 
+    vprof = np.load(ROOT / "data" / "TFV6" / "val_data_alt" / "attention"
+                    / "val_profiles_2.npy").astype(np.float64)
+    vl = np.load(ROOT / "data" / "TFV6" / "val_data_alt" / "val_labeled.npz",
+                 allow_pickle=True)
+    vlabels = vl["label"].astype(int)
+    vmask = vl["perturbation"].astype(str) != "gaussian_noise"
+
+    def _single_gaussian_aucs():
+        """The four detector AUROCs at K = 1, on both splits, ex-Gaussian-noise.
+
+        Same four families and the same ex-GN pool as every other point on the
+        curve, scored against the run's stored single-Gaussian parameters
+        (mahal_detector.npz, shrinkage already applied) instead of a mixture.
+        kNN uses the whole baseline, which is what a single component's pool
+        is, at the val-selected single-kNN k."""
+        from scipy.spatial.distance import cdist
+        md = np.load(RUN_DIR / "mahal_detector.npz", allow_pickle=True)
+        mean = md["mean"].astype(np.float64)
+        cov = md["cov"].astype(np.float64)
+
+        summ8 = json.loads((RUN_DIR / "summary.json").read_text())
+        knn_key = next(k for k in summ8 if "k-NN" in k and "GMM" not in k)
+        k1 = int(re.search(r"k=(\d+)", knn_key).group(1))
+
+        def _norm(a):
+            return a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
+        base_n = _norm(series)
+
+        out = {}
+        for tag, X, lab, msk in (("val", vprof, vlabels, vmask),
+                                 ("test", profiles, labels, mask)):
+            s_m = mahalanobis_batch(X, mean, cov)
+            s_e = np.linalg.norm(X - mean, axis=1)
+            s_j = np.array([DC.compute_jsd(mean, x) for x in X])
+            s_k = np.sort(cdist(_norm(X), base_n), axis=1)[:, k1 - 1]
+            out[tag] = [float(roc_auc_score(lab[msk], s[msk]))
+                        for s in (s_m, s_e, s_j, s_k)]
+        # sanity: the incl-GN single-Gaussian mahal AUC must match the stored one
+        auc_all = roc_auc_score(labels, mahalanobis_batch(profiles, mean, cov))
+        stored = json.loads((RUN_DIR / "results_ATOMs-Mahalanobis_single_Gaussian"
+                             ".json").read_text())["auc"]
+        if abs(auc_all - stored) > 1e-3:
+            raise RuntimeError(
+                f"K=1: single-Gaussian mahal {auc_all:.4f} != stored {stored:.4f}")
+        print(f"  [check] K=1 single Gaussian: mahal incl-GN {auc_all:.4f} "
+              f"== stored {stored:.4f}  (k-NN k={k1})")
+        return out, k1
+
+    single, k_single = _single_gaussian_aucs()
+
     val_avg, test_avg = [], []
+    test_per_det: dict[int, list[float]] = {}
     for K in Ks:
         run = RESULTS_ROOT / f"{K} clusters" / "atoms_analysis_mode_2"
         summ = json.loads((run / "summary.json").read_text())
@@ -791,6 +1476,7 @@ def fig_val_test_auc_vs_k() -> None:
         aucs = [roc_auc_score(labels[mask], s[mask])
                 for s in (s_mahal, s_euclid, s_jsd, s_knn)]
         test_avg.append(float(np.mean(aucs)))
+        test_per_det[K] = [float(a) for a in aucs]
         # sanity: incl-GN pooled mahal AUC must match the stored summary value
         auc_all = roc_auc_score(labels, s_mahal)
         stored = next(v["auc"] for key, v in summ.items()
@@ -798,6 +1484,15 @@ def fig_val_test_auc_vs_k() -> None:
         if abs(auc_all - stored) > 1e-3:
             raise RuntimeError(f"K={K}: mahal-GMM {auc_all:.4f} != stored {stored:.4f}")
 
+    # K = 1 (no clustering) leads the sweep, so the figure shows what the
+    # mixture buys rather than only how the mixture varies.
+    Ks = [1] + Ks
+    val_avg = [float(np.mean(single["val"]))] + val_avg
+    test_avg = [float(np.mean(single["test"]))] + test_avg
+    test_per_det[1] = single["test"]
+
+    print(f"  [info] K=1 (single Gaussian): val ex-GN {val_avg[0]:.4f}  "
+          f"test ex-GN {test_avg[0]:.4f}")
     print(f"  [info] K={SELECTED_K}: val ex-GN {val_avg[Ks.index(SELECTED_K)]:.4f}  "
           f"test ex-GN {test_avg[Ks.index(SELECTED_K)]:.4f}")
 
@@ -811,23 +1506,146 @@ def fig_val_test_auc_vs_k() -> None:
     ax.plot(Ks, test_avg, color="0.15", linewidth=1.25,
             linestyle=(0, (1, 1.6)), marker="o", markersize=2.6,
             markeredgewidth=0, zorder=2)
-    ax.text(SELECTED_K + 0.25, lo + 0.003, f"$K={SELECTED_K}$",
+
+    # Circle each curve's own best K, the way knn_k_selection circles its two
+    # selected k.  The validation circle is the actual selection; the test one
+    # is where the selection would have landed with hindsight.
+    for ys in (val_avg, test_avg):
+        i_best = int(np.argmax(ys))
+        ax.scatter([Ks[i_best]], [ys[i_best]], s=64, facecolor="none",
+                   edgecolor="0.15", linewidths=1.1, zorder=4)
+
+    ax.text(SELECTED_K + 0.35, lo + 0.003, f"$K={SELECTED_K}$",
             fontsize=7.5, color=MUTED, ha="left", va="bottom")
+    ax.text(1, lo + 0.003, "no clustering",
+            fontsize=7.5, color=MUTED, ha="center", va="bottom")
 
     ax.set_xlabel("GMM components $K$")
     ax.set_ylabel("Mean AUROC (GMM detectors)")
-    ax.set_xticks(range(2, 21, 2))
-    ax.set_xlim(1.4, 20.6)
+    ax.set_xticks([1] + list(range(2, 21, 2)))
+    ax.set_xlim(0.4, 20.6)
     ax.set_ylim(lo, hi)
 
     handles = [
         Line2D([], [], color="0.15", linewidth=1.9, label="validation"),
         Line2D([], [], color="0.15", linewidth=1.25, linestyle=(0, (1, 1.6)),
                label="test"),
+        Line2D([], [], marker="o", linestyle="none", markersize=7,
+               markerfacecolor="none", markeredgecolor="0.15",
+               markeredgewidth=1.1, label="best $K$ on that split"),
     ]
-    _fig_legend(fig, handles, ncol=2)
+    _fig_legend(fig, handles, ncol=3)
 
     save_figure(fig, OUT_DIR, "auroc_val_test_vs_K")
+
+    val_avg = [float(v) for v in val_avg]
+    offsets = [v - t for v, t in zip(val_avg, test_avg)]
+    i_sel = Ks.index(SELECTED_K)
+    i_val_best, i_test_best = int(np.argmax(val_avg)), int(np.argmax(test_avg))
+
+    notes = FigureNotes(
+        "auroc_val_test_vs_K",
+        title="K selection: mean GMM-detector AUROC on the validation set "
+              "against its test-set counterpart",
+        source=str(RESULTS_ROOT) + "/<K> clusters/atoms_analysis_mode_2")
+    notes.line(f"    Sweep: {len(Ks)} values of K, {min(Ks)} to {max(Ks)} "
+               f"({', '.join(str(k) for k in Ks)}).")
+    notes.line(f"    K = 1 is the single-Gaussian, NO-CLUSTERING baseline. It is "
+               f"not a snapshot directory, it is computed from the run's stored "
+               f"mahal_detector.npz on the same four families and the same "
+               f"ex-Gaussian-noise pool, with the k-NN pool being the whole "
+               f"baseline at the val-selected single k = {k_single}. Its "
+               f"incl-Gaussian-noise Mahalanobis AUROC was checked against the "
+               f"stored results_ATOMs-Mahalanobis_single_Gaussian.json.")
+    notes.line(f"    BOTH curves: {AGG_POOLED_EXGN}")
+    notes.line(f"    {AGG_IDENTITY} Here the pool holds three perturbations, so "
+               "each detector's value is the mean of its brightness, camera loss "
+               "and PGD AUROCs, and the plotted curve is the mean of those four "
+               "detector values.")
+    notes.line(f"    {AGG_MEAN_OVER_DETECTORS} The four are Mahalanobis, "
+               "Euclidean, JSD and k-NN, all GMM-pooled; k-NN uses each K's own "
+               "val-selected k.")
+    notes.line("    The validation curve is the actual selection criterion "
+               "(summary.json __val_auc_gmm_avg__); the test curve is recomputed "
+               "here on the same footing so the two are like-for-like.")
+    notes.line("    Gaussian noise is EXCLUDED from both pools. The other "
+               "AUROC figures in the chapter include it, so their numbers are "
+               "not comparable with these.")
+    notes.line(f"    The same 1000 validation and 1000 test frames are reused at "
+               f"every K, so the {len(Ks)} points are not independent "
+               f"comparisons and a consistent offset is not evidence about its "
+               f"cause.")
+    notes.line("    No rise/plateau/shape descriptors: those are defined for a "
+               "smooth sweep over a severity knob, which K is not. The per-K "
+               "listing carries the shape.")
+
+    notes.section("Validation (the selection criterion)")
+    notes.curve("mean GMM AUROC vs K", Ks, val_avg, rise=False, plateau=False, shape=False)
+    notes.value("peak", val_avg[i_val_best], note=f"at K = {Ks[i_val_best]}")
+    notes.value("minimum", min(val_avg),
+                note=f"at K = {Ks[int(np.argmin(val_avg))]}")
+    notes.value(f"at the selected K = {SELECTED_K}", val_avg[i_sel])
+    _note_listing(notes, "per K", Ks, val_avg)
+
+    notes.section("Test")
+    notes.curve("mean GMM AUROC vs K", Ks, test_avg, rise=False, plateau=False, shape=False)
+    notes.value("peak", test_avg[i_test_best], note=f"at K = {Ks[i_test_best]}")
+    notes.value("minimum", min(test_avg),
+                note=f"at K = {Ks[int(np.argmin(test_avg))]}")
+    notes.value(f"at the selected K = {SELECTED_K}", test_avg[i_sel])
+    notes.value("cost of selecting on validation",
+                test_avg[i_test_best] - test_avg[i_sel],
+                note=f"test AUROC at its own best K = {Ks[i_test_best]} minus "
+                     f"test AUROC at the validation-selected K = {SELECTED_K}")
+    _note_listing(notes, "per K", Ks, test_avg)
+
+    notes.section("Validation minus test")
+    notes.value("sign", "validation above test at every K"
+                if all(o > 0 for o in offsets) else
+                f"validation above test at {sum(o > 0 for o in offsets)} of "
+                f"{len(offsets)} values of K")
+    notes.value("offset range", f"{min(offsets):.4f} to {max(offsets):.4f}")
+    notes.value("median offset", float(np.median(offsets)))
+    notes.value(f"offset at K = {SELECTED_K}", offsets[i_sel])
+    _note_listing(notes, "per K", Ks, offsets, y_fmt="{:+.4f}")
+
+    notes.section("What the clustering buys, against K = 1")
+    notes.value("validation at K = 1", val_avg[0])
+    notes.value("test at K = 1", test_avg[0])
+    notes.value(f"validation gain at the selected K = {SELECTED_K}",
+                val_avg[i_sel] - val_avg[0])
+    notes.value(f"test gain at the selected K = {SELECTED_K}",
+                test_avg[i_sel] - test_avg[0])
+    notes.value("values of K beating K = 1 on validation",
+                f"{sum(v > val_avg[0] for v in val_avg[1:])} of {len(Ks) - 1}")
+    notes.value("values of K beating K = 1 on test",
+                f"{sum(t > test_avg[0] for t in test_avg[1:])} of {len(Ks) - 1}")
+    notes.value("per detector at K = 1, validation",
+                ", ".join(f"{PLAIN_NAME[f]} {v:.4f}" for f, v in
+                          zip(("mahalanobis", "euclidean", "jsd", "knn"),
+                              single["val"])))
+    notes.value("per detector at K = 1, test",
+                ", ".join(f"{PLAIN_NAME[f]} {v:.4f}" for f, v in
+                          zip(("mahalanobis", "euclidean", "jsd", "knn"),
+                              single["test"])))
+
+    notes.section("Flatness")
+    tail = [i for i, K in enumerate(Ks) if K >= 12]
+    notes.value("validation spread over K >= 12",
+                max(val_avg[i] for i in tail) - min(val_avg[i] for i in tail))
+    notes.value("test spread over K >= 12",
+                max(test_avg[i] for i in tail) - min(test_avg[i] for i in tail))
+    notes.value("validation spread over the whole sweep",
+                max(val_avg) - min(val_avg))
+    notes.value("test spread over the whole sweep", max(test_avg) - min(test_avg))
+
+    notes.section("Test, per detector")
+    det_names = [PLAIN_NAME[f] for f in ("mahalanobis", "euclidean", "jsd", "knn")]
+    for di, dn in enumerate(det_names):
+        ys = [test_per_det[K][di] for K in Ks]
+        notes.value(dn, f"peak {max(ys):.4f} at K = {Ks[int(np.argmax(ys))]}, "
+                        f"at K = {SELECTED_K}: {ys[i_sel]:.4f}")
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -849,41 +1667,185 @@ def fig_knn_k_selection() -> None:
     def norm(a):
         return a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
 
-    d_single = np.sort(cdist(norm(vprof), norm(series)), axis=1)
-    auc_single = [roc_auc_score(vlab, d_single[:, k - 1]) for k in KS_NN]
+    # The TEST curves are overlaid since 2026-09-03.  Validation-only, this
+    # figure looked as though it contradicted the test-set figures; it does not,
+    # it is a different split, and showing both is what makes the selection
+    # failure legible in one place.  Same pool on both splits: the full set,
+    # Gaussian noise included, exactly as run_analysis.py selects k.
+    tprof = np.load(TEST_DIR / "attention" / "test_profiles_2.npy").astype(np.float64)
+    tlab = np.load(TEST_DIR / "test_labeled.npz",
+                   allow_pickle=True)["label"].astype(int)
 
     means, covs, weights, _ = load_gmm()
-    auc_gmm = [roc_auc_score(vlab, knn_gmm_scores(vprof, series, means, covs,
-                                                  weights, k=k))
-               for k in KS_NN]
 
-    fig, ax = plt.subplots(figsize=(4.6, 2.8))
-    for aucs, color in ((auc_single, KNN_SINGLE_COLOR),
-                        (auc_gmm, METRIC_COLORS["knn"])):
-        ax.plot(KS_NN, aucs, color=color, linewidth=1.25, alpha=0.95,
-                marker="o", markersize=3.0, markeredgewidth=0)
+    d_single = np.sort(cdist(norm(vprof), norm(series)), axis=1)
+    d_single_t = np.sort(cdist(norm(tprof), norm(series)), axis=1)
+    curves = {
+        ("single", "val"):  [roc_auc_score(vlab, d_single[:, k - 1]) for k in KS_NN],
+        ("single", "test"): [roc_auc_score(tlab, d_single_t[:, k - 1]) for k in KS_NN],
+        ("gmm", "val"):     [roc_auc_score(vlab, knn_gmm_scores(
+                                 vprof, series, means, covs, weights, k=k))
+                             for k in KS_NN],
+        ("gmm", "test"):    [roc_auc_score(tlab, knn_gmm_scores(
+                                 tprof, series, means, covs, weights, k=k))
+                             for k in KS_NN],
+    }
+    auc_single, auc_gmm = curves[("single", "val")], curves[("gmm", "val")]
+
+    VAL_STYLE, TEST_STYLE = "solid", (0, (1, 1.6))
+    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    for (variant, split), aucs in curves.items():
+        color = KNN_SINGLE_COLOR if variant == "single" else METRIC_COLORS["knn"]
+        ax.plot(KS_NN, aucs, color=color,
+                linewidth=1.6 if split == "val" else 1.25, alpha=0.95,
+                linestyle=VAL_STYLE if split == "val" else TEST_STYLE,
+                marker="o", markersize=3.4 if split == "val" else 2.6,
+                markeredgewidth=0)
         k_best = KS_NN[int(np.argmax(aucs))]
         ax.scatter([k_best], [max(aucs)], s=64, facecolor="none",
                    edgecolor=color, linewidths=1.1, zorder=4)
-        print(f"  [info] val-selected k = {k_best} "
-              f"({'single' if color == KNN_SINGLE_COLOR else 'GMM'})")
+        print(f"  [info] best k = {k_best:3d} ({variant:6s} {split:4s}) "
+              f"AUROC {max(aucs):.4f}")
 
     ax.set_xscale("log")
     ax.set_xticks(KS_NN)
     ax.set_xticklabels([str(k) for k in KS_NN])
     ax.minorticks_off()
     ax.set_xlabel("Neighbour count $k$")
-    ax.set_ylabel("Validation AUROC")
+    ax.set_ylabel("AUROC")
 
     handles = [
         Line2D([], [], color=KNN_SINGLE_COLOR, linewidth=1.6,
                label=METRIC_LEGEND["knn"] + " (single)"),
         Line2D([], [], color=METRIC_COLORS["knn"], linewidth=1.6,
                label=METRIC_LEGEND["knn"] + " (GMM)"),
+        Line2D([], [], color="0.35", linewidth=1.6, linestyle=VAL_STYLE,
+               label="validation"),
+        Line2D([], [], color="0.35", linewidth=1.25, linestyle=TEST_STYLE,
+               label="test"),
     ]
-    _fig_legend(fig, handles, ncol=2)
+    _fig_legend(fig, handles, ncol=4)
 
     save_figure(fig, OUT_DIR, "knn_k_selection")
+
+    _, _, weights_k, _ = load_gmm()
+    comp_sizes = np.sort(np.bincount(
+        gmm_predict(series, means, covs, weights), minlength=len(weights)))
+
+    notes = FigureNotes(
+        "knn_k_selection",
+        title="Neighbour-count selection for the k-th-NN attention distance on "
+              "the validation set",
+        source=f"{ROOT}/data/TFV6/val_data_alt")
+    notes.line("    BOTH SPLITS since 2026-09-03. Validation solid, test dotted. "
+               "Validation-only, this figure read as though it contradicted the "
+               "test-set figures; it does not, it is a different split, and "
+               "k is selected on the validation curve alone.")
+    notes.line("    AUROC here is a single pooled AUROC over the FULL validation "
+               "set INCLUDING Gaussian noise, per k, exactly as run_analysis.py "
+               "selects k. It is one detector, not a mean over detectors, and it "
+               "includes Gaussian noise, so it is NOT the criterion used for K "
+               "in auroc_val_test_vs_K.")
+    notes.line(f"    {AGG_IDENTITY} Here the pool holds all four perturbations.")
+    notes.line(f"    'single' scores against the whole {len(series)}-frame "
+               f"baseline. 'GMM' routes each sample to its nearest of the "
+               f"{len(weights_k)} components and scores within that component's "
+               f"pool only, falling back to the full baseline when the pool "
+               f"holds fewer than k frames.")
+    notes.value("component sizes ascending",
+                ", ".join(str(int(s)) for s in comp_sizes))
+    notes.value("k values exceeding the smallest component",
+                ", ".join(str(k) for k in KS_NN if k > comp_sizes[0]) or "none",
+                note="those k trigger the full-baseline fallback for that "
+                     "component's samples")
+    notes.value("components smaller than k = 100",
+                int((comp_sizes < 100).sum()), note=f"of {len(comp_sizes)}")
+    notes.value("components smaller than k = 250",
+                int((comp_sizes < 250).sum()), note=f"of {len(comp_sizes)}")
+
+    notes.section("Routing, and how many samples the fallback actually touches")
+    notes.line("    Counting components exceeded understates the fallback: what "
+               "matters is how many samples are ROUTED to a component too small "
+               "for k, since those are scored against a reference set of a "
+               "different size and therefore on a different scale, mixed into "
+               "one ranking with the rest.")
+    sizes_by_c = np.bincount(gmm_predict(series, means, covs, weights),
+                             minlength=len(weights))
+    vd = np.stack([mahalanobis_batch(vprof, means[c], covs[c])
+                   for c in range(len(weights))])
+    routed = np.bincount(vd.argmin(axis=0), minlength=len(weights))
+    notes.counts("baseline frames per component",
+                 {str(c): int(sizes_by_c[c]) for c in range(len(weights))})
+    notes.counts("validation samples routed to each component",
+                 {str(c): int(routed[c]) for c in range(len(weights))})
+    for c in range(len(weights)):
+        notes.value(f"    component {c}",
+                    f"{sizes_by_c[c] / len(series):.1%} of the baseline, "
+                    f"{routed[c] / len(vprof):.1%} of the validation samples")
+    for k in KS_NN:
+        n_fb = int(sum(routed[c] for c in range(len(weights))
+                       if sizes_by_c[c] < k))
+        if n_fb:
+            notes.value(f"validation samples falling back at k = {k}", n_fb,
+                        note=f"{n_fb / len(vprof):.1%}, from "
+                             f"{int((sizes_by_c < k).sum())} component(s)")
+    notes.line("    Fallback rule, verified in run_analysis.py step 9b.3 "
+               "(`if len(_pool) < _k: _pool = baseline_series`): the pool is "
+               "replaced by the FULL baseline. It is not clamped and not padded, "
+               "and DistanceComputer.compute_knn_distance raises rather than "
+               "clamping, so the caller is the only place this is handled. "
+               "Same rule as the Atari implementation.")
+
+    for (variant, split), aucs in curves.items():
+        label = ("single (full baseline)" if variant == "single"
+                 else "GMM (component pools)") + f" — {split}"
+        notes.section(label)
+        kb = int(np.argmax(aucs))
+        notes.value("best k", KS_NN[kb], note=f"AUROC {aucs[kb]:.4f}")
+        notes.value("worst k", KS_NN[int(np.argmin(aucs))],
+                    note=f"AUROC {min(aucs):.4f}")
+        notes.value("spread over the sweep", max(aucs) - min(aucs))
+        _note_listing(notes, "per k", KS_NN, aucs, x_fmt="k={:d}")
+
+    notes.section("Selection, and whether it transfers")
+    for variant in ("single", "gmm"):
+        kv = KS_NN[int(np.argmax(curves[(variant, "val")]))]
+        kt = KS_NN[int(np.argmax(curves[(variant, "test")]))]
+        i_v = KS_NN.index(kv)
+        notes.value(f"{variant}: k chosen on validation", kv,
+                    note=f"test AUROC there {curves[(variant, 'test')][i_v]:.4f}")
+        notes.value(f"{variant}: k that would have won on test", kt,
+                    note=f"test AUROC {max(curves[(variant, 'test')]):.4f}, "
+                         f"cost of selecting on validation "
+                         f"{max(curves[(variant, 'test')]) - curves[(variant, 'test')][i_v]:.4f}")
+    kv_g = KS_NN[int(np.argmax(curves[("gmm", "val")]))]
+    kv_s = KS_NN[int(np.argmax(curves[("single", "val")]))]
+    notes.value("validation prefers", 
+                f"GMM at k = {kv_g} ({max(curves[('gmm', 'val')]):.4f}) over "
+                f"single at k = {kv_s} ({max(curves[('single', 'val')]):.4f})")
+    notes.value("test at those same two settings",
+                f"GMM k = {kv_g}: {curves[('gmm', 'test')][KS_NN.index(kv_g)]:.4f}, "
+                f"single k = {kv_s}: {curves[('single', 'test')][KS_NN.index(kv_s)]:.4f}",
+                note="the selection reverses between the splits")
+
+    notes.section("The two variants against each other, on validation")
+    notes.value("difference at k = 1", auc_gmm[0] - auc_single[0],
+                note="they should nearly coincide here, since the single "
+                     "nearest baseline frame is usually inside the sample's own "
+                     "component")
+    for i, k in enumerate(KS_NN):
+        notes.value(f"k = {k}", f"single {auc_single[i]:.4f}, "
+                                f"GMM {auc_gmm[i]:.4f}",
+                    note=f"GMM minus single {auc_gmm[i] - auc_single[i]:+.4f}")
+    gb, sb = int(np.argmax(auc_gmm)), int(np.argmax(auc_single))
+    notes.value("selected GMM peak over its neighbours",
+                f"k={KS_NN[max(gb - 1, 0)]}: {auc_gmm[max(gb - 1, 0)]:.4f}, "
+                f"k={KS_NN[gb]}: {auc_gmm[gb]:.4f}, "
+                f"k={KS_NN[min(gb + 1, len(KS_NN) - 1)]}: "
+                f"{auc_gmm[min(gb + 1, len(KS_NN) - 1)]:.4f}",
+                note="how isolated the selected point is")
+    notes.value("GMM best minus single best", auc_gmm[gb] - auc_single[sb])
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #
@@ -906,6 +1868,55 @@ def _speed_entropy(logits: np.ndarray) -> np.ndarray:
     p /= p.sum(axis=1, keepdims=True)
     p = np.clip(p, 1e-12, 1.0)
     return -(p * np.log(p)).sum(axis=1)
+
+
+def _predicted_speed(logits: np.ndarray) -> np.ndarray:
+    """The agent's predicted target speed in m/s: the two-hot decoding of the
+    softmaxed 8-bin speed logits, which is the expectation over the bins
+    (planning_decoder.decode_two_hot)."""
+    x = logits.astype(np.float64)
+    x = x - x.max(axis=1, keepdims=True)
+    p = np.exp(x)
+    p /= p.sum(axis=1, keepdims=True)
+    return p @ SPEED_BINS
+
+
+def _note_live_trace(notes: FigureNotes, label: str, y: np.ndarray,
+                     injection: int, unit: str = "") -> None:
+    """Pre/post-injection description of one trace, plus the largest step in
+    each phase.  The step matters because a rise the clean twin also shows is
+    the scene changing, not the perturbation."""
+    y = np.asarray(y, float)
+    pre, post = y[:injection], y[injection:]
+    u = f" {unit}" if unit else ""
+    notes.line(f"    {label}:")
+    pad = "        "
+    for name, seg, off in (("pre-injection", pre, 0),
+                           ("post-injection", post, injection)):
+        if len(seg) == 0:
+            continue
+        notes.line(f"{pad}{name} (frames {off}-{off + len(seg) - 1}, "
+                   f"n = {len(seg)}): range {seg.min():.4g} to {seg.max():.4g}"
+                   f"{u}, median {np.median(seg):.4g}, mean {seg.mean():.4g}")
+    if len(pre) and len(post):
+        notes.line(f"{pad}median shift across the injection: "
+                   f"{np.median(post) - np.median(pre):+.4g}{u}")
+        notes.line(f"{pad}one-frame change at the injection "
+                   f"(frame {injection - 1} -> {injection}): "
+                   f"{y[injection] - y[injection - 1]:+.4g}{u}")
+        overlap = (post.min() <= pre.max()) and (pre.min() <= post.max())
+        notes.line(f"{pad}the two phases {'overlap' if overlap else 'are disjoint'}"
+                   f" in range")
+    d = np.diff(y)
+    if len(d):
+        for name, lo, hi in (("pre-injection", 0, max(injection - 1, 0)),
+                             ("post-injection", max(injection, 0), len(d))):
+            if hi <= lo:
+                continue
+            seg = d[lo:hi]
+            j = int(np.argmax(np.abs(seg)))
+            notes.line(f"{pad}largest single-frame step {name}: "
+                       f"{seg[j]:+.4g}{u} at frame {lo + j + 1}")
 
 
 def fig_live_scores(pert: str) -> None:
@@ -934,8 +1945,9 @@ def fig_live_scores(pert: str) -> None:
     s_mdx = np.load(mdx_path)
     c_mdx = np.load(att / f"live_pert_mdx_scores_{variant}_clean.npy")
 
-    s_peoc = _speed_entropy(np.load(att / f"live_pert_speed_logits_{variant}_2.npy"))
-    c_peoc = _speed_entropy(np.load(att / f"live_pert_speed_logits_{variant}_clean_2.npy"))
+    s_logits = np.load(att / f"live_pert_speed_logits_{variant}_2.npy")
+    c_logits = np.load(att / f"live_pert_speed_logits_{variant}_clean_2.npy")
+    s_peoc, c_peoc = _speed_entropy(s_logits), _speed_entropy(c_logits)
 
     fig, axs = plt.subplots(1, 3, figsize=(TEXT_WIDTH_IN, 2.2), sharex=True)
     panels = [("mahalanobis", s_mahal, c_mahal),
@@ -953,6 +1965,80 @@ def fig_live_scores(pert: str) -> None:
 
     fig.supxlabel("Frame index")
     save_figure(fig, OUT_DIR, f"live_scores_{pert}")
+
+    notes = FigureNotes(
+        f"live_scores_{pert}",
+        title=f"Change-point detection, {PERT_LABELS[pert]}: Mahalanobis-GMM, "
+              f"MDX and PEOC over one live run",
+        source=str(att) + f" (variant {variant})")
+    notes.line(f"    One recorded trajectory. {PERT_LABELS[pert]} is injected at "
+               f"frame {injection} and stays on for the rest of the run.")
+    notes.line(f"    Coloured trace: the perturbed run. Grey dashed trace: the "
+               f"same frames as the agent would have seen them unperturbed (the "
+               f"clean twin), so a move both traces make is the scene changing "
+               f"and not the perturbation.")
+    notes.line(f"    Mahalanobis-GMM uses the same K = {SELECTED_K} model as "
+               "every other figure in the chapter.")
+    notes.line("    A case study, not a statistical evaluation: one trajectory "
+               "per perturbation.")
+    notes.line("    No rise/plateau/shape descriptors: they are defined for a "
+               "smooth sweep and would merge a noisy 100-frame trace into one "
+               "segment. The phase blocks and the largest single-frame steps "
+               "carry the shape instead.")
+    notes.value("frames, perturbed run", len(s_mahal))
+    notes.value("frames, clean twin", len(c_mahal))
+    notes.value("injection frame", injection,
+                note="first frame with is_perturbed set")
+
+    for title, fam, s_p, s_c, unit in (
+            ("Mahalanobis distance (left panel)", "mahalanobis",
+             s_mahal, c_mahal, ""),
+            ("MDX distance (middle panel)", "mdx", s_mdx, c_mdx, ""),
+            ("PEOC entropy (right panel)", "peoc", s_peoc, c_peoc, "nats")):
+        notes.section(title)
+        _note_live_trace(notes, "perturbed", s_p, injection, unit)
+        _note_live_trace(notes, "clean twin", s_c, injection, unit)
+        pre_p = s_p[:injection]
+        post_p, post_c = s_p[injection:], s_c[injection:injection + len(s_c)]
+        n = min(len(post_p), len(post_c))
+        if n:
+            notes.value("perturbed minus clean twin, post-injection median",
+                        float(np.median(post_p[:n]) - np.median(post_c[:n])))
+            notes.value("frames where the perturbed trace is above its twin",
+                        f"{int((post_p[:n] > post_c[:n]).sum())} of {n}",
+                        note="post-injection only")
+        if len(pre_p) and len(post_p):
+            notes.value("post-injection minimum against the pre-injection maximum",
+                        f"{post_p.min():.4g} vs {pre_p.max():.4g}",
+                        note="the perturbed trace leaves its own pre-injection "
+                             "band for good"
+                        if post_p.min() > pre_p.max() else
+                        "the perturbed trace returns into its own pre-injection band")
+        notes.curve("perturbed, whole run", np.arange(len(s_p)), s_p,
+                    unit=unit, rise=False, plateau=False, shape=False)
+        notes.curve("clean twin, whole run", np.arange(len(s_c)), s_c,
+                    unit=unit, rise=False, plateau=False, shape=False)
+
+    notes.section("Predicted target speed")
+    notes.line("    The quantity PEOC scores the entropy of. Softmax over the "
+               "8 target-speed bins [0, 4, 8, 10, 13.9, 16, 17.8, 20] m/s, "
+               "decoded to a scalar by the model's own two-hot decoding.")
+    for label, lg in (("perturbed", s_logits), ("clean twin", c_logits)):
+        spd = _predicted_speed(lg)
+        _note_live_trace(notes, label, spd, injection, "m/s")
+        p = np.exp(lg - lg.max(axis=1, keepdims=True))
+        p /= p.sum(axis=1, keepdims=True)
+        brake = p[:, 0]
+        notes.line(f"        probability on the zero-speed (brake) bin: "
+                   f"pre-injection median {np.median(brake[:injection]):.4g}, "
+                   f"post-injection median {np.median(brake[injection:]):.4g}, "
+                   f"post-injection max {brake[injection:].max():.4g}")
+        notes.line(f"        frames with the brake bin above 0.999: "
+                   f"{int((brake[injection:] > 0.999).sum())} of "
+                   f"{len(brake) - injection} post-injection, "
+                   f"{int((brake[:injection] > 0.999).sum())} of {injection} "
+                   f"before")
+    notes.write(OUT_DIR)
 
 
 # --------------------------------------------------------------------------- #

@@ -348,7 +348,8 @@ route_maker(waypoints, "my_route.xml")
 ## Thesis Figures
 
 Final thesis-quality figures are produced by `make_thesis_figures.py` (repo root)
-and written to `thesis_figures/` as `.pdf` + `.png`. The visual style is shared
+and written to `thesis_figures/` as `.pdf` + `.png` + a `.txt` sidecar (see
+"Figure sidecars" below). The visual style is shared
 with the Atari/ATOMs chapter and defined by `thesis_style.py` (rcParams, CVD-safe
 metric palette, save helper) with the full written spec in
 `documents/14_thesis_figure_style.md` — no titles, one legend/colorbar per figure,
@@ -386,6 +387,55 @@ metrics exclude them. Runs in either conda env (`PCLA`, numpy 1.x, or
 `atoms3`, numpy 2.x): a shim in the script aliases `numpy._core` →
 `numpy.core` so the numpy-2-pickled object arrays in the alt-split npz files
 load under numpy 1.x.
+
+### Figure sidecars (`figure_notes.py`)
+
+Every figure also writes a `<name>.txt` beside its `.pdf`/`.png` holding the
+exact numbers behind each visual feature, so the thesis chapter is drafted off
+one file instead of read off a plot. `figure_notes.py` is the numpy-only module
+copied **verbatim** from the ATOMs (Atari) project, exactly like
+`thesis_style.py`: it is the single source of truth for *numbers* the way
+`thesis_style.py` is for *looks*. Do not edit it here — fix it there and re-copy.
+Entries marked `[def]` are derived descriptors that depend on a stated rule,
+printed in the file header, and must be quoted as such.
+
+What a CARLA sidecar carries, which is not the same as an Atari one because
+nothing here is a sweep over a severity knob:
+
+- **the aggregation, named explicitly.** Three appear across the figures and
+  reading one for another is the easiest mistake to make. Verified identity,
+  checked to machine precision for all ten detector variants: both splits hold
+  exactly 200 clean and 200 of each perturbation, all scored against the same
+  clean frames, so a pooled AUROC *is* the unweighted mean of the
+  per-perturbation AUROCs in its pool. The figures therefore differ only in
+  **which perturbations are in the pool** (the K criterion drops Gaussian noise)
+  and whether detectors are averaged on top.
+- **operating points, not only AUROC**: TPR at 5 % and 1 % FPR, overall and per
+  perturbation, thresholded at the clean scores' own quantile.
+- **the full per-K and per-k listings**, since a 19-point sweep is short enough
+  that the reader wants every value.
+- **cluster occupancies, and the routing that goes with them**: how many
+  baseline frames each component holds *and* how many evaluation samples are
+  routed to it, which is what decides how often the k-NN full-baseline fallback
+  fires.
+- **for the live runs**: pre- and post-injection ranges for the perturbed trace
+  *and* its clean twin, the step at the injection, the largest single-frame step
+  in each phase, and the predicted target speed with the brake-bin probability.
+  A step both traces make is the scene changing, not the perturbation.
+
+`rise onset`, `plateau` and `shape` are switched **off** in this project. They
+are defined for a smooth 101-point sweep over an intensity we set; on a 19-point
+K sweep or a noisy 100-frame trace `shape` merges everything into one segment and
+prints "monotone rise" against a Spearman rho of −0.21. The per-K listings and
+the phase blocks carry the shape instead.
+
+### Environment
+
+`atoms3` needs **scikit-learn** for this script (PCA in figure 2, `roc_auc_score`
+throughout); installed 2026-09-03 (`1.7.2`). `timm` is still absent, so
+`cache_live_mdx_scores.py` cannot run there — the cached
+`live_pert_mdx_scores_*.npy` arrays are on disk and the figures need nothing
+more. There is no `PCLA` env on this machine.
 
 ---
 
