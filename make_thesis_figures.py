@@ -22,12 +22,14 @@ Figures written to `thesis_figures/` (each as .pdf + .png + .txt):
        1x2: the same baseline PCA, left coloured by collection run, right by
        GMM component (K=8) with component means.  (Combines
        pca/pca_baseline_by_run.png and pca/pca_baseline_clusters.png.)
-  3. score_dist_mahal_gmm_vs_knn_single
-       1x2: score distributions of the two strongest detectors on the
-       labelled test set — Mahalanobis-GMM (left) vs plain single kNN over
-       the full baseline (right; kNN-GMM is dominated by it, see figure 4).
-       Scores are recomputed from the saved detector parameters; AUCs are
-       checked against the stored results JSON.
+  3. score_dist_per_perturbation
+       2x2: Mahalanobis-GMM score distribution on the labelled test set, the
+       same clean set overlaid with each perturbation in its own panel, each
+       marked with its TPR@5%FPR (AUROC is the subject of the per-perturbation
+       AUROC figure, so it is kept out of this figure and lives in the sidecar).
+       Replaces the earlier single stacked panel.  Scores are recomputed from
+       the saved detector parameters; AUCs are checked against the stored
+       results JSON.  (The single-kNN check is kept in the sidecar.)
   4. auroc_per_perturbation_gmm
        Grouped bars: test AUROC per perturbation for the four GMM detectors
        plus the two non-attention baselines (MDX, PEOC).  Bars are anchored
@@ -96,7 +98,7 @@ from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-from figure_notes import FigureNotes
+from figure_notes import FigureNotes, spearman
 from thesis_style import (
     METRIC_AXIS,
     METRIC_COLORS,
@@ -749,78 +751,94 @@ def fig_score_distributions() -> None:
                 "detector parameters and test profiles are out of sync.")
         print(f"  [check] {name}: recomputed AUC {auc:.4f} == stored {res['auc']:.4f}")
 
-    # One panel, Mahalanobis only (the k-NN panel was dropped on 2026-09-03).
-    # The perturbed histogram is STACKED by perturbation: each bar's total is the
-    # perturbed density in that bin and each segment is one perturbation's share
-    # of it.  The four sets are exactly equal in size, so segment height is
-    # directly comparable across perturbations and across bins.
+    # 2x2 grid, one panel per perturbation: clean against that perturbation,
+    # each with its own AUROC and detection rate at the 5% FPR threshold.  This
+    # replaces the earlier single stacked panel (through 2026-09-16), which
+    # pooled the four perturbations into one density and hid each one's shape.
+    # Colours are the Atari appendix TABLE tints (compute_detection_summary.py
+    # PERT_FILL: noise=red, attack=blue, increase=yellow, decrease=green),
+    # nudged ~35% toward a soft same-hue edge so they read on a histogram while
+    # staying clearly paler than the saturated attention-distance palette.
+    # brightness_scale is the increase analogue, camera_loss the decrease one.
     clean_face, clean_edge = to_rgba("0.5", 0.45), "0.35"
+    PANEL = {   # perturbation: (pale table tint, soft same-hue edge)
+        "brightness_scale": ("#f5f5de", "#bcb46a"),   # yellow  (increase)
+        "camera_loss":      ("#dff1df", "#7bbd88"),   # green   (decrease)
+        "gaussian_noise":   ("#f9dfdf", "#d1665e"),   # red     (noise)
+        "pgd":              ("#dbebef", "#6fa5bd"),   # blue    (attack)
+    }
 
-    bins = np.linspace(0.0, float(s_mahal.max()) * 1.02, 48)
+    def _mix(hex_a, hex_b, t):               # t of b blended into a
+        a, b = np.array(to_rgba(hex_a)[:3]), np.array(to_rgba(hex_b)[:3])
+        return tuple((1.0 - t) * a + t * b)
+
+    bins = np.linspace(0.0, float(s_mahal.max()) * 1.02, 40)
     width = bins[1] - bins[0]
-    n_pert = int((labels == 1).sum())
+    clean_scores = s_mahal[labels == 0]
+    thr95 = float(np.quantile(clean_scores, 0.95))
+    c_counts, _ = np.histogram(clean_scores, bins=bins)
+    c_dens = c_counts / (len(clean_scores) * width)
+    clean_step_x = np.append(bins, bins[-1])
+    clean_step_y = np.append(np.append(0.0, c_dens), 0.0)
 
-    fig, ax = plt.subplots(figsize=(5.2, 3.1))
+    # panels in AUROC order, strongest first
+    panel_order = ["brightness_scale", "camera_loss", "gaussian_noise", "pgd"]
+    fig, axs = plt.subplots(2, 2, figsize=(TEXT_WIDTH_IN, 4.6),
+                            sharex=True, sharey=True)
+    for pt, ax in zip(panel_order, axs.ravel()):
+        ps = s_mahal[perts == pt]
+        t5, _ = tpr_at_fpr(clean_scores, ps, 0.05)
+        face, edge = PANEL[pt]
+        face = _mix(face, edge, 0.35)        # turn the colour up a touch
+        # clean reference (grey), same in every panel
+        ax.hist(clean_scores, bins=bins, density=True, histtype="stepfilled",
+                facecolor=clean_face, edgecolor=clean_edge, linewidth=0.9,
+                zorder=2)
+        # this perturbation
+        ax.hist(ps, bins=bins, density=True, histtype="stepfilled",
+                facecolor=to_rgba(face, 0.9), edgecolor=edge, linewidth=1.3,
+                zorder=3)
+        # clean outline on top so its shape stays visible under the fill
+        ax.step(clean_step_x, clean_step_y, where="pre", color=clean_edge,
+                linewidth=0.9, zorder=4)
+        ax.axvline(thr95, color="0.25", linestyle=(0, (1, 1.6)), linewidth=0.9,
+                   zorder=5)
+        ax.set_title(PERT_LABELS[pt], fontsize=9)
+        _stats_box(ax, f"TPR@5%FPR = {t5:.0%}")
 
-    ax.hist(s_mahal[labels == 0], bins=bins, density=True,
-            histtype="stepfilled", facecolor=clean_face,
-            edgecolor=clean_edge, linewidth=0.9, zorder=2)
-
-    bottom = np.zeros(len(bins) - 1)
-    centres = 0.5 * (bins[:-1] + bins[1:])
-    for pt in PERT_ORDER:
-        counts, _ = np.histogram(s_mahal[perts == pt], bins=bins)
-        seg = counts / (n_pert * width)          # shares of the perturbed density
-        ax.bar(centres, seg, bottom=bottom, width=width,
-               facecolor=PERT_COLORS[pt], edgecolor="none", zorder=3)
-        bottom += seg
-    # one outline around the whole perturbed stack, so it reads as one population
-    ax.step(np.append(bins, bins[-1]), np.append(np.append(0.0, bottom), 0.0),
-            where="pre", color="#b71c1c", linewidth=0.9, zorder=4)
-    # and the clean outline again on top: the fill is behind the stack, so
-    # without this the clean shape is unreadable wherever the stack is taller
-    c_counts, _ = np.histogram(s_mahal[labels == 0], bins=bins)
-    c_dens = c_counts / (int((labels == 0).sum()) * width)
-    ax.step(np.append(bins, bins[-1]), np.append(np.append(0.0, c_dens), 0.0),
-            where="pre", color=clean_edge, linewidth=0.9, zorder=4)
-
-    # the 5 % FPR operating point: everything to its right is what a detector
-    # admitting one false alarm in twenty would flag
-    thr95 = float(np.quantile(s_mahal[labels == 0], 0.95))
-    ax.axvline(thr95, color="0.25", linestyle=(0, (1, 1.6)), linewidth=0.9,
-               zorder=5)
-    ax.annotate("5 % FPR", xy=(thr95, ax.get_ylim()[1] * 0.60),
-                xytext=(4, 0), textcoords="offset points",
-                fontsize=7.5, color=MUTED, ha="left", va="center", zorder=5)
-
-    ax.set_xlabel(METRIC_AXIS["mahalanobis"])
-    ax.set_ylabel("Density")
-    ax.set_xlim(left=0.0)
-    _stats_box(ax, f"AUROC = {res_mahal['auc']:.3f}")
+    axs[1, 0].annotate("5 % FPR", xy=(thr95, axs[1, 0].get_ylim()[1] * 0.88),
+                       xytext=(-4, 0), textcoords="offset points",
+                       fontsize=7.0, color=MUTED, ha="right", va="center",
+                       bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
+                                 alpha=0.85, edgecolor="none"))
+    for ax in axs[-1, :]:
+        ax.set_xlabel(METRIC_AXIS["mahalanobis"])
+    for ax in axs[:, 0]:
+        ax.set_ylabel("Density")
+    axs[0, 0].set_xlim(left=0.0)
 
     handles = [Patch(facecolor=clean_face, edgecolor=clean_edge, linewidth=0.9,
                      label="clean")]
-    handles += [Patch(facecolor=PERT_COLORS[pt], edgecolor="none",
-                      label=PERT_LABELS[pt]) for pt in PERT_ORDER]
-    _fig_legend(fig, handles, ncol=5)
+    _fig_legend(fig, handles, ncol=1)
 
-    save_figure(fig, OUT_DIR, "score_dist_mahal_gmm_vs_knn_single")
+    save_figure(fig, OUT_DIR, "score_dist_per_perturbation")
 
     notes = FigureNotes(
-        "score_dist_mahal_gmm_vs_knn_single",
+        "score_dist_per_perturbation",
         title="Mahalanobis-GMM score distribution on the labelled test set, "
-              "clean against perturbed, the perturbed side split by perturbation",
+              "clean against each perturbation in its own panel",
         source=f"{TEST_DIR}/attention/test_profiles_2.npy + {RUN_DIR}")
-    notes.line(f"    Both AUROCs are {AGG_POOLED_TEST}")
+    notes.line(f"    The pooled AUROC is {AGG_POOLED_TEST}")
     notes.line("    Scores are recomputed from the saved detector parameters and "
                "checked against the stored results JSONs.")
-    notes.line("    ONE panel since 2026-09-03, Mahalanobis-GMM only. The "
-               "perturbed histogram is stacked by perturbation: a bar's total "
-               "height is the perturbed density in that bin, each segment one "
-               "perturbation's share of it. The four perturbation sets are "
-               "exactly equal in size, so segment heights are comparable across "
-               "perturbations and across bins. Shade order is PERT_ORDER, dark "
-               "to light, which coincides with the AUROC order.")
+    notes.line("    FOUR panels since 2026-09-16 (replacing the single stacked "
+               "panel), Mahalanobis-GMM only. Each panel overlays the same clean "
+               "test set (grey) with one perturbation, in AUROC order: brightness "
+               "increase, camera loss, Gaussian noise, PGD. Only the TPR@5%FPR is "
+               "drawn on each panel; AUROC is reported by the per-perturbation "
+               "AUROC figure and kept out of this one, but the per-panel and "
+               "pooled AUROCs are recorded below. Colours are the Atari appendix "
+               "table tints (PERT_FILL) nudged 35% toward a soft same-hue edge.")
     notes.line("    The dotted vertical rule is the clean scores' 95th "
                "percentile, i.e. the threshold of a detector admitting one false "
                "alarm in twenty. Everything to its right is what that detector "
@@ -1649,6 +1667,204 @@ def fig_val_test_auc_vs_k() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Figure 14 - AUROC per perturbation against the component count K
+# --------------------------------------------------------------------------- #
+def fig_auroc_per_perturbation_vs_k() -> None:
+    """Per-perturbation AUROC against K, on both splits, one panel each.
+
+    auroc_val_test_vs_K averages three perturbations and then four detectors,
+    so a single curve carries a level set almost entirely by the brightness
+    increase.  This figure decomposes it, because the interpretation reads the
+    shape of that curve as a property of the reference model.
+
+    Small multiples rather than four coloured lines: PERT_COLORS is a
+    dark-to-light red ramp built for the stacked histogram, and two of its four
+    steps are too pale to carry a line.  The panel title is the identity
+    channel instead, and the shared y-axis is the point, since the panels sit
+    at very different heights.
+
+    Also carries the k-fallback audit.  The clustered k-th-NN entry inside the
+    mean uses each K's own val-selected k, while the components shrink as K
+    grows, so the entry silently changes character once a component holds fewer
+    frames than k.  The sidecar reports the smallest component and the share of
+    evaluation samples routed to a component below k, per K."""
+    from sklearn.metrics import roc_auc_score
+    from scipy.spatial.distance import cdist
+    from ATOMs_Analysis.utils.distance_computer import DistanceComputer as DC
+
+    Ks = sorted(set().union(*[set(v) for v in load_sweep().values()]))
+    series = load_baseline_series()
+
+    splits = {}
+    for tag, d, prof, lab in (
+            ("val", ROOT / "data" / "TFV6" / "val_data_alt", "val_profiles_2.npy",
+             "val_labeled.npz"),
+            ("test", TEST_DIR, "test_profiles_2.npy", "test_labeled.npz")):
+        X = np.load(d / "attention" / prof).astype(np.float64)
+        z = np.load(d / lab, allow_pickle=True)
+        splits[tag] = (X, z["label"].astype(int), z["perturbation"].astype(str))
+
+    def _per_pert(scores, labels, perts):
+        """AUROC of each perturbation against the clean frames only."""
+        out = {}
+        for p in PERT_ORDER:
+            m = (perts == p) | (labels == 0)
+            out[p] = float(roc_auc_score(labels[m], scores[m]))
+        return out
+
+    def _norm(a):
+        return a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
+
+    # K = 1, the single-Gaussian baseline, exactly as fig_val_test_auc_vs_k
+    # builds it: the run's stored single-Gaussian parameters and a k-NN pool
+    # that is the whole baseline, at the val-selected single k.
+    md = np.load(RUN_DIR / "mahal_detector.npz", allow_pickle=True)
+    s_mean, s_cov = md["mean"].astype(np.float64), md["cov"].astype(np.float64)
+    summ8 = json.loads((RUN_DIR / "summary.json").read_text())
+    k1 = int(re.search(r"k=(\d+)",
+                       next(k for k in summ8 if "k-NN" in k and "GMM" not in k)).group(1))
+
+    curves = {(t, p): [] for t in splits for p in PERT_ORDER}
+    base_n = _norm(series)
+    for tag, (X, lab, prt) in splits.items():
+        det = [_per_pert(s, lab, prt) for s in (
+            mahalanobis_batch(X, s_mean, s_cov),
+            np.linalg.norm(X - s_mean, axis=1),
+            np.array([DC.compute_jsd(s_mean, x) for x in X]),
+            np.sort(cdist(_norm(X), base_n), axis=1)[:, k1 - 1])]
+        for p in PERT_ORDER:
+            curves[(tag, p)].append(float(np.mean([d[p] for d in det])))
+
+    smallest, fallback = {}, {}
+    for K in Ks:
+        run = RESULTS_ROOT / f"{K} clusters" / "atoms_analysis_mode_2"
+        summ = json.loads((run / "summary.json").read_text())
+        g = np.load(run / "gmm.npz", allow_pickle=True)
+        means = g["means"].astype(np.float64)
+        covs = g["covariances"].astype(np.float64)
+        weights = g["weights"].astype(np.float64)
+        k_val = int(re.search(r"k=(\d+)",
+                              next(k for k in summ if "k-NN-GMM" in k)).group(1))
+
+        sizes = np.bincount(gmm_predict(series, means, covs, weights),
+                            minlength=len(weights))
+        smallest[K] = (int(sizes.min()), k_val)
+
+        for tag, (X, lab, prt) in splits.items():
+            cd = np.stack([mahalanobis_batch(X, means[c], covs[c])
+                           for c in range(len(weights))])
+            route = cd.argmin(axis=0)
+            det = [_per_pert(s, lab, prt) for s in (
+                cd.min(axis=0),
+                np.linalg.norm(X - means[route], axis=1),
+                np.array([DC.compute_jsd(means[route[i]], X[i])
+                          for i in range(len(X))]),
+                knn_gmm_scores(X, series, means, covs, weights, k=k_val))]
+            for p in PERT_ORDER:
+                curves[(tag, p)].append(float(np.mean([d[p] for d in det])))
+            if tag == "test":
+                small = {c for c in range(len(weights)) if sizes[c] < k_val}
+                fallback[K] = float(np.mean([r in small for r in route]))
+
+    # sanity: the stored per-perturbation test AUROCs at the selected K must
+    # reproduce, and the three-perturbation mean must equal the plotted curve
+    # of auroc_val_test_vs_K at that K.
+    stored = load_per_perturbation()
+    i_sel = [1] + Ks
+    j = i_sel.index(SELECTED_K)
+    for p in PERT_ORDER:
+        want = float(np.mean([stored[p][f"{f}_gmm"] for f in GMM_FAMILIES]))
+        got = curves[("test", p)][j]
+        if abs(want - got) > 1e-3:
+            raise RuntimeError(f"K={SELECTED_K} {p}: {got:.4f} != stored {want:.4f}")
+    print(f"  [check] per-perturbation test AUROC at K={SELECTED_K} reproduces "
+          "results_per_perturbation.json")
+
+    xs = [1] + Ks
+    fig, axes = plt.subplots(2, 2, figsize=(6.4, 4.2), sharex=True, sharey=True)
+    for ax, p in zip(axes.ravel(), PERT_ORDER):
+        ax.axhline(0.5, color="0.78", linewidth=0.8, zorder=1)
+        ax.axvline(SELECTED_K, color="0.78", linewidth=0.8,
+                   linestyle=(0, (2, 2)), zorder=1)
+        ax.plot(xs, curves[("val", p)], color="0.15", linewidth=1.6,
+                marker="o", markersize=2.6, markeredgewidth=0, zorder=3)
+        ax.plot(xs, curves[("test", p)], color="0.15", linewidth=1.2,
+                linestyle=(0, (1, 1.6)), marker="o", markersize=2.2,
+                markeredgewidth=0, zorder=2)
+        ax.set_title(PERT_LABELS[p], fontsize=8.5, pad=3)
+        ax.set_xticks([1] + list(range(4, 21, 4)))
+        ax.set_xlim(0.4, 20.6)
+    for ax in axes[-1]:
+        ax.set_xlabel("GMM components $K$")
+    for ax in axes[:, 0]:
+        ax.set_ylabel("AUROC")
+
+    handles = [
+        Line2D([], [], color="0.15", linewidth=1.6, label="validation"),
+        Line2D([], [], color="0.15", linewidth=1.2, linestyle=(0, (1, 1.6)),
+               label="test"),
+        Line2D([], [], color="0.78", linewidth=0.8, label="chance"),
+        Line2D([], [], color="0.78", linewidth=0.8, linestyle=(0, (2, 2)),
+               label=f"selected $K={SELECTED_K}$"),
+    ]
+    _fig_legend(fig, handles, ncol=4)
+    fig.tight_layout()
+    save_figure(fig, OUT_DIR, "auroc_per_perturbation_vs_K")
+
+    notes = FigureNotes(
+        "auroc_per_perturbation_vs_K",
+        title="AUROC per perturbation against the component count K, "
+              "validation and test",
+        source=str(RESULTS_ROOT) + "/<K> clusters/atoms_analysis_mode_2 "
+               "+ the labelled val/test splits")
+    notes.line(f"    Sweep: K = 1 and {min(Ks)} to {max(Ks)}. K = 1 is the "
+               "single-Gaussian, no-clustering baseline, built the same way as "
+               "in auroc_val_test_vs_K.txt.")
+    notes.line("    A panel is one perturbation's frames against the clean "
+               "frames only, so a panel is NOT a pool and the four panels do "
+               "not average to the K-selection curve, which drops Gaussian "
+               "noise. The mean of the other three panels does.")
+    notes.line("    Each curve is the unweighted mean over the four GMM "
+               "detectors, the same averaging step as auroc_val_test_vs_K. "
+               "k-NN-GMM uses each K's own val-selected k.")
+    notes.line("    Shared y-axis on purpose: the panels sit at very different "
+               "heights and that is the finding.")
+    notes.line("    The same 1000 frames per split are scored at every K, so "
+               "the points are not independent comparisons.")
+    notes.line("    No rise/plateau/shape descriptors: K is not a severity knob.")
+
+    mean3 = [float(np.mean([curves[("test", p)][i] for p in PERT_ORDER
+                            if p != "gaussian_noise"])) for i in range(len(xs))]
+    for p in PERT_ORDER:
+        notes.section(PERT_LABELS[p])
+        for tag in ("val", "test"):
+            y = curves[(tag, p)]
+            notes.curve(f"{tag} AUROC vs K", xs, y,
+                        rise=False, plateau=False, shape=False)
+            notes.value(f"{tag}: counts of K beating the K = 1 value",
+                        sum(1 for v in y[1:] if v > y[0]),
+                        note=f"of {len(Ks)} clustered counts")
+            below = [xs[i] for i, v in enumerate(y) if v < 0.5]
+            notes.value(f"{tag}: K with AUROC below chance",
+                        ", ".join(str(b) for b in below) if below else "none")
+        notes.value("test: rank correlation with the plotted K-selection curve",
+                    spearman(curves[("test", p)], mean3))
+
+    notes.section("The k-th-NN fallback across the sweep")
+    notes.line("    The clustered k-th-NN entry in the mean uses each K's own "
+               "val-selected k, while the components shrink as K grows. Once a "
+               "component holds fewer frames than k, every sample routed to it "
+               "is scored against the full baseline instead, so the entry "
+               "changes character across the sweep.")
+    for K in Ks:
+        s, kv = smallest[K]
+        notes.line(f"    K = {K:>2}: smallest component {s:>4} frames, "
+                   f"k = {kv:>3}, test samples routed below k "
+                   f"{fallback[K]:.1%}")
+    notes.write(OUT_DIR)
+
+
+# --------------------------------------------------------------------------- #
 # Figure 13 — kNN neighbour-count selection on the validation set
 # --------------------------------------------------------------------------- #
 def fig_knn_k_selection() -> None:
@@ -1962,6 +2178,11 @@ def fig_live_scores(pert: str) -> None:
                 linewidth=1.4, zorder=3)
         ax.set_ylabel(METRIC_AXIS[fam])
         ax.margins(x=0.02)
+        # Start every panel at zero. The three scores differ by two orders of
+        # magnitude, and on a truncated axis a trace that wanders across its own
+        # whole range looks no more variable than one that barely moves. How far
+        # a score travels relative to its own level is the point of these panels.
+        ax.set_ylim(bottom=0)
 
     fig.supxlabel("Frame index")
     save_figure(fig, OUT_DIR, f"live_scores_{pert}")
@@ -2052,7 +2273,7 @@ def main() -> None:
     fig_gmm_auc_vs_k()
     print("[2/13] Baseline PCA (run vs GMM) ...")
     fig_pca_run_vs_gmm()
-    print("[3/13] Score distributions (Mahalanobis-GMM vs single kNN) ...")
+    print("[3/13] Score distributions (per perturbation) ...")
     fig_score_distributions()
     print("[4/13] AUROC per perturbation ...")
     fig_auroc_per_perturbation()
@@ -2067,10 +2288,12 @@ def main() -> None:
     for i, pert in enumerate(LIVE_VARIANTS, start=9):
         print(f"[{i}/13] Live scores: {pert} ...")
         fig_live_scores(pert)
-    print("[12/13] Val vs test mean AUROC over K ...")
+    print("[12/14] Val vs test mean AUROC over K ...")
     fig_val_test_auc_vs_k()
-    print("[13/13] kNN k selection on val ...")
+    print("[13/14] kNN k selection on val ...")
     fig_knn_k_selection()
+    print("[14/14] AUROC per perturbation over K ...")
+    fig_auroc_per_perturbation_vs_k()
     print(f"\nDone -> {OUT_DIR}")
 
 
