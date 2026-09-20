@@ -195,13 +195,13 @@ def main() -> None:
         vals = np.asarray(vals)
         lo, hi = np.percentile(vals, [2.5, 97.5])
         notes.value(f"{split}", fmt_ci(point, lo, hi, float(vals.std(ddof=1))),
-                    note="this is the value plotted at K = 8")
+                    note=f"this is the value plotted at K = {SELECTED_K}")
         mean_boot[split] = (point, vals)
 
     n = min(len(mean_boot["val"][1]), len(mean_boot["test"][1]))
     diff = mean_boot["val"][1][:n] - mean_boot["test"][1][:n]
     lo, hi = np.percentile(diff, [2.5, 97.5])
-    notes.value("offset of the plotted curves at K = 8",
+    notes.value(f"offset of the plotted curves at K = {SELECTED_K}",
                 f"{mean_boot['val'][0] - mean_boot['test'][0]:+.4f}  "
                 f"95% CI [{lo:+.4f}, {hi:+.4f}]")
     notes.value("    is zero inside the interval?",

@@ -951,9 +951,61 @@ The original split (non-Town05 baseline, Town05 test/val) makes test frames OOD 
 
 Route-level splitting prevents leakage from temporally-correlated frames within a route.
 
-### Invariant
+### Invariant — holds for the split, NOT for the directories (corrected 2026-09-20)
 
-No filename overlap between `baseline_data_alt/frames/`, `test_data_alt/frames/`, and `val_data_alt/frames/` — guaranteed by construction (each shuffled route appears in exactly one slice).
+The *algorithm* assigns each shuffled route to exactly one slice, so the split itself cannot overlap.
+**The directories can, and did.** `_write_plan` writes into `frames/` without clearing it, and
+`BaselineDataLoader.load_all_runs` globs whatever is present, so files left by an earlier migration
+run are silently loaded as baseline data.
+
+This produced a real leak: four routes from an aborted run stayed in `baseline_data_alt/frames/` and
+put 124 frames into the training baseline that the split had assigned to test (3 routes, 84 frames)
+and validation (1 route, 27 frames). It went unnoticed for three months because nothing checks the
+invariant — the claim above was stated as fact and never asserted in code.
+
+Fixed 2026-09-20 by `fix_baseline_leak.py`; the baseline is 5000 frames / 186 route files again.
+**The invariant is still not enforced.** Until it is, verify it rather than assume it:
+
+```python
+sets = {s: {p.stem for p in (ROOT/s/"frames").glob("run_*.npz")}
+        for s in ("baseline_data_alt", "test_data_alt", "val_data_alt")}
+assert not (sets["baseline_data_alt"] & sets["test_data_alt"])
+assert not (sets["baseline_data_alt"] & sets["val_data_alt"])
+```
+
+A cheaper tell: within one migration the frames-per-route count is constant, so a file whose frame
+count differs from the modal count did not come from the current run.
+
+---
+
+## Run-file ordering must not depend on the platform (2026-09-20)
+
+`sorted(directory.glob(pattern))` compares `Path` objects, and `PurePath` normalises case on Windows
+but not on POSIX. On the TFV6 baseline **140 of 190 positions differ** between the two orders.
+
+Cached per-frame arrays (`baseline_2.npz`, `mdx_features.npz`, `mdx_fc_features.npz`) are
+concatenated in the HPC's POSIX order, so re-globbing `frames/` on Windows pairs profile rows with
+the wrong run files — silently, since only row *counts* are checked. It corrupted the PCA-by-run
+sidecar and the cluster representative-frame provenance.
+
+All run-file globs now sort by `key=lambda p: p.name`, which is case-sensitive on both platforms.
+Note `make_thesis_figures.py` carried two private re-implementations of the ordering, so patching the
+loader alone was a no-op — **grep for `glob("run_*.npz")` after any change here.**
+
+To verify an ordering is right, use a rare-class fingerprint: take rows whose profile puts mass on a
+rare semantic class and check that class is actually present in the mapped frame's segmentation.
+POSIX order scores 28/28; the Windows order 0/28.
+
+---
+
+## MDXDetector is not reproducible run to run (2026-09-20)
+
+`MDXDetector.fit` seeds its calibration split (`default_rng(seed=0)`) but `PCA(n_components=50)`
+(`detectors.py:1001`) has no `random_state`, and with 512 input features sklearn's `auto` solver
+selects randomized SVD. Repeated fits on identical data spread about **sd 0.0005** on pooled AUROC.
+
+Quote MDX to three decimals, and do not treat a difference of ~0.001 between two MDX runs as a
+result. Set `random_state` on that PCA if bit-reproducibility is ever needed.
 
 ---
 

@@ -252,6 +252,10 @@ data/
     frames/run_*.npz         # Raw clean test frames (migrated from LEAD, Town05 only)
     test_labeled.npz         # Perturbed+labeled test set
     attention/
+      mdx_test_features.npz  # 512-d backbone features of the labeled test set
+                             #   (cached 2026-09-20; the pipeline otherwise stores
+                             #    only MDX *scores*, so re-fitting MDX and
+                             #    re-scoring needed torch. Mode-independent.)
       test_profiles_1.npy    # Per-frame ATOMs profiles, MODE_ANALYSIS=1
       test_profiles_2.npy    # Per-frame ATOMs profiles, MODE_ANALYSIS=2
       test_logits_1.npy      # Per-frame action logits (WOR, mode 1)
@@ -272,6 +276,21 @@ data/
 Profile filenames are always suffixed with the `MODE_ANALYSIS` value (`_1` or `_2`). `run_analysis.py` and `run_online_analysis.py` load the file matching `conf.MODE_ANALYSIS`; `BaselineComputer` saves to the same mode-specific path. To compare modes, set `MODE_ANALYSIS = 1` or `2` in `atoms_config.py` and re-run the analysis without recomputing.
 
 **Alternative split** (`EXPERIMENT_VARIANT = "alternative"` in `atoms_config.py`): all four path variables (`BASELINE_DATA_DIR`, `TEST_DATA_DIR`, `VAL_DATA_DIR`, `RESULTS_DIR`) resolve to `*_data_alt` / `results_alt` counterparts. No other code changes needed — flip the flag to switch splits entirely.
+
+> **Run-file ordering is platform-dependent, and the cached arrays depend on it.**
+> Every glob over `run_*.npz` sorts with `key=lambda p: p.name`; plain
+> `sorted(Path.glob(...))` differs between Windows and POSIX (140 of 190 positions
+> on the TFV6 baseline) and silently mispairs profile rows with run files, since
+> only row counts are checked. `make_thesis_figures.py` holds two private copies
+> of this ordering — grep for `glob("run_*.npz")` after touching it.
+
+> **`frames/` is never cleared before a migration writes into it.** Stale files
+> from an earlier run are loaded as if current; this caused a baseline/test leak
+> that stood for three months (fixed by `fix_baseline_leak.py`, 2026-09-20).
+> Within one migration the frames-per-route count is constant, so a file whose
+> frame count differs from the modal count is a leftover.
+
+Both are documented in `docs/design_decisions.md`.
 
 Frame `.npz` files contain: `wide_rgb`, `narr_rgb`, `seg_red_wide`, `seg_red_narr`, `cmd`, `speed`, `run_id`, `frame_idx`. Labeled test `.npz` also contains `label` (0=clean, 1=perturbed) and `perturbation` (string name).
 
@@ -357,7 +376,7 @@ serif fonts sized for placement at exactly `\textwidth` (6.3 in). Follow that sp
 for any new thesis figure; exploratory pipeline plots (`visualization_carla.py` /
 `viz_config.py`) are unaffected.
 
-Current figures (alternative split, TFV6 mode 2, val-selected K=8): GMM AUROC vs
+Current figures (alternative split, TFV6 mode 2, val-selected K=10): GMM AUROC vs
 K sweep, baseline PCA (by run vs by GMM cluster), score distributions of the two
 best GMM detectors (Mahalanobis-GMM vs kNN-GMM), per-perturbation AUROC bars, a
 GMM-vs-single parity scatter, three cluster-attention figures (per-cluster
@@ -370,9 +389,13 @@ vs test dotted), and a kNN k-selection figure (val AUROC vs k, single vs GMM).
 The per-perturbation bar chart also carries plain (non-GMM) kNN in a lighter
 green tint (`KNN_SINGLE_COLOR`) — kNN is the one detector where
 cluster-restricted pools are conceptually questionable. Cluster figures (PCA +
-attention bars) share `CLUSTER_COLORS`, eight hues deliberately outside the
+attention bars) share `CLUSTER_COLORS`, ten hues deliberately outside the
 metric families (orange/cyan/magenta/brown/gray) so cluster and detector
-figures can't be confused. Score arrays are
+figures can't be confused. **The cluster grids size themselves from K**
+(`-(-K // 2)` rows, two columns); they were hardcoded to 4x2 until 2026-09-20,
+and the palette held only eight hues which `cluster_color`'s `k % len(...)`
+wrapped silently — past K, components reuse colours with no error. Keep
+`len(CLUSTER_COLORS) >= K`. Score arrays are
 recomputed from saved detector parameters; the script
 asserts the recomputed AUCs match the stored results JSONs. Since the
 **uniform-shrinkage fix (2026-07-16**, see `docs/design_decisions.md`), the
@@ -436,6 +459,21 @@ throughout); installed 2026-09-03 (`1.7.2`). `timm` is still absent, so
 `cache_live_mdx_scores.py` cannot run there — the cached
 `live_pert_mdx_scores_*.npy` arrays are on disk and the figures need nothing
 more. There is no `PCLA` env on this machine.
+
+---
+
+## `fix_baseline_leak.py`
+
+One-off repair (run 2026-09-20, kept as the record of what was done) that removed four stale route
+files from `baseline_data_alt/frames/` and masked the 124 corresponding rows out of `baseline_2.npz`,
+`mdx_features.npz` and `mdx_fc_features.npz`, restoring the intended 5000-frame baseline.
+
+Safe to re-run: dry-run by default (`--apply` writes), it identifies the stale files by *measurement*
+rather than a hardcoded list (frame count above the modal count), asserts the expected file set and
+totals, checks rare-class row/frame alignment before and after, and backs everything up to
+`*.npz.preleak`. On current data it reports nothing to do.
+
+Diagnosis, decision record and full before/after: `ATOMs_SOLID/thesis/carla_leak_fix_plan.md`.
 
 ---
 

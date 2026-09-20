@@ -3,7 +3,7 @@
 make_thesis_figures.py — CARLA-chapter thesis figures in the shared thesis style.
 
 Recreates the key result figures of the alternative-split TFV6 experiment
-(`EXPERIMENT_VARIANT = "alternative"`, mode 2, val-selected K=8) following
+(`EXPERIMENT_VARIANT = "alternative"`, mode 2, val-selected K=10) following
 `documents/14_thesis_figure_style.md` / `thesis_style.py`, so the CARLA chapter
 matches the ATOMs (Atari) chapter visually.
 
@@ -16,11 +16,11 @@ Figures written to `thesis_figures/` (each as .pdf + .png + .txt):
 
   1. gmm_auc_vs_K
        Test AUROC of every GMM detector vs cluster count K, plus their mean;
-       the val-selected K=8 is marked.  (Thesis version of
+       the val-selected K=10 is marked.  (Thesis version of
        results_summary_alt/curve_meanGMM_vs_K_TFV6.png.)
   2. pca_baseline_run_vs_gmm
        1x2: the same baseline PCA, left coloured by collection run, right by
-       GMM component (K=8) with component means.  (Combines
+       GMM component (K=10) with component means.  (Combines
        pca/pca_baseline_by_run.png and pca/pca_baseline_clusters.png.)
   3. score_dist_per_perturbation
        2x2: Mahalanobis-GMM score distribution on the labelled test set, the
@@ -59,7 +59,7 @@ Figures written to `thesis_figures/` (each as .pdf + .png + .txt):
        K-selection view: mean GMM-detector AUROC on the validation set (the
        selection criterion) as a solid line, test-set counterpart dotted;
        BOTH exclude gaussian-noise frames so the comparison is
-       like-for-like; the selected K=8 marked.
+       like-for-like; the selected K=10 marked.
   13. knn_k_selection
        Validation AUROC vs neighbour count k (full val set, as used by the
        pipeline's k selection) for single kNN and kNN-GMM; the selected k of
@@ -114,7 +114,7 @@ from thesis_style import (
 # --------------------------------------------------------------------------- #
 ROOT         = Path(__file__).resolve().parent
 RESULTS_ROOT = ROOT / "data" / "TFV6" / "results_alt"
-SELECTED_K   = 8            # val-selected winner (max __val_auc_gmm_avg__)
+SELECTED_K   = 10           # val-selected winner (max __val_auc_gmm_avg__)
 RUN_DIR      = RESULTS_ROOT / f"{SELECTED_K} clusters" / "atoms_analysis_mode_2"
 BASELINE_NPZ = ROOT / "data" / "TFV6" / "baseline_data_alt" / "baseline_2.npz"
 FRAMES_DIR   = ROOT / "data" / "TFV6" / "baseline_data_alt" / "frames"
@@ -135,7 +135,11 @@ KNN_SINGLE_COLOR = "#66bb6a"
 # brown) in dark+light steps, plus gray; the largest clusters (1, 3, 5, 7)
 # get the strongest hues.  Shared by the PCA scatter and all attention bars.
 CLUSTER_COLORS = ["#e6851f", "#00acc1", "#f0a3d3", "#6d4c41",
-                  "#f7b565", "#d63fa6", "#7fd6e4", "#8d8d8d"]
+                  "#f7b565", "#d63fa6", "#7fd6e4", "#8d8d8d",
+                  # added when K moved from 8 to 10; same orange/cyan/magenta/
+                  # brown/gray families, separated from their neighbours by
+                  # lightness so the set stays CVD-safe.
+                  "#9c3d00", "#4a4a4a"]
 
 
 def cluster_color(k: int) -> str:
@@ -1246,9 +1250,13 @@ def fig_attention_per_cluster() -> None:
     series, labels, names, K, cluster_mean, order_desc = cluster_attention_stats()
     order_asc = order_desc[::-1]          # barh: largest class ends up on top
 
-    fig, axs = plt.subplots(4, 2, figsize=(TEXT_WIDTH_IN, 6.9),
+    n_rows = -(-K // 2)                       # 2 columns, rows follow K
+    fig, axs = plt.subplots(n_rows, 2, figsize=(TEXT_WIDTH_IN, 1.725 * n_rows),
                             sharex=True, sharey=True)
     for k, ax in enumerate(axs.ravel()):
+        if k >= K:                            # odd K leaves one cell empty
+            ax.set_axis_off()
+            continue
         _cluster_bars(ax, series, labels, k, order_asc)
     axs[0, 0].set_yticks(np.arange(len(order_asc)))
     axs[0, 0].set_yticklabels([names[j] for j in order_asc])
@@ -1300,8 +1308,9 @@ def fig_attention_per_cluster_frames() -> None:
     imgs, prov = representative_frames(series, labels, K)
 
     # 4 card rows x 2 columns; each card = frame strip (6:1) above its bars.
-    fig = plt.figure(figsize=(TEXT_WIDTH_IN, 8.1))
-    gs = fig.add_gridspec(8, 2, height_ratios=[1.0, 2.9] * 4)
+    n_rows = -(-K // 2)                       # 2 columns, rows follow K
+    fig = plt.figure(figsize=(TEXT_WIDTH_IN, 2.025 * n_rows))
+    gs = fig.add_gridspec(2 * n_rows, 2, height_ratios=[1.0, 2.9] * n_rows)
 
     bar_axs = []
     for k in range(K):
@@ -1319,7 +1328,7 @@ def fig_attention_per_cluster_frames() -> None:
             ax_bar.set_yticklabels([names[j] for j in order_asc], fontsize=7.5)
         else:
             ax_bar.tick_params(labelleft=False)
-        if r < 3:
+        if r < n_rows - 1:
             ax_bar.tick_params(labelbottom=False)
         bar_axs.append(ax_bar)
 
@@ -2143,7 +2152,7 @@ def fig_live_scores(pert: str) -> None:
     injection = int(np.argmax(np.load(frames_npz)["is_perturbed"]))
 
     # Mahalanobis-GMM from the cached ATOMs profiles, scored with the SAME
-    # K=8 uniform-shrinkage model as every other thesis figure (the original
+    # K=10 uniform-shrinkage model as every other thesis figure (the original
     # run_online_analysis figures used an older GMM fit).
     means, covs, _, _ = load_gmm()
     s_mahal = gmm_min_mahalanobis(

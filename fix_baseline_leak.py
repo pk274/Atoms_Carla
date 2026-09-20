@@ -136,6 +136,13 @@ def main() -> int:
     for n in stale:
         print(f"   {counts[n]:>3} frames  {n}")
 
+    if not stale and total == EXPECTED_TOTAL_AFTER and len(counts) == 186:
+        print("\nAlready applied — baseline is 5000 frames from 186 routes, nothing to do.")
+        series = np.load(BASE / "baseline_2.npz", allow_pickle=True)["series"]
+        ok, n = fingerprint_violations(series, counts, FRAMES)
+        print(f"alignment check: {ok}/{n} rare-class rows consistent")
+        return 0 if ok == n else 1
+
     if set(stale) != EXPECTED_STALE:
         print("\nABORT: the measured stale set does not match the expected one.")
         print(f"  measured: {sorted(set(stale))}")
