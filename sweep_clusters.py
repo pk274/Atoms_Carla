@@ -30,7 +30,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-K_VALUES_DEFAULT = [2, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20]
+# The full 19-point sweep the thesis reports (K = 2..20). Earlier runs split this
+# into two passes; keep it complete so a refit covers every K in results_alt/.
+K_VALUES_DEFAULT = list(range(2, 21))
 
 
 def main() -> None:
