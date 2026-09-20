@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_all_runs(frames_dir: Path) -> dict:
-    files = sorted(frames_dir.glob("run_*.npz"))
+    files = sorted(frames_dir.glob("run_*.npz"), key=lambda p: p.name)
     if not files:
         raise FileNotFoundError(f"No run_*.npz files found in {frames_dir}")
     print(f"[prep_wor] Found {len(files)} run files.")

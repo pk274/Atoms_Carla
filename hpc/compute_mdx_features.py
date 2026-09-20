@@ -90,7 +90,8 @@ def build_lrp(model_dir: Path, device: torch.device):
 def main() -> None:
     args = parse_args()
 
-    run_files = sorted(args.frames_dir.glob("run_*.npz"))
+    # Platform-independent order — see BaselineDataLoader.load_all_runs.
+    run_files = sorted(args.frames_dir.glob("run_*.npz"), key=lambda p: p.name)
     if not run_files:
         raise FileNotFoundError(f"No run_*.npz files found in {args.frames_dir}")
     print(f"Found {len(run_files)} run files.")

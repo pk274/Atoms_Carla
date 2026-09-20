@@ -557,7 +557,13 @@ def _load_all_runs(
     pattern: str = "run_*.npz",
     max_runs: Optional[int] = None,
 ) -> Dict[str, np.ndarray]:
-    files = sorted(directory.glob(pattern))
+    # Platform-independent order — see BaselineDataLoader.load_all_runs.
+    # NOTE: the existing test_labeled.npz / val_labeled.npz were built on Windows
+    # and carry run_id values from the old case-insensitive order. They stay valid
+    # because their profiles were computed from them row-by-row, so labels and
+    # profiles are aligned by construction. Rebuilding them under this order is
+    # fine only if the test/val profiles are recomputed in the same pass.
+    files = sorted(directory.glob(pattern), key=lambda p: p.name)
     if not files:
         raise FileNotFoundError(f"No files matching '{pattern}' in {directory}")
     if max_runs is not None:

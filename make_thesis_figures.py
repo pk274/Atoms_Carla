@@ -399,7 +399,7 @@ def load_run_ids(n_frames: int) -> np.ndarray:
     0-based file index in sorted(run_*.npz) order.  Only the small frame_idx
     member is decompressed per file."""
     ids = []
-    for run_id, f in enumerate(sorted(FRAMES_DIR.glob("run_*.npz"))):
+    for run_id, f in enumerate(sorted(FRAMES_DIR.glob("run_*.npz"), key=lambda p: p.name)):
         n = np.load(f)["frame_idx"].shape[0]
         ids.append(np.full(n, run_id, dtype=np.int32))
     ids = np.concatenate(ids)
@@ -1276,7 +1276,7 @@ def representative_frames(series, labels, K):
     Returns ``(imgs, provenance)``; provenance names the run file, the frame
     index inside it and the distance to the cluster mean, so the sidecar can
     say which frame a panel shows."""
-    files = sorted(FRAMES_DIR.glob("run_*.npz"))
+    files = sorted(FRAMES_DIR.glob("run_*.npz"), key=lambda p: p.name)
     counts = np.array([np.load(f)["frame_idx"].shape[0] for f in files])
     bounds = np.concatenate([[0], np.cumsum(counts)])
     imgs, prov = {}, {}

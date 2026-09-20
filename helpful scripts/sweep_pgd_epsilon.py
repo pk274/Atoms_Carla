@@ -161,7 +161,7 @@ def load_model(model_dir: Path, device: torch.device):
 
 def load_frames(frames_dir: Path, n_frames: int) -> dict:
     """Concatenate all run_*.npz frames and evenly subsample n_frames."""
-    files = sorted(frames_dir.glob("run_*.npz"))
+    files = sorted(frames_dir.glob("run_*.npz"), key=lambda p: p.name)
     if not files:
         raise FileNotFoundError(f"No run_*.npz found in {frames_dir}")
     print(f"  frame files: {len(files)}")

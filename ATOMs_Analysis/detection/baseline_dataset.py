@@ -355,7 +355,12 @@ class BaselineDataLoader:
         each frame came from (0-indexed, ordered by filename).
         """
         directory = Path(directory)
-        files = sorted(directory.glob(pattern))
+        # Sort by name string, not by Path: PurePath comparison is case-insensitive
+        # on Windows and case-sensitive on POSIX, so sorted(glob(...)) yields a
+        # different run order per platform (140 of 190 positions differ on the
+        # TFV6 baseline). Cached profile arrays are concatenated in this order, so a
+        # platform-dependent sort silently pairs profile rows with the wrong run.
+        files = sorted(directory.glob(pattern), key=lambda p: p.name)
         if not files:
             raise FileNotFoundError(
                 f"No files matching '{pattern}' found in {directory}"
@@ -397,7 +402,8 @@ class BaselineDataLoader:
     @staticmethod
     def get_run_files(directory: str | Path, pattern: str = "run_*.npz") -> List[Path]:
         """Return sorted list of run file paths in a directory."""
-        return sorted(Path(directory).glob(pattern))
+        # Same platform-independent ordering as load_all_runs — see the note there.
+        return sorted(Path(directory).glob(pattern), key=lambda p: p.name)
 
     @staticmethod
     def summary(data: Dict[str, np.ndarray]) -> str:
