@@ -25,6 +25,8 @@ figure: the numbers belong in prose, not in another plot.
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -42,6 +44,21 @@ from make_thesis_figures import (
 )
 
 OUT_DIR = ROOT / "thesis_figures"
+
+
+def selected_knn_k() -> tuple[int, int]:
+    """(single k, GMM k) as run_analysis.py selected them on the validation set
+    at SELECTED_K, parsed from summary.json exactly as make_thesis_figures.py
+    does.  Never hardcode these: the selected k moves with K (the GMM k was 50
+    at K = 8 and is 250 at K = 10), and a stale literal here silently bootstraps
+    a different curve from the one the figure plots."""
+    summ = json.loads((RUN_DIR / "summary.json").read_text())
+
+    def _k(pred) -> int:
+        return int(re.search(r"k=(\d+)", next(n for n in summ if pred(n))).group(1))
+
+    return (_k(lambda n: "k-NN" in n and "GMM" not in n),
+            _k(lambda n: "k-NN-GMM" in n))
 
 
 def load_split(split: str):
@@ -102,6 +119,7 @@ def main() -> None:
 
     means, covs, weights, K = load_gmm()
     series = load_baseline_series()
+    k_single, k_gmm = selected_knn_k()
 
     notes = FigureNotes(
         "auroc_bootstrap",
@@ -115,6 +133,9 @@ def main() -> None:
                "reported so the gap between them is visible.")
     notes.line("    Scores are the Mahalanobis distance to the nearest GMM "
                "component unless stated otherwise.")
+    notes.line(f"    k-th-NN neighbour counts, read from summary.json (the "
+               f"val-selected values at K = {SELECTED_K}): single k = {k_single}, "
+               f"GMM k = {k_gmm}.")
 
     boots = {}
     for split in ("val", "test"):
@@ -172,7 +193,7 @@ def main() -> None:
                 np.linalg.norm(prof - means[nearest], axis=1),
                 np.array([DC.compute_jsd(means[nearest[i]], prof[i])
                           for i in range(len(prof))]),
-                knn_gmm_scores(prof, series, means, covs, weights, k=50)]
+                knn_gmm_scores(prof, series, means, covs, weights, k=k_gmm)]
 
     mean_boot = {}
     for split in ("val", "test"):
@@ -232,7 +253,6 @@ def main() -> None:
                "same drawn routes, so the difference is not inflated by the "
                "shared uncertainty in the AUROC level itself.")
     prof, lab, pert, run = load_split("test")
-    summ_k = 1
     from scipy.spatial.distance import cdist
 
     def _n(a):
@@ -243,8 +263,8 @@ def main() -> None:
         "ED": np.linalg.norm(prof - means[np.stack(
             [mahalanobis_batch(prof, means[c], covs[c])
              for c in range(K)]).argmin(axis=0)], axis=1),
-        "k-NN single": np.sort(cdist(_n(prof), _n(series)), axis=1)[:, summ_k - 1],
-        "k-NN GMM": knn_gmm_scores(prof, series, means, covs, weights, k=50),
+        "k-NN single": np.sort(cdist(_n(prof), _n(series)), axis=1)[:, k_single - 1],
+        "k-NN GMM": knn_gmm_scores(prof, series, means, covs, weights, k=k_gmm),
     }
     from ATOMs_Analysis.utils.distance_computer import DistanceComputer as DC
     route = np.stack([mahalanobis_batch(prof, means[c], covs[c])

@@ -6,6 +6,7 @@
     4000 resamples, seed 0, percentile intervals, K = 10.
     THE UNIT IS THE ROUTE, not the frame. The split is made at route level and frames within a route are strongly correlated, so a frame-level interval understates the uncertainty. Both are reported so the gap between them is visible.
     Scores are the Mahalanobis distance to the nearest GMM component unless stated otherwise.
+    k-th-NN neighbour counts, read from summary.json (the val-selected values at K = 10): single k = 1, GMM k = 250.
 
 val split
 ---------
@@ -34,9 +35,9 @@ test split
 
 The plotted curve itself: mean over the four GMM detectors, ex-Gaussian-noise
 -----------------------------------------------------------------------------
-    val: 0.6634  95% CI [0.6281, 0.7003]  SE 0.0184  (this is the value plotted at K = 10)
-    test: 0.5983  95% CI [0.5532, 0.6448]  SE 0.0234  (this is the value plotted at K = 10)
-    offset of the plotted curves at K = 10: +0.0651  95% CI [+0.0075, +0.1237]
+    val: 0.6762  95% CI [0.6399, 0.7103]  SE 0.0181  (this is the value plotted at K = 10)
+    test: 0.6122  95% CI [0.5668, 0.6604]  SE 0.0238  (this is the value plotted at K = 10)
+    offset of the plotted curves at K = 10: +0.0639  95% CI [+0.0053, +0.1202]
         is zero inside the interval?: NO
 
 Validation minus test, MD alone
