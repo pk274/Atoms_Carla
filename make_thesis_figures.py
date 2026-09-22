@@ -898,11 +898,12 @@ def fig_auroc_per_perturbation() -> None:
     per_pert = load_per_perturbation()
     overall = load_overall()
 
-    # "knn_single" = plain kNN over the full baseline (no clustering) — kNN is
-    # the one detector for which the GMM pooling is conceptually questionable,
-    # so its single variant is reported alongside, in a lighter tint of the
-    # kNN green.
-    detectors = ["mahalanobis", "euclidean", "knn", "knn_single", "jsd", "mdx", "peoc"]
+    # The single-component (no-clustering) kNN was dropped from this headline
+    # figure on 2026-09-22 (author): it shows every attention distance against
+    # the same K=10 reference, and the single-vs-clustered kNN comparison lives
+    # in auroc_gmm_vs_single (@clusterAdvantage) and knn_k_selection
+    # (@knnSelection). "knn" here is the GMM-pooled variant.
+    detectors = ["mahalanobis", "euclidean", "knn", "jsd", "mdx", "peoc"]
     hatches = {"mdx": "///", "peoc": "xxx"}   # bar analogue of the dashed lines
 
     def value(src: dict[str, float], fam: str) -> float:
@@ -983,7 +984,9 @@ def fig_auroc_per_perturbation() -> None:
     notes.line("    The K-selection criterion is yet another pool, because it "
                "drops Gaussian noise and then averages over detectors as well. "
                "See auroc_val_test_vs_K.txt.")
-    notes.line("    All k-NN entries except 'single' use the GMM-pooled variant.")
+    notes.line("    The k-NN entry is the GMM-pooled variant. The single "
+               "(no-clustering) k-NN was dropped from this figure on 2026-09-22; "
+               "it is compared in auroc_gmm_vs_single.txt and knn_k_selection.txt.")
 
     for gi, (g, glabel, src_d) in enumerate(zip(groups, group_labels, sources)):
         notes.section(glabel)
@@ -995,7 +998,7 @@ def fig_auroc_per_perturbation() -> None:
         worst = min(vals, key=vals.get)
         notes.value("highest", f"{det_labels[best]} {vals[best]:.4f}")
         notes.value("lowest", f"{det_labels[worst]} {vals[worst]:.4f}")
-        att = ["mahalanobis", "euclidean", "knn", "knn_single", "jsd"]
+        att = ["mahalanobis", "euclidean", "knn", "jsd"]
         b_att = max(att, key=lambda f: vals[f])
         notes.value("highest attention distance",
                     f"{det_labels[b_att]} {vals[b_att]:.4f}")

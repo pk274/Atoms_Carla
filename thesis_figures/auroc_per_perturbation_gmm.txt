@@ -9,21 +9,20 @@
     Because the split holds exactly 200 frames of each perturbation and all of them are scored against the same 200 clean frames, a pooled AUROC is identically the unweighted mean of the per-perturbation AUROCs in the pool. Verified to machine precision for every detector. The two are not competing quantities; only the set of perturbations in the pool distinguishes the figures.
     The mixed-set values are kept in the last section below, marked as not drawn, because the metric ranking reads off them.
     The K-selection criterion is yet another pool, because it drops Gaussian noise and then averages over detectors as well. See auroc_val_test_vs_K.txt.
-    All k-NN entries except 'single' use the GMM-pooled variant.
+    The k-NN entry is the GMM-pooled variant. The single (no-clustering) k-NN was dropped from this figure on 2026-09-22; it is compared in auroc_gmm_vs_single.txt and knn_k_selection.txt.
 
 Brightness
 ----------
     Mahalanobis (MD): 0.8146  (+0.3146 from chance)
     Euclidean (ED): 0.7204  (+0.2204 from chance)
     k-th-NN: 0.6725  (+0.1725 from chance)
-    k-th-NN (single, no clustering): 0.7141  (+0.2141 from chance)
     Jensen-Shannon (JSD): 0.7662  (+0.2662 from chance)
     MDX: 0.8409  (+0.3409 from chance)
     PEOC: 0.4941  (-0.0059 from chance)
     highest: MDX 0.8409
     lowest: PEOC 0.4941
     highest attention distance: Mahalanobis (MD) 0.8146
-    detectors above 0.70: Mahalanobis (MD), Euclidean (ED), k-th-NN (single, no clustering), Jensen-Shannon (JSD), MDX
+    detectors above 0.70: Mahalanobis (MD), Euclidean (ED), Jensen-Shannon (JSD), MDX
     detectors below 0.50: PEOC (0.4941)
 
 Camera loss
@@ -31,12 +30,11 @@ Camera loss
     Mahalanobis (MD): 0.6127  (+0.1127 from chance)
     Euclidean (ED): 0.5857  (+0.0857 from chance)
     k-th-NN: 0.5708  (+0.0708 from chance)
-    k-th-NN (single, no clustering): 0.5068  (+0.0068 from chance)
     Jensen-Shannon (JSD): 0.5901  (+0.0901 from chance)
     MDX: 0.5942  (+0.0942 from chance)
     PEOC: 0.5603  (+0.0603 from chance)
     highest: Mahalanobis (MD) 0.6127
-    lowest: k-th-NN (single, no clustering) 0.5068
+    lowest: PEOC 0.5603
     highest attention distance: Mahalanobis (MD) 0.6127
     detectors above 0.70: none
     detectors below 0.50: none
@@ -46,7 +44,6 @@ Gaussian noise
     Mahalanobis (MD): 0.5595  (+0.0595 from chance)
     Euclidean (ED): 0.5066  (+0.0066 from chance)
     k-th-NN: 0.4685  (-0.0315 from chance)
-    k-th-NN (single, no clustering): 0.5061  (+0.0061 from chance)
     Jensen-Shannon (JSD): 0.5236  (+0.0236 from chance)
     MDX: 0.5082  (+0.0082 from chance)
     PEOC: 0.4567  (-0.0433 from chance)
@@ -61,7 +58,6 @@ PGD
     Mahalanobis (MD): 0.5166  (+0.0166 from chance)
     Euclidean (ED): 0.5062  (+0.0062 from chance)
     k-th-NN: 0.4872  (-0.0128 from chance)
-    k-th-NN (single, no clustering): 0.4811  (-0.0189 from chance)
     Jensen-Shannon (JSD): 0.5038  (+0.0038 from chance)
     MDX: 0.5103  (+0.0103 from chance)
     PEOC: 0.0694  (-0.4306 from chance)
@@ -69,7 +65,7 @@ PGD
     lowest: PEOC 0.0694
     highest attention distance: Mahalanobis (MD) 0.5166
     detectors above 0.70: none
-    detectors below 0.50: k-th-NN (0.4872), k-th-NN (single, no clustering) (0.4811), PEOC (0.0694)
+    detectors below 0.50: k-th-NN (0.4872), PEOC (0.0694)
 
 NOT DRAWN: mean pixel intensity, a model-free reference
 -------------------------------------------------------
@@ -87,7 +83,6 @@ NOT DRAWN: the mixed test set, and the ranking on it
     Mahalanobis (MD): 0.6258  (+0.1258 from chance)
     Euclidean (ED): 0.5797  (+0.0797 from chance)
     k-th-NN: 0.5498  (+0.0498 from chance)
-    k-th-NN (single, no clustering): 0.552  (+0.0520 from chance)
     Jensen-Shannon (JSD): 0.5959  (+0.0959 from chance)
     MDX: 0.6134  (+0.1134 from chance)
     PEOC: 0.3951  (-0.1049 from chance)
@@ -96,6 +91,5 @@ NOT DRAWN: the mixed test set, and the ranking on it
     2. MDX: 0.6134
     3. Jensen-Shannon (JSD): 0.5959
     4. Euclidean (ED): 0.5797
-    5. k-th-NN (single, no clustering): 0.552
-    6. k-th-NN: 0.5498
-    7. PEOC: 0.3951
+    5. k-th-NN: 0.5498
+    6. PEOC: 0.3951
