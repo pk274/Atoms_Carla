@@ -23,3 +23,5 @@ gifs/
 *.pdf
 *.npy
 *.npz
+# Output of notebooks/reproduce_thesis_carla.ipynb (regenerated on demand)
+thesis_figures_reproduced/

@@ -69,7 +69,8 @@ Run with any env that has numpy / matplotlib / sklearn — both conda `PCLA`
 (numpy 1.x) and `atoms3` (numpy 2.x) work; a shim below handles the
 numpy-2-pickled object arrays in the alt-split npz files:
 
-    python make_thesis_figures.py
+    python make_thesis_figures.py                  # writes thesis_figures/
+    python make_thesis_figures.py --out-dir DIR    # anywhere else
 """
 from __future__ import annotations
 
@@ -2278,6 +2279,13 @@ def fig_live_scores(pert: str) -> None:
 # Main
 # --------------------------------------------------------------------------- #
 def main() -> None:
+    import argparse
+    global OUT_DIR
+    ap = argparse.ArgumentParser(description="CARLA-chapter thesis figures.")
+    ap.add_argument("--out-dir", type=Path, default=OUT_DIR,
+                    help="where to write the figures and sidecars "
+                         "(default: thesis_figures/, the committed copies)")
+    OUT_DIR = ap.parse_args().out_dir
     apply_thesis_style()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 

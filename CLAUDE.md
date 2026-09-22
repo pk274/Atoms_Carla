@@ -11,7 +11,9 @@ This is a **master's thesis research project** on explainability-based out-of-di
 
 The scientific goal is to show that attention profiles derived from LRP are a meaningful signal for OOD detection: when the agent encounters perturbed or adversarial inputs, its attention distribution shifts measurably away from the clean-driving baseline.
 
-**Primary agent: TransFuser v6 (TFV6).** The World on Rails (WoR) agent is also supported but TFV6 is the current experimental focus. Set `conf.AGENT = "TFV6"` or `"WOR"` in `atoms_config.py` to switch.
+**Primary agent: TransFuser v6 (TFV6).** The World on Rails (WoR) agent is also supported but TFV6 is the current experimental focus. Set `conf.AGENT = "TFV6"` or `"WOR"` in `atoms_config.py` to switch. **The thesis reports TFV6 only**; since the 2026-09-22 hand-in cleanup the WoR data is untracked and its HPC jobs are in `archive/hpc_wor/` (see "Hand-in cleanup" at the end).
+
+`README.md` is the reader-facing hand-in README (reproduction, figure map, pipeline outline); the upstream PCLA README is `PCLA_README.md`.
 
 Target platform: **Linux Ubuntu 22**, **CARLA 0.9.16**, **Python 3.10**.
 
@@ -134,6 +136,10 @@ All TFV6 driving footage originates from the **lead360 dataset** (`ln2697/lead36
 The pipeline from raw footage to analysis-ready `.npz` files has three stages.
 
 ### Stage 1 — Select and unzip routes (`unzip_routes.ps1`)
+
+> `unzip_routes.ps1` was a local PowerShell helper and is **not in the repository** (not in
+> any commit either). The invocations below document what it did; any extraction of the
+> chosen route zips into `noScenarios/<route_name>/` works.
 
 Raw footage is stored as per-route `.zip` files in:
 ```
@@ -368,7 +374,23 @@ route_maker(waypoints, "my_route.xml")
 
 Final thesis-quality figures are produced by `make_thesis_figures.py` (repo root)
 and written to `thesis_figures/` as `.pdf` + `.png` + a `.txt` sidecar (see
-"Figure sidecars" below). The visual style is shared
+"Figure sidecars" below). Both it and `bootstrap_auroc.py` take `--out-dir DIR`
+(added 2026-09-22) to write elsewhere; without it they overwrite the committed copies.
+`notebooks/reproduce_thesis_carla.ipynb` runs both into the git-ignored
+`thesis_figures_reproduced/`, diffs every sidecar against `thesis_figures/`, checks
+the thesis PNGs in `../ATOMs_SOLID/thesis/06_Carla_study/05_Figures/` are
+byte-identical to `thesis_figures/`, and recomputes ~20 Section 6.2 numbers. All
+passed on 2026-09-22 (the notebook is built from a generator script that is not in
+the repo; edit the `.ipynb` directly).
+
+**Exactly what the two scripts read** (traced with an audit hook on 2026-09-22): 256
+files, 7.39 GB, almost all of it camera images — the 186 reference `frames/run_*.npz`
+(4.8 GB), `test_labeled.npz` and `val_labeled.npz` (~1.1 GB each) and the three
+`live_pert_frames` npz (0.4 GB); the profiles, labels, `gmm.npz`/`mahal_detector.npz`
+and per-K JSONs are < 1 MB. That set was copied, with a SHA-256 `MANIFEST.tsv`, into
+the hand-in data folder `../Atoms_Carla_thesis_data/` (sibling of this repo), and both
+scripts reproduce every sidecar byte for byte from that folder alone. If a figure
+starts reading a new file, re-trace and re-package. The visual style is shared
 with the Atari/ATOMs chapter and defined by `thesis_style.py` (rcParams, CVD-safe
 metric palette, save helper) with the full written spec in
 `documents/14_thesis_figure_style.md` — no titles, one legend/colorbar per figure,
@@ -477,6 +499,31 @@ Diagnosis, decision record and full before/after: `ATOMs_SOLID/thesis/carla_leak
 
 ---
 
+## Hand-in cleanup (2026-09-22)
+
+- **Branches.** The leak-fix work was on the local branch `fix/carla-baseline-leak`
+  (never pushed). Its last commit got a real message (was "jskdfhsk"), the pending
+  `@aurocs` regeneration (single-component k-NN bar dropped) was committed, `main` was
+  fast-forwarded to it, and the cleanup was done on `main`. Tag **`pre-handin-cleanup`**
+  = the leak-fixed K=10 state before the cleanup; `git checkout pre-handin-cleanup -- <path>`
+  restores anything.
+- **Untracked, local copies kept** (`git rm --cached`; `data/` is git-ignored anyway):
+  `data/WOR/` (1.1 GB), `data/TFV6/test_data/` (original-split live arrays).
+  **Deleted from the tree:** `dataset_example_folder/` (unreferenced LEAD example route),
+  `documents/thesis_style.py` (byte-identical duplicate of the root copy).
+- **Archived** (`archive/README.md`): the WoR SLURM chains (`archive/hpc_wor/`) and three
+  stale `summarize_results.py` reports (WoR, the 3-camera dataset, and the
+  alternative-split sweep of 2026-07-17, which predates the leak fix — regenerate with
+  `python summarize_results.py` if a current report is wanted).
+- **Kept although WoR-specific:** `pcla_agents/wor/`, `ATOMs_Analysis/saliency/lrp_analysis.py`,
+  `ATOMs_Analysis/utils/wor_lrp_diagnostics.py` (framework / method support).
+  `docs/cluster_explanations.md` still documents the WoR pipelines, whose scripts now live in
+  `archive/hpc_wor/`.
+- Local-only folders not in git and not touched: `data/TFV6.zip` (24 GB backup),
+  `data/TFV6/old amplified relevance computation/` (12 GB), `pretrained/`, `papers/`.
+
+---
+
 ## Documentation Policy
 
 Whenever you make a meaningful change to the codebase, **update the relevant `.md` files** to reflect that change. Do not let documentation go stale. The living documentation files in this project are:
@@ -484,6 +531,8 @@ Whenever you make a meaningful change to the codebase, **update the relevant `.m
 | File | What it tracks |
 |------|----------------|
 | `CLAUDE.md` | Architecture, pipeline, key concepts, module responsibilities |
+| `README.md` | Hand-in README: reproduction of Chapter 6, figure map, pipeline outline |
+| `archive/README.md` | What was archived or untracked in the hand-in cleanup, and why |
 | `docs/design_decisions.md` | Design choices for the ATOMs/LRP pipeline — why things are done the way they are |
 | `docs/docs/lrp_todo.md` | Open questions, remaining work, and decision history for the LRP implementation |
 | `docs/cluster_explanations.md` | HPC/Viper file transfer and job submission how-to |

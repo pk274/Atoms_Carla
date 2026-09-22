@@ -20,7 +20,7 @@ settle:
 Writes `thesis_figures/auroc_bootstrap.txt` via figure_notes.FigureNotes.  No
 figure: the numbers belong in prose, not in another plot.
 
-    python bootstrap_auroc.py [--n-boot 4000] [--seed 0]
+    python bootstrap_auroc.py [--n-boot 4000] [--seed 0] [--out-dir DIR]
 """
 from __future__ import annotations
 
@@ -115,7 +115,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-boot", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out-dir", type=Path, default=OUT_DIR,
+                    help="where to write auroc_bootstrap.txt (default: thesis_figures/)")
     args = ap.parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
     means, covs, weights, K = load_gmm()
     series = load_baseline_series()
@@ -299,7 +302,7 @@ def main() -> None:
                     note="margin distinguishable from zero"
                          if lo > 0 else "margin NOT distinguishable from zero")
 
-    notes.write(OUT_DIR)
+    notes.write(args.out_dir)
 
 
 if __name__ == "__main__":
