@@ -616,7 +616,7 @@ def fig_pca_run_vs_gmm() -> None:
                       label=str(k)) for k in range(K)]
     handles.append(Line2D([], [], marker="*", linestyle="none", markersize=9,
                           markerfacecolor="0.85", markeredgecolor="0.15",
-                          markeredgewidth=0.6, label="cluster mean"))
+                          markeredgewidth=0.6, label="component mean"))
     _fig_legend(fig, handles, ncol=K + 1)
 
     save_figure(fig, OUT_DIR, "pca_baseline_run_vs_gmm")
@@ -1242,7 +1242,7 @@ def _cluster_bars(ax, series, labels, k, order_asc, with_whiskers=True):
             color=cluster_color(k), linewidth=0,
             xerr=xerr, error_kw=dict(ecolor="0.35", elinewidth=0.8,
                                      capsize=2.0, capthick=0.8))
-    ax.text(0.97, 0.05, f"Cluster {k} (n = {(labels == k).sum()})",
+    ax.text(0.97, 0.05, f"Component {k} (n = {(labels == k).sum()})",
             transform=ax.transAxes, fontsize=8.5, color=MUTED,
             ha="right", va="bottom")
     ax.set_xlim(0.0, 1.0)
@@ -1378,7 +1378,7 @@ def fig_attention_by_cluster() -> None:
     ax.grid(axis="x", visible=False)
 
     handles = [Patch(facecolor=cluster_color(k),
-                     label=f"Cluster {k} (n = {(labels == k).sum()})")
+                     label=f"Component {k} (n = {(labels == k).sum()})")
                for k in range(K)]
     _fig_legend(fig, handles, ncol=4)
 
