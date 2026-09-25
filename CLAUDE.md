@@ -433,6 +433,40 @@ metrics exclude them. Runs in either conda env (`PCLA`, numpy 1.x, or
 `numpy.core` so the numpy-2-pickled object arrays in the alt-split npz files
 load under numpy 1.x.
 
+**Not in `main()` yet (2026-09-25): `fig_relevance_segmentation(row=4808)`**, in the
+thesis as `@relevanceSegmentation` in 6.1 (on trial, the author may still drop it). It stacks
+one reference frame's mode-2 relevance map (clipped at the 99.5th percentile and gamma 0.5 for
+display only) above its LEAD segmentation, with the frame's h-profile as the legend numbers.
+The map glows in inferno over a darkened copy of the frame (`RELEVANCE_STYLE = "glow"`,
+`RELEVANCE_CMAP = "inferno"`), the author's pick from 23 variants of style and colormap
+(`relevance_image` draws all three styles: `map` alone, `overlay` on a light gray photo, `glow`).
+Not viridis, which the figure style reserves for perturbation intensity. `with_camera=True`
+adds the camera image as a first row. Its input,
+`data/TFV6/baseline_data_alt/relevance_examples/relevance_example_row<N>.npz`, is written by
+`helpful scripts/export_relevance_example.py`, which reproduces the reference pipeline for
+one frame and compares the profile with the frame's row of `baseline_2.npz`: rows 4808
+(Town15, the default), 4365 and 1476 match to < 2e-6. The export needs torch + timm. It runs
+locally on CPU (~17 s per frame) with the `environment.yml` pins of timm, beartype and
+omegaconf on the path. It restores `torch.Union` for newer torch and builds the timm ResNet
+without the ImageNet download, failing if the checkpoint leaves any weight uncovered. Kept out
+of `main()`, the reproduce notebook and the hand-in data folder until the author adopts it.
+
+**Which GMM a script reads.** The thesis reference is the K = 10 fit of the cluster sweep,
+`results_alt/10 clusters/atoms_analysis_mode_2/gmm.npz`, which `make_thesis_figures.py` reads
+(`RUN_DIR`). The plain `results_alt/atoms_analysis_mode_2/gmm.npz` holds whatever the last
+plain `run_analysis.py` run selected, **K = 18** as of 2026-09-20. `run_online_analysis.py`
+reads the plain path. `helpful scripts/make_live_pert_gif.py` read it too until 2026-09-25.
+Its `--gmm-k` (default 10) now reads the sweep fit, the output name carries `_K<K>`, and
+`--frames-dir` reaches the older runs in `live_pert_frames/old pgd old brightness/`. **On
+2026-09-25 every GIF in `gifs/` was regenerated with K = 10 and the stale ones deleted**, including
+the `3 cams/` folder and brightness run `094648`, whose frames no longer exist. The ten GIFs cover
+brightness (`3front`, the run behind `@liveBright`, plus `3all` and `Town03`), Gaussian noise
+(`224036`, behind `@liveNoise`), PGD (`weak`, behind `@livePgd`, plus `171623`) and phantom
+obstacle (`221026`, `100712`). The three thesis runs' distance ranges match their figures'
+sidecars exactly. The GIF's OOD threshold is the 99th percentile of the reference frames' own
+distances (2.955), a presentation choice. The thesis reads its thresholds off the clean test
+frames instead.
+
 ### Figure sidecars (`figure_notes.py`)
 
 Every figure also writes a `<name>.txt` beside its `.pdf`/`.png` holding the

@@ -79,6 +79,7 @@ SEG_PALETTE: dict[int, tuple] = {
 
 DATA_ROOT   = Path("data/TFV6")
 RESULTS_DIR = DATA_ROOT / "results_alt"   # always use the alternative (same-distribution) split
+FRAMES_DIR  = DATA_ROOT / "test_data_alt" / "live_pert_frames"   # --frames-dir overrides
 
 # Colors matching viz_config.py style
 C_CLEAN     = "#43a047"   # green
@@ -102,6 +103,15 @@ def parse_args() -> argparse.Namespace:
                    help="Run label, e.g. nocrash_155706_000 (auto if omitted)")
     p.add_argument("--mode",      default=2, type=int, choices=[1, 2],
                    help="ATOMs analysis mode (default: 2)")
+    p.add_argument("--gmm-k",     default=10, type=int,
+                   help="Component count of the reference GMM, read from the sweep "
+                        "folder results_alt/<K> clusters/ (default: 10, the thesis "
+                        "reference). 0 = the GMM of the last plain run_analysis.py run "
+                        "in results_alt/atoms_analysis_mode_<mode>/")
+    p.add_argument("--frames-dir", default=None, type=Path,
+                   help="Folder holding the run's frame npz files (default: "
+                        "test_data_alt/live_pert_frames; older runs were moved to its "
+                        "subfolder 'old pgd old brightness')")
     p.add_argument("--fps",       default=8, type=int,
                    help="GIF frame rate in frames/second (default: 8)")
     p.add_argument("--output",    default=None, type=Path,
@@ -124,7 +134,7 @@ def parse_args() -> argparse.Namespace:
 
 def list_available_runs(pert: str, mode: int) -> list[tuple[str, bool]]:
     """Return [(run_label, has_profiles), ...] for all runs of this pert type."""
-    frames_dir   = DATA_ROOT / "test_data_alt" / "live_pert_frames"
+    frames_dir   = FRAMES_DIR
     profiles_dir = DATA_ROOT / "test_data_alt" / "attention" / "live_pert" / pert
     runs = []
     for npz in sorted(frames_dir.glob(f"run_{pert}_live_pert_*.npz")):
@@ -149,7 +159,7 @@ def find_run(pert: str, mode: int) -> str:
 
 
 def load_frames(pert: str, run: str) -> dict:
-    path = DATA_ROOT / "test_data_alt" / "live_pert_frames" / f"run_{pert}_live_pert_{run}.npz"
+    path = FRAMES_DIR / f"run_{pert}_live_pert_{run}.npz"
     if not path.exists():
         raise FileNotFoundError(f"Frame file not found: {path}")
     return np.load(path, allow_pickle=True)
@@ -164,8 +174,7 @@ def load_profiles(pert: str, run: str, mode: int) -> np.ndarray:
 
 
 def load_clean_rgb(pert: str, run: str) -> np.ndarray | None:
-    path = (DATA_ROOT / "test_data_alt" / "live_pert_frames"
-            / f"run_{pert}_live_pert_{run}_clean_rgb.npz")
+    path = FRAMES_DIR / f"run_{pert}_live_pert_{run}_clean_rgb.npz"
     if path.exists():
         return np.load(path, allow_pickle=True)["wide_rgb"]
     return None
@@ -190,9 +199,17 @@ def load_detector(mode: int) -> tuple[np.ndarray, np.ndarray, float]:
     return mean, inv(reg_cov), threshold
 
 
-def load_gmm(mode: int) -> tuple[np.ndarray, np.ndarray]:
-    """Return (means [K,D], inv_covs [K,D,D]) from the fitted GMM."""
-    path = RESULTS_DIR / f"atoms_analysis_mode_{mode}" / "gmm.npz"
+def load_gmm(mode: int, k: int = 10) -> tuple[np.ndarray, np.ndarray]:
+    """Return (means [K,D], inv_covs [K,D,D]) from the fitted GMM.
+
+    k > 0 reads the K-component fit of the cluster sweep (the thesis uses
+    k = 10). k = 0 reads results_alt/atoms_analysis_mode_<mode>/gmm.npz,
+    whose K is whatever the last plain run_analysis.py run selected (18 as of
+    2026-09-20), which is why the gifs made before 2026-09-25 do not show
+    the thesis reference.
+    """
+    run_dir = RESULTS_DIR if k == 0 else RESULTS_DIR / f"{k} clusters"
+    path = run_dir / f"atoms_analysis_mode_{mode}" / "gmm.npz"
     if not path.exists():
         raise FileNotFoundError(f"GMM not found: {path}")
     gmm   = np.load(path, allow_pickle=True)
@@ -299,7 +316,7 @@ def build_pca_context(baseline_series: np.ndarray,
     assignments, _ = assign_clusters(baseline_series, gmm_means, gmm_inv_covs)
 
     # Stable color palette: tab10 for K≤10, tab20 for K≤20, fallback cycler after
-    cmap = plt.cm.get_cmap("tab10" if K <= 10 else "tab20")
+    cmap = plt.get_cmap("tab10" if K <= 10 else "tab20")
     colors = [cmap(k % cmap.N) for k in range(K)]
 
     means_proj = pca.transform(gmm_means)              # (K, 2)
@@ -617,7 +634,10 @@ def _add_seg_legend(ax) -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    global FRAMES_DIR
     args = parse_args()
+    if args.frames_dir is not None:
+        FRAMES_DIR = args.frames_dir
 
     if args.list_runs:
         for pert in ["pgd", "phantom_obstacle", "brightness_scale"]:
@@ -653,8 +673,10 @@ def main() -> None:
 
     # ---- GMM ----
     print(f"[gif] Loading GMM (mode={args.mode}, alt split)")
-    gmm_means, gmm_inv_covs = load_gmm(args.mode)
+    gmm_means, gmm_inv_covs = load_gmm(args.mode, args.gmm_k)
     print(f"[gif] GMM: {len(gmm_means)} clusters")
+    if args.gmm_k and len(gmm_means) != args.gmm_k:
+        raise RuntimeError(f"asked for K={args.gmm_k}, the file holds {len(gmm_means)}")
 
     # ---- baseline for GMM threshold (99th percentile) ----
     print(f"[gif] Loading baseline series to compute GMM threshold...")
@@ -718,6 +740,7 @@ def main() -> None:
         out_dir = Path("gifs")
         out_dir.mkdir(exist_ok=True)
         suffix = ("_seg" if args.show_seg else "") + ("_diff" if args.show_diff else "") + ("_pca" if args.show_pca else "")
+        suffix += f"_K{len(gmm_means)}"
         args.output = (
             out_dir / f"live_pert_{args.pert}_{args.run}_mode{args.mode}{suffix}.gif"
         )

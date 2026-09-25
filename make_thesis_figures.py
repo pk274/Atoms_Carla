@@ -1402,6 +1402,153 @@ def fig_attention_by_cluster() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Relevance and segmentation of one reference frame (prototype, not in main())
+# --------------------------------------------------------------------------- #
+# Input written by "helpful scripts/export_relevance_example.py", which needs
+# torch + timm and checks the frame's profile against baseline_2.npz.
+RELEVANCE_EXAMPLE_DIR = BASELINE_NPZ.parent / "relevance_examples"
+RELEVANCE_EXAMPLE_ROW = 4808       # Town15, clear day
+
+# Class names as the thesis text spells them (TFV6_CLASSES ids 0-9).
+SEG_CLASS_LABELS = ["Unlabeled", "Vehicle", "Road", "Traffic Light",
+                    "Pedestrian", "Road Line", "Obstacle", "Special Vehicle",
+                    "Stop Sign", "Biker"]
+# Unlabeled and Road recede as grays; the small classes take Okabe-Ito hues.
+SEG_CLASS_COLORS = ["#ededed", "#0072b2", "#a6a6a6", "#d55e00", "#cc79a7",
+                    "#f0e442", "#e69f00", "#56b4e9", "#009e73", "#000000"]
+# The thesis draws the relevance glowing in inferno over a darkened copy of
+# the frame (author's pick of 23 variants, 2026-09-25). Not viridis, which the
+# style reserves for perturbation intensity.
+RELEVANCE_STYLE = "glow"
+RELEVANCE_CMAP = "inferno"
+RELEVANCE_CLIP_PCT = 99.5          # display only: clip at this percentile ...
+RELEVANCE_GAMMA = 0.5              # ... then lift faint relevance by v**gamma
+
+
+def relevance_image(rgb: np.ndarray, rel: np.ndarray,
+                    style: str = RELEVANCE_STYLE,
+                    cmap: str = RELEVANCE_CMAP) -> np.ndarray:
+    """The relevance row of fig_relevance_segmentation as an [H, W, 3] image.
+
+    style:
+      "map"     the relevance on its own, like Fig. 1 (the background is the
+                cmap's low end, dark for viridis, white for e.g. Greys)
+      "overlay" over a lightened grayscale copy of the frame, for a
+                light-to-dark cmap: the color starts a third of the way up
+                the map and its opacity follows the relevance
+      "glow"    over a darkened grayscale copy of the frame, for a
+                dark-to-bright cmap: full cmap, opacity rising twice as fast
+    The scaling (percentile clip, gamma) is for display only.
+    """
+    pos = np.clip(rel, 0.0, None)
+    vmax = float(np.percentile(pos[pos > 0], RELEVANCE_CLIP_PCT))
+    v = np.clip(pos / vmax, 0.0, 1.0) ** RELEVANCE_GAMMA
+    gray = rgb.astype(float).mean(axis=2) / 255.0
+    cm = plt.get_cmap(cmap)
+    if style == "map":
+        return cm(v)[..., :3]
+    if style == "overlay":
+        base, colored, alpha = 0.45 + 0.4 * gray, cm(0.35 + 0.65 * v), v
+    elif style == "glow":
+        base, colored, alpha = 0.08 + 0.3 * gray, cm(v), np.clip(2 * v, 0, 1)
+    else:
+        raise ValueError(f"style must be 'map', 'overlay' or 'glow', "
+                         f"not {style!r}")
+    a = alpha[..., None]
+    return (1 - a) * base[..., None] + a * colored[..., :3]
+
+
+def fig_relevance_segmentation(row: int = RELEVANCE_EXAMPLE_ROW,
+                               with_camera: bool = False,
+                               relevance_style: str = RELEVANCE_STYLE,
+                               cmap: str = RELEVANCE_CMAP,
+                               name: str = "relevance_segmentation") -> None:
+    """One frame's relevance map above its segmentation (thesis 6.1).
+
+    The relevance row is drawn by relevance_image (relevance_style, cmap);
+    the profile in the legend is the one computed from the unscaled map.
+    with_camera=True adds the color camera image as a first row.
+    """
+    src = RELEVANCE_EXAMPLE_DIR / f"relevance_example_row{row}.npz"
+    d = np.load(src)
+    rgb, seg, rel = d["rgb"], d["seg"], d["relevance"]
+    profile, stored = d["profile"], d["profile_stored"]
+    class_ids = [int(c) for c in d["class_ids"]]
+    pos = np.clip(rel, 0.0, None)
+
+    rel_img = relevance_image(rgb, rel, relevance_style, cmap)
+    seg_rgb = np.array([to_rgba(c)[:3] for c in SEG_CLASS_COLORS])[seg]
+
+    panels = ([rgb] if with_camera else []) + [rel_img, seg_rgb]
+    h, w = seg.shape
+    row_h = TEXT_WIDTH_IN * h / w
+    fig, axs = plt.subplots(len(panels), 1,
+                            figsize=(TEXT_WIDTH_IN, len(panels) * row_h + 0.15))
+    for ax, img in zip(axs, panels):
+        ax.imshow(img, interpolation="antialiased")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(False)
+        for spine in ax.spines.values():      # a thin frame: the mask's light
+            spine.set_visible(True)           # Unlabeled gray would otherwise
+            spine.set_linewidth(0.5)          # run into the page
+            spine.set_color("0.6")
+
+    pix = np.bincount(seg.ravel(), minlength=len(SEG_CLASS_LABELS)) / seg.size
+    present = [c for c in class_ids if pix[c] > 0]
+    order = sorted(present, key=lambda c: -profile[class_ids.index(c)])
+    handles = [Patch(facecolor=SEG_CLASS_COLORS[c], edgecolor="0.6",
+                     linewidth=0.4,
+                     label=f"{SEG_CLASS_LABELS[c]}  "
+                           f"{profile[class_ids.index(c)]:.2f}")
+               for c in order]
+    _fig_legend(fig, handles, ncol=len(handles))
+
+    save_figure(fig, OUT_DIR, name)
+
+    notes = FigureNotes(
+        name,
+        title="One reference frame: camera image, relevance map, segmentation "
+              "mask; the legend gives the frame's h-profile per class",
+        source=str(src))
+    notes.section("Frame")
+    notes.value("baseline_2.npz row", str(int(d["row"])))
+    notes.value("run file", str(d["run_file"]))
+    notes.value("frame in run", str(int(d["frame_in_run"])))
+    notes.value("command", str(int(d["cmd"])))
+    notes.value("speed", float(d["speed"]), unit="m/s")
+    notes.value("checkpoint", str(d["checkpoint"]))
+
+    notes.section("h-profile (legend numbers)")
+    notes.line("    Share of the frame's relevance inside each class mask, "
+               "computed from the unscaled map. Local = recomputed by "
+               "export_relevance_example.py, stored = the frame's row of "
+               "baseline_2.npz.")
+    for c in sorted(class_ids, key=lambda c: -profile[class_ids.index(c)]):
+        i = class_ids.index(c)
+        per_pixel = (f"{profile[i] / pix[c]:.2f}x" if pix[c] > 0 else "n/a")
+        notes.value(SEG_CLASS_LABELS[c], float(profile[i]),
+                    note=f"stored {stored[i]:.4f}, pixel share {pix[c]:.4f}, "
+                         f"relevance over pixel share {per_pixel}")
+    notes.value("max |local - stored|", float(np.abs(profile - stored).max()))
+
+    notes.section("Relevance map")
+    notes.value("negative share of the absolute relevance",
+                float(-rel[rel < 0].sum() / np.abs(rel).sum()))
+    top = np.sort(pos.ravel())[::-1]
+    notes.value("share held by the top 1 % of pixels",
+                float(top[:int(0.01 * top.size)].sum() / top.sum()))
+    notes.value("display scaling", f"clip at the {RELEVANCE_CLIP_PCT} "
+                f"percentile of the positive pixels, then v**{RELEVANCE_GAMMA}",
+                note="display only")
+    notes.value("drawing", f"{relevance_style}, colormap {cmap}")
+    notes.value("classes in the legend",
+                ", ".join(SEG_CLASS_LABELS[c] for c in order),
+                note="the classes with pixels in this frame")
+    notes.write(OUT_DIR)
+
+
+# --------------------------------------------------------------------------- #
 # Figure 12 — K selection: mean GMM AUROC on val (criterion) vs test
 # --------------------------------------------------------------------------- #
 def fig_val_test_auc_vs_k() -> None:
