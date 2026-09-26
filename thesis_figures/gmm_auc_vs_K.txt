@@ -47,19 +47,19 @@ Euclidean (ED)
 k-th-NN
 -------
     test AUROC vs K:
-        at x=2.0: 0.5557
-        at x=20.0: 0.5808
-        max 0.5808 at x=20.0
-        min 0.5207 at x=15.0
-        Spearman rho vs x: 0.249
-        dips below its x=2.0 value between x=3.0 and x=16.0, deepest 0.5207
-    best K: 20  (AUROC 0.5808)
+        at x=2.0: 0.5537
+        at x=20.0: 0.5898
+        max 0.5898 at x=20.0
+        min 0.5153 at x=16.0
+        Spearman rho vs x: 0.146
+        dips below its x=2.0 value between x=3.0 and x=16.0, deepest 0.5153
+    best K: 20  (AUROC 0.5898)
     at the selected K = 10: 0.5498
-    spread over the sweep: 0.06004  (max minus min across K)
+    spread over the sweep: 0.07449  (max minus min across K)
     per K:
-        2=0.5557, 3=0.5464, 4=0.5498, 5=0.5688, 6=0.5611, 7=0.5511, 8=0.5283
-        9=0.5484, 10=0.5498, 11=0.5508, 12=0.5357, 13=0.5613, 14=0.5566, 15=0.5207
-        16=0.5324, 17=0.5564, 18=0.5607, 19=0.5804, 20=0.5808
+        2=0.5537, 3=0.5386, 4=0.5498, 5=0.5688, 6=0.5448, 7=0.5352, 8=0.5283
+        9=0.5414, 10=0.5498, 11=0.5308, 12=0.5357, 13=0.5613, 14=0.5230, 15=0.5207
+        16=0.5153, 17=0.5591, 18=0.5607, 19=0.5804, 20=0.5898
 
 Jensen-Shannon (JSD)
 --------------------
@@ -80,15 +80,16 @@ Jensen-Shannon (JSD)
 Mean over the four detectors
 ----------------------------
     test AUROC vs K:
-        at x=2.0: 0.5699
-        at x=20.0: 0.5901
-        max 0.5951 at x=17.0
-        min 0.5699 at x=2.0
-        Spearman rho vs x: 0.684
-    best K: 17  (AUROC 0.5951)
+        at x=2.0: 0.5694
+        at x=20.0: 0.5924
+        max 0.5958 at x=17.0
+        min 0.5688 at x=6.0
+        Spearman rho vs x: 0.64
+        dips below its x=2.0 value between x=6.0 and x=6.0, deepest 0.5688
+    best K: 17  (AUROC 0.5958)
     at the selected K = 10: 0.5878
-    spread over the sweep: 0.02524  (max minus min across K)
+    spread over the sweep: 0.02704  (max minus min across K)
     per K:
-        2=0.5699, 3=0.5795, 4=0.5766, 5=0.5804, 6=0.5729, 7=0.5753, 8=0.5768
-        9=0.5784, 10=0.5878, 11=0.5813, 12=0.5730, 13=0.5856, 14=0.5893, 15=0.5810
-        16=0.5757, 17=0.5951, 18=0.5943, 19=0.5864, 20=0.5901
+        2=0.5694, 3=0.5775, 4=0.5766, 5=0.5804, 6=0.5688, 7=0.5713, 8=0.5768
+        9=0.5766, 10=0.5878, 11=0.5763, 12=0.5730, 13=0.5856, 14=0.5809, 15=0.5810
+        16=0.5715, 17=0.5958, 18=0.5943, 19=0.5864, 20=0.5924

@@ -74,7 +74,7 @@ The main entry point. Runs end-to-end and produces all figures and JSON results 
 | 8 | Compute ATOMs profiles + action logits on labeled test set → `test_profiles.npy` |
 | 8.5 | Trajectory analysis: match clean↔perturbed pairs by (run_id, frame_idx); compute displacement stats and PCA trajectories per perturbation type. **DISABLED — this block is currently commented out in `run_analysis.py`; any `trajectory_analysis/` figures on disk are stale.** |
 | 9 | Score test profiles with all detectors: Mahalanobis-single, Mahalanobis-GMM, Euclidean, k-NN, JSD, MDX-v1, MDX-v2, Action Entropy. Also computes **PGD success rate** (TFV6 only): counts frames where the brake-target attack forced softmax(speed\_logits)[0] ≥ 99.9%; printed to stdout and saved to `summary.json` as `__pgd_success__`. |
-| 9.5 | Load val profiles + `val_labeled.npz`. When present: score val profiles with all GMM detectors (Mahalanobis-GMM, Euclidean-GMM, JSD-GMM, Wasserstein-GMM, k-NN-GMM); compute per-detector val AUC and their mean → `__val_auc_gmm_avg__`; use val AUC to select k-NN/GMM-kNN k. Falls back to test-set k selection with a warning when val files are absent. |
+| 9.5 | Load val profiles + `val_labeled.npz`. When present: score val profiles with all GMM detectors (Mahalanobis-GMM, Euclidean-GMM, JSD-GMM, Wasserstein-GMM, k-NN-GMM); compute per-detector val AUC and their mean → `__val_auc_gmm_avg__`; use val AUC to select k-NN/GMM-kNN k. Both selections exclude the Gaussian noise frames (`val_non_gn_mask`; for k only since 2026-09-26). Falls back to test-set k selection with a warning when val files are absent. |
 | 10 | Evaluate each detector: ROC curve, AUC, Youden-J optimal threshold |
 | 11 | Per-perturbation breakdown: evaluate each detector separately on each perturbation type |
 | 12 | Save all figures (PNG) and results (JSON) to `conf.RESULTS_DIR/atoms_analysis/`. `summary.json` includes `__val_auc_gmm_avg__` when val set is present; `sweep_clusters.py` copies this per-K. `summarize_results.py` reads it to produce a **val-set K selection recommendation** (Section 3 of SUMMARY.md). |
@@ -426,9 +426,16 @@ GMM cluster prediction, and single-Gaussian Mahalanobis scoring — so the
 figure script simply reuses the stored `gmm.npz`/`mahal_detector.npz`
 parameters (results computed before that date mixed shrunk and raw
 covariances and do not reproduce from the stored parameters alone). Note the
-summary.json test AUROCs (and hence the AUROC-vs-K figure) include
-gaussian-noise frames as OOD; only the val-side `__val_auc_*__` K-selection
-metrics exclude them. Runs in either conda env (`PCLA`, numpy 1.x, or
+summary.json test AUROCs include gaussian-noise frames as OOD; the val-side
+selection criteria exclude them, both the `__val_auc_*__` K-selection metrics
+and, **since 2026-09-26, the k of both k-th-NN variants** (before, k was selected
+with Gaussian noise included). All 19 `<K> clusters/` folders were rerun with the
+changed `run_analysis.py` that day, in the `PCLA` env with `RESULTS_DIR` redirected so
+the plain `results_alt/atoms_analysis_mode_2/` was left alone; every refit mixture was
+bit-identical to the old one. The pre-change folders are in
+`../_backup_pre_knn_exGN_2026-09-26/`. Under the new rule the single k-th-NN takes
+k = 5 instead of 1 and the clustered k changes at 10 of the 19 K; K = 10 and its
+clustered k = 250 are unchanged. Runs in either conda env (`PCLA`, numpy 1.x, or
 `atoms3`, numpy 2.x): a shim in the script aliases `numpy._core` →
 `numpy.core` so the numpy-2-pickled object arrays in the alt-split npz files
 load under numpy 1.x.
@@ -511,10 +518,14 @@ the phase blocks carry the shape instead.
 ### Environment
 
 `atoms3` needs **scikit-learn** for this script (PCA in figure 2, `roc_auc_score`
-throughout); installed 2026-09-03 (`1.7.2`). `timm` is still absent, so
-`cache_live_mdx_scores.py` cannot run there — the cached
+throughout); installed 2026-09-03 (`1.7.2`). `timm` is absent there, so
+`cache_live_mdx_scores.py` cannot run in `atoms3` — the cached
 `live_pert_mdx_scores_*.npy` arrays are on disk and the figures need nothing
-more. There is no `PCLA` env on this machine.
+more. **This machine does have the `PCLA` env** (`C:/Users/paulk/miniconda3/envs/PCLA`,
+torch 2.2.0+cpu, timm 1.0.20, scikit-learn 1.3.2, numpy 1.24.4; an earlier note here said
+it did not). `run_analysis.py` runs in it on CPU from the cached profiles and MDX scores,
+and on 2026-09-26 its K = 10 refit reproduced the stored `gmm.npz` and
+`mahal_detector.npz` bit for bit.
 
 ---
 

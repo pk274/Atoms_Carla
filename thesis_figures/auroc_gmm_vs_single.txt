@@ -32,14 +32,14 @@ Euclidean (ED)
 
 k-th-NN
 -------
-    Brightness: single 0.7141, GMM 0.6725  (gain -0.0416)
-    Camera loss: single 0.5068, GMM 0.5708  (gain +0.0641)
-    Gaussian noise: single 0.5061, GMM 0.4685  (gain -0.0376)
-    PGD: single 0.4811, GMM 0.4872  (gain +0.0061)
-    overall (mixed test set): single 0.5520, GMM 0.5498  (gain -0.0022)
+    Brightness: single 0.7179, GMM 0.6725  (gain -0.0454)
+    Camera loss: single 0.5010, GMM 0.5708  (gain +0.0699)
+    Gaussian noise: single 0.5053, GMM 0.4685  (gain -0.0368)
+    PGD: single 0.4646, GMM 0.4872  (gain +0.0227)
+    overall (mixed test set): single 0.5472, GMM 0.5498  (gain +0.0026)
     perturbations where the GMM baseline wins: wins = 2, losses = 2, of = 4
-    mean gain over the four perturbations: -0.00225
-    gain on the mixed test set: -0.00225
+    mean gain over the four perturbations: 0.002569
+    gain on the mixed test set: 0.002569
 
 Jensen-Shannon (JSD)
 --------------------
@@ -56,5 +56,5 @@ Summary across families
 -----------------------
     Mahalanobis (MD): mixed set +0.0528, per-perturbation 4 up / 0 down
     Euclidean (ED): mixed set +0.0083, per-perturbation 3 up / 1 down
-    k-th-NN: mixed set -0.0022, per-perturbation 2 up / 2 down
+    k-th-NN: mixed set +0.0026, per-perturbation 2 up / 2 down
     Jensen-Shannon (JSD): mixed set +0.0161, per-perturbation 4 up / 0 down

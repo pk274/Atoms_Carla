@@ -30,21 +30,21 @@ Mahalanobis-GMM (the panel)
         Gaussian noise: AUROC 0.5595, median 1.759, TPR@5%FPR 0.070, TPR@1%FPR 0.030  (n = 200)
         PGD: AUROC 0.5166, median 1.608, TPR@5%FPR 0.050, TPR@1%FPR 0.035  (n = 200)
 
-single k-NN, k = 1 (NOT DRAWN since 2026-09-03, kept as a check on the stored results and because the metric comparison cites it)
+single k-NN, k = 5 (NOT DRAWN since 2026-09-03, kept as a check on the stored results and because the metric comparison cites it)
 ---------------------------------------------------------------------------------------------------------------------------------
-    AUROC, whole mixed test set: 0.552
+    AUROC, whole mixed test set: 0.5472
     clean (n = 200):
-        min 0.003021, q05 0.005764, q25 0.01019, median 0.01444, q75 0.02153, q95 0.04628, q99 0.07848, max 0.09906
-        mean 0.01844
+        min 0.009762, q05 0.014, q25 0.02016, median 0.02585, q75 0.03784, q95 0.0707, q99 0.1081, max 0.131
+        mean 0.03185
     perturbed (n = 800):
-        min 0.0009839, q05 0.005497, q25 0.01092, median 0.01661, q75 0.02575, q95 0.0573, q99 0.0846, max 0.09984
-        mean 0.02145
-    median shift, perturbed minus clean: 0.002176
-    perturbed above the clean median: 0.5863  (0.5 would mean no shift of the bulk)
-    TPR at 5% FPR: 0.08875  (threshold 0.04628 = clean q95)
-    TPR at 1% FPR: 0.02  (threshold 0.07848 = clean q99)
+        min 0.006116, q05 0.01374, q25 0.02104, median 0.02872, q75 0.04189, q95 0.08301, q99 0.1098, max 0.1299
+        mean 0.03475
+    median shift, perturbed minus clean: 0.002873
+    perturbed above the clean median: 0.605  (0.5 would mean no shift of the bulk)
+    TPR at 5% FPR: 0.065  (threshold 0.0707 = clean q95)
+    TPR at 1% FPR: 0.01125  (threshold 0.1081 = clean q99)
     per perturbation, against the same clean set:
-        Brightness: AUROC 0.7141, median 0.02375, TPR@5%FPR 0.225, TPR@1%FPR 0.075  (n = 200)
-        Camera loss: AUROC 0.5068, median 0.01488, TPR@5%FPR 0.060, TPR@1%FPR 0.005  (n = 200)
-        Gaussian noise: AUROC 0.5061, median 0.015, TPR@5%FPR 0.045, TPR@1%FPR 0.000  (n = 200)
-        PGD: AUROC 0.4811, median 0.01454, TPR@5%FPR 0.025, TPR@1%FPR 0.000  (n = 200)
+        Brightness: AUROC 0.7179, median 0.03981, TPR@5%FPR 0.190, TPR@1%FPR 0.045  (n = 200)
+        Camera loss: AUROC 0.5010, median 0.02718, TPR@5%FPR 0.035, TPR@1%FPR 0.000  (n = 200)
+        Gaussian noise: AUROC 0.5053, median 0.02668, TPR@5%FPR 0.035, TPR@1%FPR 0.000  (n = 200)
+        PGD: AUROC 0.4646, median 0.02477, TPR@5%FPR 0.000, TPR@1%FPR 0.000  (n = 200)

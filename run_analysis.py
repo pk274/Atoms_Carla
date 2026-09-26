@@ -943,12 +943,20 @@ if _val_profiles_path.exists() and _val_labeled_path.exists():
             f"ADD_WAYPOINT_SEEDS={conf.ADD_WAYPOINT_SEEDS}). Recompute the val profiles "
             f"or flip the flags."
         )
+    # Gaussian noise is excluded from every val-side selection criterion: the
+    # k of both k-NN variants (Step 11) and the K average (__val_auc_gmm_avg__).
+    # The agent absorbs this perturbation, so counting its frames as detections
+    # would penalise a detector that correctly treats them as inliers.  Until
+    # 2026-09-26 k was selected with Gaussian noise included, K without it.
+    val_non_gn_mask = val_data["perturbation"].astype(str) != "gaussian_noise"
     _has_val     = True
     print(f"[Step 9.5] Val set loaded: {len(val_profiles)} profiles, "
-          f"{int(val_labels.sum())} perturbed. k-NN k will be selected on val AUC.\n")
+          f"{int(val_labels.sum())} perturbed. k-NN k will be selected on val AUC "
+          f"(ex-gaussian_noise, {int(val_non_gn_mask.sum())} frames).\n")
 else:
     val_profiles = None
     val_labels   = None
+    val_non_gn_mask = None
     _has_val     = False
     import warnings as _warn_val
     _warn_val.warn(
@@ -1539,17 +1547,18 @@ for k_val, knn_scores in scores_knn_by_k.items():
     )
 
 # Select best k: use VAL AUC when available (clean); fall back to test AUC (leakage).
+# The val AUC excludes gaussian_noise, like the K criterion (see Step 9.5).
 if _has_val:
     results_knn_val_by_k: dict = {}
     for k_val, knn_scores_val in scores_knn_val_by_k.items():
         results_knn_val_by_k[k_val] = evaluator.evaluate(
-            scores        = knn_scores_val,
-            labels        = val_labels,
+            scores        = knn_scores_val[val_non_gn_mask],
+            labels        = val_labels[val_non_gn_mask],
             detector_name = f"ATOMs-k-NN val (k={k_val})",
         )
     best_k = max(results_knn_val_by_k, key=lambda k: results_knn_val_by_k[k]["auc"])
     _val_auc_at_best_k = results_knn_val_by_k[best_k]["auc"]
-    print(f"  Best k-NN: k={best_k}  Val AUC={_val_auc_at_best_k:.4f}  "
+    print(f"  Best k-NN: k={best_k}  Val AUC (ex-GN)={_val_auc_at_best_k:.4f}  "
           f"Test AUC={results_knn_by_k[best_k]['auc']:.4f}  (k selected on val — clean)")
 else:
     best_k = max(results_knn_by_k, key=lambda k: results_knn_by_k[k]["auc"])
@@ -1574,13 +1583,13 @@ if _has_val:
     results_knn_gmm_val_by_k: dict = {}
     for k_val, knn_scores_val in scores_knn_gmm_val_by_k.items():
         results_knn_gmm_val_by_k[k_val] = evaluator.evaluate(
-            scores        = knn_scores_val,
-            labels        = val_labels,
+            scores        = knn_scores_val[val_non_gn_mask],
+            labels        = val_labels[val_non_gn_mask],
             detector_name = f"ATOMs-k-NN-GMM val (k={k_val})",
         )
     best_k_gmm = max(results_knn_gmm_val_by_k, key=lambda k: results_knn_gmm_val_by_k[k]["auc"])
     print(f"  Best GMM k-NN: k={best_k_gmm}  "
-          f"Val AUC={results_knn_gmm_val_by_k[best_k_gmm]['auc']:.4f}  "
+          f"Val AUC (ex-GN)={results_knn_gmm_val_by_k[best_k_gmm]['auc']:.4f}  "
           f"Test AUC={results_knn_gmm_by_k[best_k_gmm]['auc']:.4f}  (k selected on val — clean)")
 else:
     best_k_gmm = max(results_knn_gmm_by_k, key=lambda k: results_knn_gmm_by_k[k]["auc"])
@@ -1607,8 +1616,7 @@ if _has_val:
         #(f"ATOMs-Wasserstein (GMM K={N_COMPONENTS})", scores_wass_gmm_val),
         (f"ATOMs-k-NN-GMM (k={best_k_gmm}, best)", scores_knn_gmm_val_by_k[best_k_gmm]),
     ]
-    _val_perts = val_data["perturbation"]
-    _val_non_gn_mask = _val_perts != "gaussian_noise"
+    _val_non_gn_mask = val_non_gn_mask
     _val_labels_filt = val_labels[_val_non_gn_mask]
     _gmm_val_aucs = {name: evaluator.evaluate(
                         s[_val_non_gn_mask], _val_labels_filt, name)["auc"]
@@ -1895,7 +1903,7 @@ knn_k_list = list(results_knn_by_k.keys())
 if _has_val:
     knn_auc_list     = [results_knn_val_by_k[k]["auc"]     for k in knn_k_list]
     knn_gmm_auc_list = [results_knn_gmm_val_by_k[k]["auc"] for k in knn_k_list]
-    _sens_title_suffix = " (Val AUC — used for k selection)"
+    _sens_title_suffix = " (Val AUC ex-Gaussian-noise — used for k selection)"
 else:
     knn_auc_list     = [results_knn_by_k[k]["auc"]     for k in knn_k_list]
     knn_gmm_auc_list = [results_knn_gmm_by_k[k]["auc"] for k in knn_k_list]

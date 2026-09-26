@@ -6,7 +6,7 @@
     4000 resamples, seed 0, percentile intervals, K = 10.
     THE UNIT IS THE ROUTE, not the frame. The split is made at route level and frames within a route are strongly correlated, so a frame-level interval understates the uncertainty. Both are reported so the gap between them is visible.
     Scores are the Mahalanobis distance to the nearest GMM component unless stated otherwise.
-    k-th-NN neighbour counts, read from summary.json (the val-selected values at K = 10): single k = 1, GMM k = 250.
+    k-th-NN neighbour counts, read from summary.json (the val-selected values at K = 10): single k = 5, GMM k = 250.
 
 val split
 ---------

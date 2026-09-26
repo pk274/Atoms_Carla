@@ -61,9 +61,10 @@ Figures written to `thesis_figures/` (each as .pdf + .png + .txt):
        BOTH exclude gaussian-noise frames so the comparison is
        like-for-like; the selected K=10 marked.
   13. knn_k_selection
-       Validation AUROC vs neighbour count k (full val set, as used by the
-       pipeline's k selection) for single kNN and kNN-GMM; the selected k of
-       each variant is circled.
+       Validation AUROC vs neighbour count k (Gaussian noise excluded, as used
+       by the pipeline's k selection since 2026-09-26) for single kNN and
+       kNN-GMM, test dotted on the same pool; the selected k of each variant
+       is circled.
 
 Run with any env that has numpy / matplotlib / sklearn — both conda `PCLA`
 (numpy 1.x) and `atoms3` (numpy 2.x) work; a shim below handles the
@@ -2035,10 +2036,14 @@ def fig_knn_k_selection() -> None:
     series = load_baseline_series()
     vprof = np.load(ROOT / "data" / "TFV6" / "val_data_alt" / "attention"
                     / "val_profiles_2.npy").astype(np.float64)
-    # k is selected on the FULL val set (incl. gaussian noise), exactly as
-    # run_analysis.py does for results_knn(_gmm)_val_by_k.
-    vlab = np.load(ROOT / "data" / "TFV6" / "val_data_alt"
-                   / "val_labeled.npz")["label"].astype(int)
+    # k is selected on the val set with Gaussian noise EXCLUDED, exactly as
+    # run_analysis.py does for results_knn(_gmm)_val_by_k since 2026-09-26
+    # (the same pool as the K criterion).  Before that date both the pipeline
+    # and this figure included Gaussian noise.
+    vl = np.load(ROOT / "data" / "TFV6" / "val_data_alt" / "val_labeled.npz",
+                 allow_pickle=True)
+    vkeep = vl["perturbation"].astype(str) != "gaussian_noise"
+    vprof, vlab = vprof[vkeep], vl["label"].astype(int)[vkeep]
 
     def norm(a):
         return a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-12)
@@ -2046,11 +2051,12 @@ def fig_knn_k_selection() -> None:
     # The TEST curves are overlaid since 2026-09-03.  Validation-only, this
     # figure looked as though it contradicted the test-set figures; it does not,
     # it is a different split, and showing both is what makes the selection
-    # failure legible in one place.  Same pool on both splits: the full set,
-    # Gaussian noise included, exactly as run_analysis.py selects k.
+    # failure legible in one place.  Same pool on both splits: Gaussian noise
+    # excluded, as in the selection and in auroc_val_test_vs_K.
     tprof = np.load(TEST_DIR / "attention" / "test_profiles_2.npy").astype(np.float64)
-    tlab = np.load(TEST_DIR / "test_labeled.npz",
-                   allow_pickle=True)["label"].astype(int)
+    tl = np.load(TEST_DIR / "test_labeled.npz", allow_pickle=True)
+    tkeep = tl["perturbation"].astype(str) != "gaussian_noise"
+    tprof, tlab = tprof[tkeep], tl["label"].astype(int)[tkeep]
 
     means, covs, weights, _ = load_gmm()
 
@@ -2117,12 +2123,16 @@ def fig_knn_k_selection() -> None:
                "Validation-only, this figure read as though it contradicted the "
                "test-set figures; it does not, it is a different split, and "
                "k is selected on the validation curve alone.")
-    notes.line("    AUROC here is a single pooled AUROC over the FULL validation "
-               "set INCLUDING Gaussian noise, per k, exactly as run_analysis.py "
-               "selects k. It is one detector, not a mean over detectors, and it "
-               "includes Gaussian noise, so it is NOT the criterion used for K "
-               "in auroc_val_test_vs_K.")
-    notes.line(f"    {AGG_IDENTITY} Here the pool holds all four perturbations.")
+    notes.line("    AUROC here is a single pooled AUROC per k, with Gaussian noise "
+               "EXCLUDED on both splits, exactly as run_analysis.py selects k "
+               "since 2026-09-26 (before that, k was selected with Gaussian "
+               "noise included). It is the same pool as the K criterion in "
+               "auroc_val_test_vs_K, but one detector, not a mean over "
+               "detectors.")
+    notes.value("frames in the pool", f"validation {len(vlab)}, test {len(tlab)}",
+                note="200 clean + 200 each of brightness increase, camera loss, PGD")
+    notes.line(f"    {AGG_IDENTITY} Here the pool holds brightness increase, "
+               "camera loss and the PGD attack.")
     notes.line(f"    'single' scores against the whole {len(series)}-frame "
                f"baseline. 'GMM' routes each sample to its nearest of the "
                f"{len(weights_k)} components and scores within that component's "
@@ -2196,13 +2206,17 @@ def fig_knn_k_selection() -> None:
                          f"{max(curves[(variant, 'test')]) - curves[(variant, 'test')][i_v]:.4f}")
     kv_g = KS_NN[int(np.argmax(curves[("gmm", "val")]))]
     kv_s = KS_NN[int(np.argmax(curves[("single", "val")]))]
-    notes.value("validation prefers", 
-                f"GMM at k = {kv_g} ({max(curves[('gmm', 'val')]):.4f}) over "
-                f"single at k = {kv_s} ({max(curves[('single', 'val')]):.4f})")
+    v_g, v_s = max(curves[("gmm", "val")]), max(curves[("single", "val")])
+    t_g = curves[("gmm", "test")][KS_NN.index(kv_g)]
+    t_s = curves[("single", "test")][KS_NN.index(kv_s)]
+    notes.value("validation, each variant at its selected k",
+                f"GMM k = {kv_g}: {v_g:.4f}, single k = {kv_s}: {v_s:.4f}",
+                note=f"validation prefers {'GMM' if v_g > v_s else 'single'}")
     notes.value("test at those same two settings",
-                f"GMM k = {kv_g}: {curves[('gmm', 'test')][KS_NN.index(kv_g)]:.4f}, "
-                f"single k = {kv_s}: {curves[('single', 'test')][KS_NN.index(kv_s)]:.4f}",
-                note="the selection reverses between the splits")
+                f"GMM k = {kv_g}: {t_g:.4f}, single k = {kv_s}: {t_s:.4f}",
+                note=("the order reverses between the splits"
+                      if (v_g > v_s) != (t_g > t_s)
+                      else "the order is the same on both splits"))
 
     notes.section("The two variants against each other, on validation")
     notes.value("difference at k = 1", auc_gmm[0] - auc_single[0],

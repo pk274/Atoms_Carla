@@ -13,21 +13,21 @@
 Brightness
 ----------
     val AUROC vs K:
-        at x=1.0: 0.8068
-        at x=20.0: 0.8397
-        max 0.8397 at x=20.0
-        min 0.7986 at x=16.0
-        Spearman rho vs x: 0.534
-        dips below its x=1.0 value between x=16.0 and x=16.0, deepest 0.7986
-    val: counts of K beating the K = 1 value: 18  (of 19 clustered counts)
+        at x=1.0: 0.8098
+        at x=20.0: 0.8375
+        max 0.8394 at x=19.0
+        min 0.795 at x=16.0
+        Spearman rho vs x: 0.326
+        dips below its x=1.0 value between x=3.0 and x=16.0, deepest 0.795
+    val: counts of K beating the K = 1 value: 13  (of 19 clustered counts)
     val: K with AUROC below chance: none
     test AUROC vs K:
-        at x=1.0: 0.7273
-        at x=20.0: 0.7479
+        at x=1.0: 0.7282
+        at x=20.0: 0.7556
         max 0.7665 at x=18.0
-        min 0.7049 at x=6.0
-        Spearman rho vs x: 0.732
-        dips below its x=1.0 value between x=2.0 and x=16.0, deepest 0.7049
+        min 0.7043 at x=6.0
+        Spearman rho vs x: 0.743
+        dips below its x=1.0 value between x=2.0 and x=16.0, deepest 0.7043
     test: counts of K beating the K = 1 value: 10  (of 19 clustered counts)
     test: K with AUROC below chance: none
     test: rank correlation with the plotted K-selection curve: 0.7609
@@ -35,86 +35,85 @@ Brightness
 Camera loss
 -----------
     val AUROC vs K:
-        at x=1.0: 0.5833
-        at x=20.0: 0.6003
+        at x=1.0: 0.5784
+        at x=20.0: 0.6027
         max 0.6511 at x=10.0
-        min 0.5833 at x=1.0
-        Spearman rho vs x: -0.0782
+        min 0.5784 at x=1.0
+        Spearman rho vs x: -0.108
     val: counts of K beating the K = 1 value: 19  (of 19 clustered counts)
     val: K with AUROC below chance: none
     test AUROC vs K:
-        at x=1.0: 0.556
-        at x=20.0: 0.5899
-        max 0.6017 at x=17.0
+        at x=1.0: 0.5546
+        at x=20.0: 0.5908
+        max 0.6036 at x=17.0
         min 0.5532 at x=12.0
-        Spearman rho vs x: 0.0481
-        dips below its x=1.0 value between x=8.0 and x=12.0, deepest 0.5532
-    test: counts of K beating the K = 1 value: 17  (of 19 clustered counts)
+        Spearman rho vs x: 0.138
+        dips below its x=1.0 value between x=12.0 and x=12.0, deepest 0.5532
+    test: counts of K beating the K = 1 value: 18  (of 19 clustered counts)
     test: K with AUROC below chance: none
-    test: rank correlation with the plotted K-selection curve: 0.4421
+    test: rank correlation with the plotted K-selection curve: 0.6526
 
 Gaussian noise
 --------------
     val AUROC vs K:
-        at x=1.0: 0.5274
-        at x=20.0: 0.5212
+        at x=1.0: 0.5123
+        at x=20.0: 0.5194
         max 0.5352 at x=8.0
-        min 0.4827 at x=16.0
-        Spearman rho vs x: -0.229
-        dips below its x=1.0 value between x=2.0 and x=20.0, deepest 0.4827
-    val: counts of K beating the K = 1 value: 3  (of 19 clustered counts)
-    val: K with AUROC below chance: 7, 14, 16, 18
+        min 0.481 at x=16.0
+        Spearman rho vs x: -0.00602
+        dips below its x=1.0 value between x=2.0 and x=18.0, deepest 0.481
+    val: counts of K beating the K = 1 value: 8  (of 19 clustered counts)
+    val: K with AUROC below chance: 6, 7, 14, 16, 17, 18
     test AUROC vs K:
-        at x=1.0: 0.5093
-        at x=20.0: 0.5339
+        at x=1.0: 0.5091
+        at x=20.0: 0.5355
         max 0.5383 at x=18.0
-        min 0.4953 at x=6.0
-        Spearman rho vs x: 0.627
-        dips below its x=1.0 value between x=2.0 and x=13.0, deepest 0.4953
+        min 0.4942 at x=6.0
+        Spearman rho vs x: 0.605
+        dips below its x=1.0 value between x=2.0 and x=13.0, deepest 0.4942
     test: counts of K beating the K = 1 value: 12  (of 19 clustered counts)
-    test: K with AUROC below chance: 5, 6, 7
-    test: rank correlation with the plotted K-selection curve: 0.2857
+    test: K with AUROC below chance: 2, 5, 6, 7, 11
+    test: rank correlation with the plotted K-selection curve: 0.3744
 
 PGD
 ---
     val AUROC vs K:
-        at x=1.0: 0.5216
-        at x=20.0: 0.5401
+        at x=1.0: 0.524
+        at x=20.0: 0.5414
         max 0.5736 at x=8.0
-        min 0.5216 at x=1.0
-        Spearman rho vs x: 0.362
+        min 0.524 at x=1.0
+        Spearman rho vs x: 0.262
     val: counts of K beating the K = 1 value: 19  (of 19 clustered counts)
     val: K with AUROC below chance: none
     test AUROC vs K:
-        at x=1.0: 0.4836
-        at x=20.0: 0.4888
+        at x=1.0: 0.4795
+        at x=20.0: 0.4877
         max 0.5101 at x=8.0
-        min 0.4825 at x=15.0
-        Spearman rho vs x: -0.319
-        dips below its x=1.0 value between x=15.0 and x=15.0, deepest 0.4825
-    test: counts of K beating the K = 1 value: 18  (of 19 clustered counts)
-    test: K with AUROC below chance: 1, 2, 3, 11, 12, 15, 16, 17, 18, 19, 20
-    test: rank correlation with the plotted K-selection curve: 0.06617
+        min 0.4795 at x=1.0
+        Spearman rho vs x: -0.217
+    test: counts of K beating the K = 1 value: 19  (of 19 clustered counts)
+    test: K with AUROC below chance: 1, 2, 3, 6, 7, 11, 12, 15, 16, 17, 18, 19, 20
+    test: rank correlation with the plotted K-selection curve: 0.2331
 
 The k-th-NN fallback across the sweep
 -------------------------------------
     The clustered k-th-NN entry in the mean uses each K's own val-selected k, while the components shrink as K grows. Once a component holds fewer frames than k, every sample routed to it is scored against the full baseline instead, so the entry changes character across the sweep.
-    K =  2: smallest component  440 frames, k =   1, test samples routed below k 0.0%
-    K =  3: smallest component  365 frames, k =   1, test samples routed below k 0.0%
+    K =  2: smallest component  440 frames, k =  25, test samples routed below k 0.0%
+    K =  3: smallest component  365 frames, k =   5, test samples routed below k 0.0%
     K =  4: smallest component   96 frames, k =   1, test samples routed below k 0.0%
     K =  5: smallest component   91 frames, k =   1, test samples routed below k 0.0%
-    K =  6: smallest component   93 frames, k =   1, test samples routed below k 0.0%
-    K =  7: smallest component   91 frames, k =   1, test samples routed below k 0.0%
+    K =  6: smallest component   93 frames, k =   5, test samples routed below k 0.0%
+    K =  7: smallest component   91 frames, k =   5, test samples routed below k 0.0%
     K =  8: smallest component  113 frames, k =   5, test samples routed below k 0.0%
-    K =  9: smallest component  100 frames, k =   1, test samples routed below k 0.0%
+    K =  9: smallest component  100 frames, k =  50, test samples routed below k 0.0%
     K = 10: smallest component  102 frames, k = 250, test samples routed below k 41.5%
-    K = 11: smallest component   38 frames, k = 100, test samples routed below k 10.9%
+    K = 11: smallest component   38 frames, k =  10, test samples routed below k 0.0%
     K = 12: smallest component   74 frames, k = 100, test samples routed below k 1.5%
     K = 13: smallest component   51 frames, k = 100, test samples routed below k 11.5%
-    K = 14: smallest component   41 frames, k = 100, test samples routed below k 20.8%
+    K = 14: smallest component   41 frames, k = 250, test samples routed below k 38.1%
     K = 15: smallest component   53 frames, k = 250, test samples routed below k 44.8%
-    K = 16: smallest component   32 frames, k =   1, test samples routed below k 0.0%
-    K = 17: smallest component    9 frames, k =   1, test samples routed below k 0.0%
+    K = 16: smallest component   32 frames, k =   5, test samples routed below k 0.0%
+    K = 17: smallest component    9 frames, k =   5, test samples routed below k 0.0%
     K = 18: smallest component    9 frames, k =   5, test samples routed below k 0.0%
     K = 19: smallest component   39 frames, k =  10, test samples routed below k 0.0%
-    K = 20: smallest component   20 frames, k =  10, test samples routed below k 0.0%
+    K = 20: smallest component   20 frames, k =  25, test samples routed below k 0.0%

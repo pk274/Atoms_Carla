@@ -32,7 +32,7 @@ scripts in the repository root.
 | Relevance | AttnLRP (`ATOMs_Analysis/saliency/lrp_transfuser.py`): one pass from the planning decoder's speed query back to the camera pixels, seeded with its positive activations (profile mode 2, `documentation/04_atoms.md`) |
 | Attention profile | the share of relevance on each of ten grouped semantic classes (`ATOMs_Analysis/saliency/atoms_carla.py`) |
 | Data | driving frames from the LEAD dataset (`ln2697/lead360` on Hugging Face), split at route level: 5000 reference frames from 186 routes, and a validation (38 routes) and a test split (36 routes) of 1000 frames each |
-| Reference | a GMM on the reference profiles. `K = 10` components, chosen on the validation split from `K = 1` to `20`. |
+| Reference | a GMM on the reference profiles. `K = 10` components, chosen on the validation split from `K = 1` to `20`, and the `k`-NN neighbour count likewise, both without the Gaussian noise frames. |
 | Scores | Mahalanobis (MD), Euclidean (ED), `k`-NN and Jensen-Shannon (JSD) distance to the reference, and the comparison scores MDX and PEOC |
 | Perturbations | brightness increase (`brightness_scale`), camera loss, Gaussian noise, and a PGD attack towards braking. Each evaluation split holds 200 clean frames and 200 of each perturbation. |
 | Evaluation | test AUROC per perturbation, route-level bootstrap intervals, and three live runs in CARLA in which a perturbation is switched on mid-drive |
